@@ -27,7 +27,6 @@ from typing import Optional, List, Dict, Any, Iterator
 from datetime import datetime
 
 import numpy as np
-import torch
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -179,7 +178,11 @@ class MiniCPMOWorker:
         )
 
         gc.collect()
-        torch.cuda.empty_cache()
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
         self.state.status = WorkerStatus.IDLE
         logger.info(f"[GPU {self.gpu_id}] Model loaded successfully")
@@ -521,7 +524,11 @@ class MiniCPMOWorker:
         duplex_view = self.processor.set_duplex_mode()
         duplex_view.cleanup()
         gc.collect()
-        torch.cuda.empty_cache()
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except ImportError:
+            pass
         logger.info(f"[GPU {self.gpu_id}] Duplex cleanup done, GPU memory released")
 
 
@@ -533,28 +540,57 @@ worker: Optional[MiniCPMOWorker] = None
 WORKER_CONFIG: Dict[str, Any] = {}
 
 
+def _worker_ready() -> bool:
+    """检查 worker 是否已完成初始化并可以接受请求（兼容 PyTorch 和 C++ 后端）"""
+    if worker is None:
+        return False
+    if hasattr(worker, 'processor') and worker.processor is not None:
+        return True
+    if hasattr(worker, '_http_client') and worker._http_client is not None:
+        return True
+    return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时加载模型"""
     global worker
     config = WORKER_CONFIG
 
-    worker = MiniCPMOWorker(
-        model_path=config["model_path"],
-        gpu_id=config["gpu_id"],
-        pt_path=config.get("pt_path"),
-        ref_audio_path=config.get("ref_audio_path"),
-        duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
-        compile=config.get("compile", False),
-        chat_vocoder=config.get("chat_vocoder", "token2wav"),
-        attn_implementation=config.get("attn_implementation", "auto"),
-    )
+    backend = config.get("backend", "pytorch")
 
-    # 模型加载是同步操作（~15s），在线程中执行避免阻塞
+    if backend == "cpp":
+        from core.processors.cpp_backend import CppBackendWorker
+        worker = CppBackendWorker(
+            llamacpp_root=config["llamacpp_root"],
+            model_dir=config["model_dir"],
+            gpu_id=config["gpu_id"],
+            ref_audio_path=config.get("ref_audio_path"),
+            duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
+            llm_model=config.get("llm_model", ""),
+            cpp_server_port=config.get("cpp_server_port"),
+            ctx_size=config.get("ctx_size", 8192),
+            n_gpu_layers=config.get("n_gpu_layers", 99),
+        )
+    else:
+        worker = MiniCPMOWorker(
+            model_path=config["model_path"],
+            gpu_id=config["gpu_id"],
+            pt_path=config.get("pt_path"),
+            ref_audio_path=config.get("ref_audio_path"),
+            duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
+            compile=config.get("compile", False),
+            chat_vocoder=config.get("chat_vocoder", "token2wav"),
+            attn_implementation=config.get("attn_implementation", "auto"),
+        )
+
+    # 模型加载是同步操作（~15s for pytorch, ~2-3min for cpp），在线程中执行避免阻塞
     await asyncio.to_thread(worker.load_model)
 
     yield
 
+    if backend == "cpp" and hasattr(worker, "shutdown"):
+        worker.shutdown()
     logger.info("Worker shutting down")
 
 
@@ -578,12 +614,20 @@ async def health():
     if worker.state.total_requests > 0:
         avg_time = worker.state.total_inference_time_ms / worker.state.total_requests
 
-    kv_len = worker.processor.kv_cache_length if worker.processor else 0
+    kv_len = 0
+    model_loaded = False
+    if hasattr(worker, 'processor') and worker.processor is not None:
+        kv_len = worker.processor.kv_cache_length
+        model_loaded = True
+    elif hasattr(worker, '_http_client') and worker._http_client is not None:
+        model_loaded = True
+        kv_len = getattr(worker, 'kv_cache_length', 0)
+
     return WorkerHealthResponse(
-        status="healthy" if worker.processor is not None else "error",
+        status="healthy" if model_loaded else "error",
         worker_status=worker.state.status,
         gpu_id=worker.gpu_id,
-        model_loaded=worker.processor is not None,
+        model_loaded=model_loaded,
         current_session_id=worker.state.current_session_id,
         total_requests=worker.state.total_requests,
         avg_inference_time_ms=avg_time,
@@ -596,7 +640,7 @@ async def health():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Chat 推理（无状态）"""
-    if worker is None or worker.processor is None:
+    if not _worker_ready():
         raise HTTPException(status_code=503, detail="Worker not ready")
 
     if not worker.state.is_idle:
@@ -754,7 +798,7 @@ async def chat_ws(ws: WebSocket):
     4. Error:
         Server → {"type": "error", "error": "..."}
     """
-    if worker is None or worker.processor is None:
+    if not _worker_ready():
         await ws.close(code=1013, reason="Worker not ready")
         return
 
@@ -848,11 +892,11 @@ async def chat_ws(ws: WebSocket):
                 )
 
             await asyncio.to_thread(_do_prefill)
-            pre_kv = worker.processor.kv_cache_length
+            pre_kv = worker.processor.kv_cache_length if worker.processor else 0
             await ws.send_json({"type": "prefill_done", "input_tokens": pre_kv})
 
-            # 3. TTS init
-            if generate_audio:
+            # 3. TTS init (PyTorch only; C++ handles TTS internally via omni_init)
+            if generate_audio and worker.processor is not None:
                 def _init_tts():
                     if tts_ref_audio_ndarray is not None:
                         worker.processor.model.init_token2wav_cache(prompt_speech_16k=tts_ref_audio_ndarray)
@@ -938,7 +982,16 @@ async def chat_ws(ws: WebSocket):
                 full_text = ""
                 chunk_count = 0
                 while True:
-                    tag, payload = await chunk_queue.get()
+                    try:
+                        tag, payload = await asyncio.wait_for(
+                            chunk_queue.get(), timeout=2.0
+                        )
+                    except asyncio.TimeoutError:
+                        try:
+                            await ws.send_json({"type": "heartbeat"})
+                        except Exception:
+                            break
+                        continue
                     if tag == "chunk":
                         chunk_data = {"type": "chunk"}
                         if payload.text_delta:
@@ -955,7 +1008,7 @@ async def chat_ws(ws: WebSocket):
                             )
                         chunk_count += 1
                     elif tag == "done":
-                        _gen_ids = getattr(worker.processor.model, '_streaming_generated_token_ids', None)
+                        _gen_ids = getattr(worker.processor.model, '_streaming_generated_token_ids', None) if worker.processor else None
                         generated_tokens = len(_gen_ids) if _gen_ids else chunk_count
                         _elapsed = round((time.perf_counter() - _gen_start) * 1000, 1)
                         if chat_ws_recorder:
@@ -1005,7 +1058,7 @@ async def chat_ws(ws: WebSocket):
                         audio_bytes = output_audio_np.tobytes()
                         audio_data = base64.b64encode(audio_bytes).decode('utf-8')
 
-                stats = getattr(worker.processor.model, '_last_chat_token_stats', {})
+                stats = getattr(worker.processor.model, '_last_chat_token_stats', {}) if worker.processor else {}
                 _elapsed = round((time.perf_counter() - _gen_start) * 1000, 1)
 
                 if chat_ws_recorder:
@@ -1106,7 +1159,7 @@ async def half_duplex_ws(ws: WebSocket):
     6. Server → {"type": "turn_done", ...}
     7. Client → {"type": "stop"} / Server → {"type": "timeout"}
     """
-    if worker is None or worker.processor is None:
+    if not _worker_ready():
         await ws.close(code=1013, reason="Worker not ready")
         return
 
@@ -1333,7 +1386,16 @@ async def half_duplex_ws(ws: WebSocket):
 
                         full_text = ""
                         while True:
-                            item_type, payload = await chunk_queue.get()
+                            try:
+                                item_type, payload = await asyncio.wait_for(
+                                    chunk_queue.get(), timeout=2.0
+                                )
+                            except asyncio.TimeoutError:
+                                try:
+                                    await ws.send_json({"type": "heartbeat"})
+                                except Exception:
+                                    break
+                                continue
                             if item_type == "chunk":
                                 await ws.send_json({"type": "chunk", **payload.model_dump()})
                                 if payload.text_delta:
@@ -1417,7 +1479,7 @@ async def duplex_ws(ws: WebSocket):
     5. Client 在 audio_chunk 中携带 force_listen: true → 强制模型持续监听（替代旧 interrupt）
     6. Client 发送 {"type": "stop"} → 结束会话
     """
-    if worker is None or worker.processor is None:
+    if not _worker_ready():
         await ws.close(code=1013, reason="Worker not ready")
         return
 
@@ -1491,7 +1553,7 @@ async def duplex_ws(ws: WebSocket):
                 use_deferred_finalize = msg.get("deferred_finalize", True)
                 session_max_slice_nums = msg.get("max_slice_nums") or (config_dict.get("max_slice_nums") if config_dict else None) or 1
 
-                if config_dict:
+                if config_dict and worker.processor is not None:
                     duplex_view = worker.processor.set_duplex_mode()
                     duplex_view.config = DuplexConfig(**config_dict)
 
@@ -1641,8 +1703,7 @@ async def duplex_ws(ws: WebSocket):
                         t_gen = time.perf_counter()
 
                         prefill_ms = (t_prefill - t0) * 1000
-                        # 在同一线程捕获 KV cache 长度（generate 后、finalize 前）
-                        kv_len = worker.processor.kv_cache_length
+                        kv_len = worker.processor.kv_cache_length if worker.processor else 0
                         return gen_result, prefill_ms, prefill_result, kv_len
 
                     result, prefill_ms, prefill_cost, kv_cache_len = await asyncio.to_thread(_duplex_step)
@@ -1853,18 +1914,37 @@ def main():
     port = args.port or cfg.worker_port(args.worker_index)
     gpu_id = args.gpu_id if args.gpu_id is not None else args.worker_index
 
-    WORKER_CONFIG.update({
-        "model_path": args.model_path or cfg.model.model_path,
-        "gpu_id": gpu_id,
-        "pt_path": args.pt_path or cfg.model.pt_path,
-        "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
-        "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,
-        "compile": cfg.compile,
-        "chat_vocoder": cfg.chat_vocoder,
-        "attn_implementation": cfg.attn_implementation,
-    })
+    backend = cfg.backend
 
-    logger.info(f"Starting Worker on port {port}, GPU {gpu_id}")
+    if backend == "cpp":
+        cpp_cfg = cfg.cpp_backend
+        WORKER_CONFIG.update({
+            "backend": "cpp",
+            "llamacpp_root": cpp_cfg.llamacpp_root,
+            "model_dir": cpp_cfg.model_dir,
+            "gpu_id": gpu_id,
+            "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
+            "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,
+            "llm_model": cpp_cfg.llm_model,
+            "cpp_server_port": cpp_cfg.cpp_server_port,
+            "ctx_size": cpp_cfg.ctx_size,
+            "n_gpu_layers": cpp_cfg.n_gpu_layers,
+        })
+        logger.info(f"Starting Worker (C++ backend) on port {port}, GPU {gpu_id}")
+    else:
+        WORKER_CONFIG.update({
+            "backend": "pytorch",
+            "model_path": args.model_path or cfg.model.model_path,
+            "gpu_id": gpu_id,
+            "pt_path": args.pt_path or cfg.model.pt_path,
+            "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
+            "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,
+            "compile": cfg.compile,
+            "chat_vocoder": cfg.chat_vocoder,
+            "attn_implementation": cfg.attn_implementation,
+        })
+        logger.info(f"Starting Worker (PyTorch backend) on port {port}, GPU {gpu_id}")
+
     uvicorn.run(app, host=args.host, port=port)
 
 

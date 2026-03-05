@@ -90,22 +90,12 @@ from core.capabilities import (
     supports_feature,
 )
 
-# 处理器
+# 处理器基类（不依赖 torch）
 from core.processors import (
     BaseProcessor,
-    UnifiedProcessor,
-    ChatView,
-    HalfDuplexView,
-    DuplexView,
 )
 
-# 工厂
-from core.factory import (
-    ProcessorFactory,
-    create_processor,
-)
-
-# Schema - 通用类型
+# Schema - 通用类型（不依赖 torch）
 from core.schemas import (
     # 枚举
     Role,
@@ -148,6 +138,24 @@ from core.schemas import (
     DuplexChunkResult,
     DuplexOfflineOutput,
 )
+
+
+_LAZY_NAMES = {
+    "UnifiedProcessor", "ChatView", "HalfDuplexView", "DuplexView",
+    "ProcessorFactory", "create_processor",
+}
+
+
+def __getattr__(name):
+    """延迟导入依赖 torch 的处理器和工厂，避免无 torch 环境报错"""
+    if name in ("UnifiedProcessor", "ChatView", "HalfDuplexView", "DuplexView"):
+        from core.processors import unified
+        return getattr(unified, name)
+    if name in ("ProcessorFactory", "create_processor"):
+        from core import factory
+        return getattr(factory, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # 能力声明

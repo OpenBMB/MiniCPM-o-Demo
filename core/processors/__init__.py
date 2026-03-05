@@ -35,15 +35,27 @@ result = duplex.generate()
 """
 
 from core.processors.base import BaseProcessor, MiniCPMOProcessorMixin
-from core.processors.unified import UnifiedProcessor, ChatView, HalfDuplexView, DuplexView
 
 __all__ = [
     # 基类
     "BaseProcessor",
     "MiniCPMOProcessorMixin",
-    # 统一处理器
+    # 统一处理器（延迟导入，避免无 torch 环境报错）
     "UnifiedProcessor",
     "ChatView",
     "HalfDuplexView",
     "DuplexView",
 ]
+
+
+def __getattr__(name):
+    if name in ("UnifiedProcessor", "ChatView", "HalfDuplexView", "DuplexView"):
+        from core.processors.unified import UnifiedProcessor, ChatView, HalfDuplexView, DuplexView
+        _map = {
+            "UnifiedProcessor": UnifiedProcessor,
+            "ChatView": ChatView,
+            "HalfDuplexView": HalfDuplexView,
+            "DuplexView": DuplexView,
+        }
+        return _map[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
