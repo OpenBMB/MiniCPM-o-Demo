@@ -1,6 +1,6 @@
 # MiniCPM-o 4.5 PyTorch Simple Demo System
 
-[中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/minicpm-o-4_5-pytorch-simple-demo/site/en/index.html)
+[中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/MiniCPM-o-Demo/site/en/index.html)
 
 [Ready-to-use Demo Website](https://35.226.63.1:8008/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
 
