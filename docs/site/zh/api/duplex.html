@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Duplex 模式 - MiniCPM-o 4.5 文档</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --sidebar-w: 260px;
+  --bg: #fff; --bg-side: #f8f9fa; --bg-code: #f6f8fa;
+  --c1: #24292f; --c2: #57606a;
+  --border: #d0d7de; --accent: #0969da; --nav-active: #ddf4ff;
+}
+body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif; color:var(--c1); line-height:1.6; background:var(--bg); }
+.sidebar-toggle { position:fixed; top:12px; left:12px; z-index:1001; background:var(--bg-side); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-size:18px; cursor:pointer; display:none; }
+.sidebar { position:fixed; top:0; left:0; width:var(--sidebar-w); height:100vh; overflow-y:auto; background:var(--bg-side); border-right:1px solid var(--border); padding:20px 0; z-index:1000; transition:transform .3s; }
+.sidebar-header { padding:0 20px 16px; border-bottom:1px solid var(--border); margin-bottom:8px; }
+.sidebar-header h2 { font-size:16px; font-weight:600; }
+.sidebar-subtitle { font-size:12px; color:var(--c2); }
+.lang-switch { display:inline-block; margin-top:6px; font-size:12px; color:var(--accent); text-decoration:none; padding:2px 8px; border:1px solid var(--border); border-radius:4px; transition:background .15s; }
+.lang-switch:hover { background:var(--nav-active); text-decoration:none; }
+
+.nav-list { list-style:none; padding:0 8px; }
+.nav-list > li > a { display:block; padding:7px 12px; color:var(--c2); text-decoration:none; font-size:14px; border-radius:6px; transition:background .15s,color .15s; }
+.nav-list > li > a:hover { background:#e8e8e8; color:var(--c1); }
+.nav-list > li > a.active { background:var(--nav-active); color:var(--accent); font-weight:600; }
+
+.nav-group { margin-top:4px; }
+.nav-group-header { display:flex; align-items:center; gap:6px; padding:8px 12px; color:var(--c1); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; border-radius:6px; user-select:none; transition:background .15s; }
+.nav-group-header:hover { background:#eaeef2; }
+.nav-group-header::before { content:""; display:inline-block; width:0; height:0; border-left:5px solid var(--c2); border-top:3.5px solid transparent; border-bottom:3.5px solid transparent; transition:transform .2s; transform:rotate(90deg); flex-shrink:0; }
+.nav-group.collapsed .nav-group-header::before { transform:rotate(0); }
+.nav-group-children { list-style:none; margin:0 0 4px 19px; padding:3px 0 3px 13px; border-left:2px solid #e1e4e8; overflow:hidden; max-height:500px; transition:max-height .25s ease,opacity .2s ease,padding .2s ease; opacity:1; }
+.nav-group.collapsed .nav-group-children { max-height:0; opacity:0; padding:0 0 0 13px; }
+.nav-group-children li a { display:block; padding:4px 10px; font-size:13px; color:var(--c2); text-decoration:none; border-radius:4px; transition:background .15s,color .15s; }
+.nav-group-children li a:hover { background:#e8e8e8; color:var(--c1); }
+.nav-group-children li a.active { background:var(--nav-active); color:var(--accent); font-weight:600; }
+
+.content { margin-left:var(--sidebar-w); max-width:900px; padding:40px 48px; }
+article h1 { font-size:28px; font-weight:600; padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:20px; }
+article h2 { font-size:22px; font-weight:600; margin-top:32px; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid #eaecef; }
+article h3 { font-size:18px; font-weight:600; margin-top:24px; margin-bottom:10px; }
+article h4 { font-size:15px; font-weight:600; margin-top:20px; margin-bottom:8px; }
+article p { margin-bottom:14px; }
+article ul,article ol { margin-bottom:14px; padding-left:24px; }
+article li { margin-bottom:4px; }
+article a { color:var(--accent); text-decoration:none; }
+article a:hover { text-decoration:underline; }
+article code { background:var(--bg-code); padding:2px 6px; border-radius:4px; font-size:13px; font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+article pre { background:var(--bg-code); border:1px solid var(--border); border-radius:6px; padding:16px; overflow-x:auto; margin-bottom:16px; line-height:1.5; }
+article pre code { background:none; padding:0; font-size:13px; }
+article table { width:100%; border-collapse:collapse; margin-bottom:16px; font-size:14px; }
+article th,article td { border:1px solid var(--border); padding:8px 12px; text-align:left; }
+article th { background:var(--bg-code); font-weight:600; }
+article tr:nth-child(even) { background:#f8f9fa; }
+article hr { border:none; border-top:1px solid var(--border); margin:28px 0; }
+article blockquote { border-left:4px solid var(--accent); padding:8px 16px; margin:0 0 16px; color:var(--c2); background:#f8f9fa; border-radius:0 6px 6px 0; }
+article .mermaid { text-align:center; margin:20px 0; }
+footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); color:var(--c2); font-size:13px; }
+@media(max-width:768px) {
+  .sidebar { transform:translateX(-100%); }
+  .sidebar.open { transform:translateX(0); box-shadow:2px 0 8px rgba(0,0,0,.15); }
+  .sidebar-toggle { display:block; }
+  .content { margin-left:0; padding:50px 20px 40px; }
+  .content.shifted { margin-left:var(--sidebar-w); }
+}
+</style>
+</head>
+<body>
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>MiniCPM-o 4.5</h2>
+    <span class="sidebar-subtitle">项目文档</span>
+    <a href="../../en/api/duplex.html" class="lang-switch">English</a>
+  </div>
+  <ul class="nav-list">
+    <li><a href="../index.html">首页</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">系统架构</span>
+      <ul class="nav-group-children">
+        <li><a href="../architecture/index.html">架构概述</a></li>
+        <li><a href="../architecture/chat.html">Chat 模式</a></li>
+        <li><a href="../architecture/half-duplex.html">Half-Duplex 模式</a></li>
+        <li><a href="../architecture/duplex.html">Duplex 模式</a></li>
+        <li><a href="../architecture/internals.html">内部机制</a></li>
+      </ul>
+    </li>
+    <li><a href="../model.html">模型模块</a></li>
+    <li><a href="../compile.html">torch.compile</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">前端模块</span>
+      <ul class="nav-group-children">
+        <li><a href="../frontend/index.html">前端概述</a></li>
+        <li><a href="../frontend/pages.html">页面与路由</a></li>
+        <li><a href="../frontend/audio.html">音频处理</a></li>
+        <li><a href="../frontend/duplex-session.html">双工会话</a></li>
+        <li><a href="../frontend/components.html">UI 组件</a></li>
+      </ul>
+    </li>
+    <li class="nav-group">
+      <span class="nav-group-header">API 参考</span>
+      <ul class="nav-group-children">
+        <li><a href="../api/chat.html">Chat 模式</a></li>
+        <li><a href="../api/half-duplex.html">Half-Duplex 模式</a></li>
+        <li><a href="../api/duplex.html" class="active">Duplex 模式</a></li>
+        <li><a href="../api.html">通用</a></li>
+      </ul>
+    </li>
+    <li><a href="../deployment.html">配置与部署</a></li>
+  </ul>
+</nav>
+<main class="content" id="content">
+  <article><h1 id="duplex">Duplex 模式（全双工）</h1>
+<h3 id="_1">概述</h3>
+<p>Duplex 模式实现同时输入输出——用户可以一边说话（可选同时展示视频），模型一边生成音频回复。系统运行<strong>每秒一轮的推理循环</strong>：每秒将用户音频（以及可选的视频帧）送入模型，模型自主决定是<strong>监听</strong>（保持沉默，继续吸收输入）还是<strong>说话</strong>（生成文本 + 音频输出）。</p>
+<p>两个变体共享同一 WebSocket 端点，区别仅在于输入模态：</p>
+<table>
+<thead>
+<tr>
+<th>变体</th>
+<th>输入</th>
+<th>每秒客户端发送内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Omnimodal 全双工</strong></td>
+<td>语音 + 摄像头</td>
+<td><code>audio_chunk</code> + <code>video_frame</code></td>
+</tr>
+<tr>
+<td><strong>Audio 全双工</strong></td>
+<td>仅语音</td>
+<td>仅 <code>audio_chunk</code></td>
+</tr>
+</tbody>
+</table>
+<p>GPU Worker 在整个会话期间被独占。与 Half-Duplex 不同，没有显式的 VAD——模型自身基于音频内容和习得的监听/说话概率来决定何时说话。</p>
+<p><strong>能力</strong>：语音（+ 视觉）输入 → 文本 + 语音输出，自主监听/说话决策，打断支持，暂停/恢复，独占 GPU Worker。</p>
+<h3 id="_2">生命周期</h3>
+<pre class="mermaid">
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    C->>S: WS /ws/duplex/{session_id}
+    S-->>C: queued (ticket_id, position, ETA)
+    S-->>C: queue_done
+    C->>S: prepare (system_prompt + DuplexConfig)
+    S-->>C: prepared
+
+    loop 每秒推理循环（每 chunk_ms 毫秒）
+        C->>S: audio_chunk (+video_frame，Omni 变体)
+        S-->>C: result (is_listen / text + audio)
+    end
+
+    alt 暂停 / 恢复
+        C->>S: pause
+        S-->>C: paused
+        C->>S: resume
+        S-->>C: resumed
+    end
+
+    alt 客户端停止
+        C->>S: stop
+        S-->>C: stopped (session_id)
+    else 暂停超时
+        S-->>C: timeout
+    end
+    Note over C,S: GPU 释放，会话录制保存
+</pre>
+
+<p><strong>阶段 1 — 连接与排队</strong>：客户端连接 <code>wss://host/ws/duplex/{session_id}</code>，使用唯一的 session ID。session ID 前缀决定变体：<code>omni_*</code> 为 Omnimodal，<code>audio_duplex_*</code> 为纯音频。服务端将请求入队并发送 <code>queued</code>，包含 <code>ticket_id</code>、<code>position</code> 和 <code>eta_seconds</code>。等待期间客户端可能收到 <code>queue_update</code> 消息。分配到 Worker 后收到 <code>queue_done</code>。</p>
+<p><strong>阶段 2 — 准备</strong>：客户端发送 <code>prepare</code>，包含系统提示、DuplexConfig 参数，以及可选的参考音频路径。服务端初始化全双工会话：加载 TTS、prefill 系统提示、设置内部状态。客户端收到 <code>prepared</code>。此时应开始音频采集。</p>
+<p><strong>阶段 3 — 每秒推理循环</strong>：Duplex 模式的核心。每 <code>chunk_ms</code> 毫秒（默认 1000ms），客户端发送一个 <code>audio_chunk</code>（Omni 变体同时发送 <code>video_frame</code>）。服务端对每个 chunk 执行三步流水线：</p>
+<ol>
+<li><strong>Prefill</strong>：音频波形（和视频帧）被编码并追加到 KV Cache。</li>
+<li><strong>Generate</strong>：模型进行一步生成。输出<strong>监听</strong>决策（保持沉默，继续吸收输入）或<strong>说话</strong>决策（发出文本 token + 音频）。</li>
+<li><strong>Finalize</strong>：生成后的内务处理（更新轮次状态，处理 end-of-turn）。</li>
+</ol>
+<p>客户端每步收到一条 <code>result</code> 消息。</p>
+<p><strong>启动保护（<code>force_listen_count</code>）</strong>：前 N 步（默认 3），模型被强制处于监听状态，无论其内部判断如何。这防止模型在获得足够上下文之前就开始说话。</p>
+<p><strong>监听/说话行为</strong>：当 <code>result.is_listen</code> 为 <code>true</code> 时，模型听到了音频但选择保持沉默——<code>text</code> 和 <code>audio_data</code> 为空。当 <code>is_listen</code> 为 <code>false</code> 时，模型正在说话——<code>text</code> 包含生成的 token，<code>audio_data</code> 包含对应音频。多个连续的 <code>is_listen: false</code> 结果构成一个连续的说话轮次。当 <code>end_of_turn</code> 变为 <code>true</code> 时，模型完成了当前说话轮次并转回监听。</p>
+<p><strong>打断（<code>set_break</code>）</strong>：如果客户端检测到用户在模型说话过程中开始说话（基于输入音频能量或客户端侧 VAD），可以继续发送 <code>audio_chunk</code>。模型可能在下一步自然地从说话转回监听——这就是"打断"行为。</p>
+<p><strong>阶段 4 — 暂停 / 恢复</strong>：客户端可发送 <code>pause</code> 临时挂起会话（如用户切换标签页）。服务端回复 <code>paused</code>。暂停期间不应发送 <code>audio_chunk</code>。要恢复，发送 <code>resume</code>；服务端回复 <code>resumed</code>。如果暂停时间超过 <code>pause_timeout</code>（默认 60 秒），服务端发送 <code>timeout</code> 并自动释放 GPU。</p>
+<p><strong>阶段 5 — 终止</strong>：会话在以下情况结束：
+- <strong>客户端停止</strong>：客户端发送 <code>stop</code>。服务端回复 <code>stopped</code>，包含 <code>session_id</code>。
+- <strong>暂停超时</strong>：暂停超时后服务端发送 <code>timeout</code>。
+- <strong>连接中断</strong>：WebSocket 意外断开时，服务端自动清理会话。</p>
+<p>终止后，GPU 显存被释放，会话录制被保存。</p>
+<h3 id="websocket-wsshostwsduplexsession_id">WebSocket — wss://host/ws/duplex/{session_id}</h3>
+<h4 id="_3">客户端 → 服务端</h4>
+<table>
+<thead>
+<tr>
+<th>消息类型</th>
+<th>关键字段</th>
+<th>何时发送</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prepare</code></td>
+<td><code>prefix_system_prompt</code>, <code>config</code>, <code>ref_audio_path</code></td>
+<td><code>queue_done</code> 后发一次</td>
+<td>使用系统提示和配置初始化全双工会话</td>
+</tr>
+<tr>
+<td><code>audio_chunk</code></td>
+<td><code>audio</code> (Base64)</td>
+<td><code>prepared</code> 后每 <code>chunk_ms</code> ms</td>
+<td>发送一段麦克风音频（PCM float32, 16kHz）。chunk 时长应与 <code>config.chunk_ms</code> 匹配（默认 1s）</td>
+</tr>
+<tr>
+<td><code>video_frame</code></td>
+<td><code>frame</code> (Base64 JPEG)</td>
+<td>随每个 <code>audio_chunk</code> 一起（仅 Omni）</td>
+<td>发送一帧摄像头画面。仅 Omnimodal 变体使用</td>
+</tr>
+<tr>
+<td><code>pause</code></td>
+<td>—</td>
+<td>活跃会话期间任意时刻</td>
+<td>临时挂起会话。停止发送 <code>audio_chunk</code></td>
+</tr>
+<tr>
+<td><code>resume</code></td>
+<td>—</td>
+<td>收到 <code>paused</code> 后</td>
+<td>恢复已暂停的会话。重新开始发送 <code>audio_chunk</code></td>
+</tr>
+<tr>
+<td><code>stop</code></td>
+<td>—</td>
+<td>任意时刻</td>
+<td>优雅停止会话并释放 GPU</td>
+</tr>
+<tr>
+<td><code>client_diagnostic</code></td>
+<td><code>metrics</code></td>
+<td>定期（可选）</td>
+<td>客户端诊断指标，用于监控</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>prepare</code> 示例</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;prepare&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;prefix_system_prompt&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;你是一个有趣的助手。&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;config&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;generate_audio&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;chunk_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1000</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;temperature&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;top_p&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.8</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;top_k&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;force_listen_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;max_new_speak_tokens_per_chunk&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;listen_prob_scale&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;ls_mode&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;explicit&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;sample_rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">16000</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;ref_audio_path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;assets/ref_audio/ref_minicpm_signature.wav&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>DuplexConfig 字段</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>generate_audio</code></td>
+<td>bool</td>
+<td>true</td>
+<td>生成音频输出。设为 false 时仅产生文本</td>
+</tr>
+<tr>
+<td><code>ls_mode</code></td>
+<td>string</td>
+<td><code>"explicit"</code></td>
+<td>Listen/Speak 决策模式。控制模型如何在监听和说话之间做决策</td>
+</tr>
+<tr>
+<td><code>force_listen_count</code></td>
+<td>int</td>
+<td>3</td>
+<td>启动保护：前 N 步强制模型处于监听状态，防止在建立足够上下文之前过早说话</td>
+</tr>
+<tr>
+<td><code>max_new_speak_tokens_per_chunk</code></td>
+<td>int</td>
+<td>20</td>
+<td>每步最大 speak token 数。限制每秒生成的文本量以维持实时节奏</td>
+</tr>
+<tr>
+<td><code>temperature</code></td>
+<td>float</td>
+<td>0.7</td>
+<td>文本生成的采样温度</td>
+</tr>
+<tr>
+<td><code>top_k</code></td>
+<td>int</td>
+<td>20</td>
+<td>Top-K 采样</td>
+</tr>
+<tr>
+<td><code>top_p</code></td>
+<td>float</td>
+<td>0.8</td>
+<td>Top-P（核）采样</td>
+</tr>
+<tr>
+<td><code>listen_prob_scale</code></td>
+<td>float</td>
+<td>1.0</td>
+<td>监听概率缩放因子。值 &gt; 1.0 使模型更倾向监听（更沉默）；&lt; 1.0 使其更积极说话</td>
+</tr>
+<tr>
+<td><code>chunk_ms</code></td>
+<td>int</td>
+<td>1000</td>
+<td>音频块时长（毫秒）。决定每秒推理循环的节奏。客户端必须按此间隔发送音频块</td>
+</tr>
+<tr>
+<td><code>sample_rate</code></td>
+<td>int</td>
+<td>16000</td>
+<td>预期音频采样率</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>audio_chunk</code> 示例</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;audio_chunk&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;audio&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 PCM float32, 16kHz, 1s&gt;&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong><code>video_frame</code> 示例</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;video_frame&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;frame&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 JPEG&gt;&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h4 id="_4">服务端 → 客户端</h4>
+<p>消息按生命周期顺序到达。活跃循环期间，<code>result</code> 消息以 <code>chunk_ms</code> 的节奏到达。</p>
+<table>
+<thead>
+<tr>
+<th>消息类型</th>
+<th>关键字段</th>
+<th>生命周期阶段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>queued</code></td>
+<td><code>ticket_id</code>, <code>position</code>, <code>eta_seconds</code></td>
+<td>连接</td>
+<td>已入队，等待 GPU</td>
+</tr>
+<tr>
+<td><code>queue_update</code></td>
+<td><code>position</code>, <code>eta_seconds</code></td>
+<td>连接</td>
+<td>队列位置变化</td>
+</tr>
+<tr>
+<td><code>queue_done</code></td>
+<td>—</td>
+<td>连接</td>
+<td>GPU 已分配。客户端应发送 <code>prepare</code></td>
+</tr>
+<tr>
+<td><code>prepared</code></td>
+<td>—</td>
+<td>准备</td>
+<td>会话就绪。客户端应开始发送 <code>audio_chunk</code></td>
+</tr>
+<tr>
+<td><code>result</code></td>
+<td><code>is_listen</code>, <code>text</code>, <code>audio_data</code>, <code>end_of_turn</code>, 时间字段</td>
+<td>活跃循环</td>
+<td>每步推理结果。详见下方 DuplexGenerateResult</td>
+</tr>
+<tr>
+<td><code>paused</code></td>
+<td>—</td>
+<td>暂停</td>
+<td>会话已暂停</td>
+</tr>
+<tr>
+<td><code>resumed</code></td>
+<td>—</td>
+<td>恢复</td>
+<td>会话已恢复</td>
+</tr>
+<tr>
+<td><code>stopped</code></td>
+<td><code>session_id</code></td>
+<td>终止</td>
+<td>会话已停止，GPU 已释放</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td>—</td>
+<td>终止</td>
+<td>暂停超时，GPU 已释放</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>message</code></td>
+<td>任意</td>
+<td>错误；连接将关闭</td>
+</tr>
+</tbody>
+</table>
+<p><strong>DuplexGenerateResult 字段</strong>（<code>result</code> 消息载荷）：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>is_listen</code></td>
+<td>bool</td>
+<td><code>true</code> = 模型选择监听（沉默）。<code>false</code> = 模型选择说话（正在生成输出）</td>
+</tr>
+<tr>
+<td><code>text</code></td>
+<td>string</td>
+<td>生成的文本 token。<code>is_listen: true</code> 时为空字符串</td>
+</tr>
+<tr>
+<td><code>audio_data</code></td>
+<td>string</td>
+<td>24kHz Base64 音频。<code>is_listen: true</code> 时为空字符串。客户端应立即播放此音频</td>
+</tr>
+<tr>
+<td><code>end_of_turn</code></td>
+<td>bool</td>
+<td>当模型完成说话轮次并转回监听时为 <code>true</code>。仅在 <code>is_listen: false</code> 时有意义</td>
+</tr>
+<tr>
+<td><code>current_time</code></td>
+<td>int</td>
+<td>会话累计时间（毫秒）</td>
+</tr>
+<tr>
+<td><code>cost_llm_ms</code></td>
+<td>float</td>
+<td>本步 LLM 推理延迟（ms）</td>
+</tr>
+<tr>
+<td><code>cost_tts_ms</code></td>
+<td>float</td>
+<td>本步 TTS 合成延迟（ms）</td>
+</tr>
+<tr>
+<td><code>cost_all_ms</code></td>
+<td>float</td>
+<td>本步总延迟，含 prefill + generate + finalize（ms）。应保持低于 <code>chunk_ms</code> 以维持实时性能</td>
+</tr>
+<tr>
+<td><code>n_tokens</code></td>
+<td>int</td>
+<td>本步生成的 LLM token 数</td>
+</tr>
+<tr>
+<td><code>n_tts_tokens</code></td>
+<td>int</td>
+<td>本步生成的 TTS token 数</td>
+</tr>
+<tr>
+<td><code>server_send_ts</code></td>
+<td>float</td>
+<td>服务端发送时间戳（unix 秒）。用于客户端延迟测量</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>result</code> 示例（说话中）</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;result&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;is_listen&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;你好&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64, 24kHz&gt;&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;end_of_turn&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;current_time&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5000</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;cost_llm_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">45.2</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;cost_tts_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">12.3</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;cost_all_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">78.5</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;n_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;server_send_ts&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1708771200.123</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong><code>result</code> 示例（监听中）</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;result&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;is_listen&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;end_of_turn&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;current_time&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3000</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;cost_llm_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">12.1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;cost_tts_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;cost_all_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">35.4</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;n_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;server_send_ts&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1708771197.456</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="_5">示例：完整生命周期</h3>
+<p><strong>JavaScript — Audio Duplex</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">sessionId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;adx_&#39;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Date</span><span class="p">.</span><span class="nx">now</span><span class="p">().</span><span class="nx">toString</span><span class="p">(</span><span class="mf">36</span><span class="p">);</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">ws</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">WebSocket</span><span class="p">(</span><span class="sb">`wss://</span><span class="si">${</span><span class="nx">location</span><span class="p">.</span><span class="nx">host</span><span class="si">}</span><span class="sb">/ws/duplex/</span><span class="si">${</span><span class="nx">sessionId</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="kd">let</span><span class="w"> </span><span class="nx">currentText</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">;</span>
+
+<span class="c1">// -- 声音克隆参考音频 (base64 PCM float32, 16kHz) --</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">getRefAudioBase64</span><span class="p">();</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onopen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;已连接，等待排队...&#39;</span><span class="p">);</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onmessage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="nx">event</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">event</span><span class="p">.</span><span class="nx">data</span><span class="p">);</span>
+<span class="w">  </span><span class="k">switch</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">type</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;queued&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`排队 #</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">position</span><span class="si">}</span><span class="sb">，预计等待: </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">eta_seconds</span><span class="si">}</span><span class="sb">s`</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;queue_update&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`队列更新至 #</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">position</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;queue_done&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// GPU 已分配——发送 prepare，附带参考音频用于声音克隆。</span>
+<span class="w">      </span><span class="c1">// ref_audio_base64 同时用于 LLM 系统提示嵌入和 TTS 声音。</span>
+<span class="w">      </span><span class="c1">// 如需使用不同的 TTS 声音，可单独设置 tts_ref_audio_base64。</span>
+<span class="w">      </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span>
+<span class="w">        </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;prepare&#39;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">prefix_system_prompt</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;你是一个有趣的助手。&#39;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">ref_audio_base64</span><span class="o">:</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">config</span><span class="o">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="nx">generate_audio</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">          </span><span class="nx">chunk_ms</span><span class="o">:</span><span class="w"> </span><span class="mf">1000</span><span class="p">,</span>
+<span class="w">          </span><span class="nx">temperature</span><span class="o">:</span><span class="w"> </span><span class="mf">0.7</span><span class="p">,</span>
+<span class="w">          </span><span class="nx">force_listen_count</span><span class="o">:</span><span class="w"> </span><span class="mf">3</span><span class="p">,</span>
+<span class="w">        </span><span class="p">},</span>
+<span class="w">      </span><span class="p">}));</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;prepared&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;会话就绪，开始音频采集&#39;</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">startPerSecondCapture</span><span class="p">();</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;result&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// 每秒推理结果：模型决定监听或说话</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">is_listen</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`[</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">current_time</span><span class="si">}</span><span class="sb">ms] 监听中 (</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">cost_all_ms</span><span class="p">.</span><span class="nx">toFixed</span><span class="p">(</span><span class="mf">0</span><span class="p">)</span><span class="si">}</span><span class="sb">ms)`</span><span class="p">);</span>
+<span class="w">      </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">currentText</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">text</span><span class="p">;</span>
+<span class="w">        </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`[</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">current_time</span><span class="si">}</span><span class="sb">ms] 说话中: &quot;</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">text</span><span class="si">}</span><span class="sb">&quot; (</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">cost_all_ms</span><span class="p">.</span><span class="nx">toFixed</span><span class="p">(</span><span class="mf">0</span><span class="p">)</span><span class="si">}</span><span class="sb">ms)`</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">audio_data</span><span class="p">)</span><span class="w"> </span><span class="nx">playAudio</span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">audio_data</span><span class="p">);</span><span class="w">  </span><span class="c1">// PCM float32, 24kHz</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">end_of_turn</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`轮次结束，完整文本: &quot;</span><span class="si">${</span><span class="nx">currentText</span><span class="si">}</span><span class="sb">&quot;`</span><span class="p">);</span>
+<span class="w">          </span><span class="nx">currentText</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;paused&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;会话已暂停&#39;</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;resumed&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;会话已恢复&#39;</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;stopped&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`会话已停止: </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">session_id</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;timeout&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;暂停超时——会话结束&#39;</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;error&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="s1">&#39;错误:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">message</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+
+<span class="k">async</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="nx">startPerSecondCapture</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">stream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">navigator</span><span class="p">.</span><span class="nx">mediaDevices</span><span class="p">.</span><span class="nx">getUserMedia</span><span class="p">({</span><span class="w"> </span><span class="nx">audio</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">sampleRate</span><span class="o">:</span><span class="w"> </span><span class="mf">16000</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">ctx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">AudioContext</span><span class="p">({</span><span class="w"> </span><span class="nx">sampleRate</span><span class="o">:</span><span class="w"> </span><span class="mf">16000</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="k">await</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">audioWorklet</span><span class="p">.</span><span class="nx">addModule</span><span class="p">(</span><span class="s1">&#39;capture-processor.js&#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">createMediaStreamSource</span><span class="p">(</span><span class="nx">stream</span><span class="p">);</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">node</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">AudioWorkletNode</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;capture-processor&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">processorOptions</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">chunkSize</span><span class="o">:</span><span class="w"> </span><span class="mf">16000</span><span class="w"> </span><span class="p">}</span><span class="w">  </span><span class="c1">// 16kHz 采样率下 1 秒的音频</span>
+<span class="w">  </span><span class="p">});</span>
+<span class="w">  </span><span class="nx">source</span><span class="p">.</span><span class="nx">connect</span><span class="p">(</span><span class="nx">node</span><span class="p">);</span>
+
+<span class="w">  </span><span class="c1">// AudioWorklet 是事件驱动的，不是定时器：</span>
+<span class="w">  </span><span class="c1">// 音频渲染线程实时累积麦克风采样，每积满 1 秒数据时自动触发 &#39;chunk&#39;。</span>
+<span class="w">  </span><span class="c1">// 无需 sleep 或 setInterval。</span>
+<span class="w">  </span><span class="nx">node</span><span class="p">.</span><span class="nx">port</span><span class="p">.</span><span class="nx">onmessage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="p">.</span><span class="nx">data</span><span class="p">.</span><span class="nx">type</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">&#39;chunk&#39;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">ws</span><span class="p">.</span><span class="nx">readyState</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="nx">WebSocket</span><span class="p">.</span><span class="nx">OPEN</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="kd">const</span><span class="w"> </span><span class="nx">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;audio_chunk&#39;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">audio</span><span class="o">:</span><span class="w"> </span><span class="nx">arrayBufferToBase64</span><span class="p">(</span><span class="nx">e</span><span class="p">.</span><span class="nx">data</span><span class="p">.</span><span class="nx">audio</span><span class="p">.</span><span class="nx">buffer</span><span class="p">),</span>
+<span class="w">      </span><span class="p">};</span>
+<span class="w">      </span><span class="c1">// Omni 变体额外附加视频帧：</span>
+<span class="w">      </span><span class="c1">// msg.frame_base64_list = [captureFrameAsJpegBase64()];</span>
+<span class="w">      </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">(</span><span class="nx">msg</span><span class="p">));</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">};</span>
+<span class="p">}</span>
+
+<span class="kd">function</span><span class="w"> </span><span class="nx">pauseSession</span><span class="p">()</span><span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;pause&#39;</span><span class="w"> </span><span class="p">}));</span><span class="w"> </span><span class="p">}</span>
+<span class="kd">function</span><span class="w"> </span><span class="nx">resumeSession</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;resume&#39;</span><span class="w"> </span><span class="p">}));</span><span class="w"> </span><span class="p">}</span>
+<span class="kd">function</span><span class="w"> </span><span class="nx">stopSession</span><span class="p">()</span><span class="w">   </span><span class="p">{</span><span class="w"> </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;stop&#39;</span><span class="w"> </span><span class="p">}));</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+
+<p><strong>Python</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">base64</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">websockets</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_ref_audio</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;加载 WAV 文件，返回 base64 编码的 PCM float32 (16kHz)。&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
+    <span class="n">audio</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">samplerate</span><span class="o">=</span><span class="mi">16000</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">audio</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">audio_file_to_1s_chunks</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">sr</span><span class="o">=</span><span class="mi">16000</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;读取音频文件，按 1 秒切分为 float32 块并 base64 编码。&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
+    <span class="n">audio</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">samplerate</span><span class="o">=</span><span class="n">sr</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">audio</span><span class="p">),</span> <span class="n">sr</span><span class="p">):</span>
+        <span class="k">yield</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">audio</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">sr</span><span class="p">]</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">duplex_session</span><span class="p">(</span>
+    <span class="n">audio_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">server</span><span class="o">=</span><span class="s2">&quot;wss://localhost:8006&quot;</span><span class="p">,</span>
+    <span class="n">ref_audio_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="s2">&quot;ref.wav&quot;</span><span class="p">,</span>
+<span class="p">):</span>
+    <span class="n">session_id</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;adx_</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="o">*</span><span class="mi">1000</span><span class="p">)</span><span class="si">:</span><span class="s2">x</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="n">url</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">server</span><span class="si">}</span><span class="s2">/ws/duplex/</span><span class="si">{</span><span class="n">session_id</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">async</span> <span class="k">with</span> <span class="n">websockets</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">as</span> <span class="n">ws</span><span class="p">:</span>
+        <span class="c1"># 1. 等待排队分配</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">recv</span><span class="p">())</span>
+            <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;queue_done&quot;</span><span class="p">:</span>
+                <span class="k">break</span>
+
+        <span class="c1"># 2. 发送 prepare — 附带参考音频用于声音克隆。</span>
+        <span class="c1">#    ref_audio_base64 同时用于 LLM 系统提示嵌入和 TTS 声音。</span>
+        <span class="c1">#    如需使用不同的 TTS 声音，可单独设置 tts_ref_audio_base64。</span>
+        <span class="n">prepare_msg</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;prepare&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;prefix_system_prompt&quot;</span><span class="p">:</span> <span class="s2">&quot;你是一个有趣的助手。&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;config&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;generate_audio&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+                <span class="s2">&quot;chunk_ms&quot;</span><span class="p">:</span> <span class="mi">1000</span><span class="p">,</span>
+                <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">,</span>
+                <span class="s2">&quot;force_listen_count&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+            <span class="p">},</span>
+        <span class="p">}</span>
+        <span class="k">if</span> <span class="n">ref_audio_path</span><span class="p">:</span>
+            <span class="n">prepare_msg</span><span class="p">[</span><span class="s2">&quot;ref_audio_base64&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">load_ref_audio</span><span class="p">(</span><span class="n">ref_audio_path</span><span class="p">)</span>
+        <span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">prepare_msg</span><span class="p">))</span>
+
+        <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">recv</span><span class="p">())</span>
+        <span class="k">assert</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;prepared&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;会话就绪&quot;</span><span class="p">)</span>
+
+        <span class="c1"># 3. 并发发送音频和接收结果</span>
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">send_audio</span><span class="p">():</span>
+            <span class="k">for</span> <span class="n">chunk_b64</span> <span class="ow">in</span> <span class="n">audio_file_to_1s_chunks</span><span class="p">(</span><span class="n">audio_path</span><span class="p">):</span>
+                <span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+                    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;audio_chunk&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;audio&quot;</span><span class="p">:</span> <span class="n">chunk_b64</span><span class="p">,</span>
+                <span class="p">}))</span>
+                <span class="c1"># 模拟实时麦克风节奏：浏览器端 AudioWorklet 由音频渲染线程</span>
+                <span class="c1"># 实时驱动，每积满 1 秒数据时自动触发——无需 sleep。</span>
+                <span class="c1"># 这里从文件读取，需要 sleep 来匹配服务端的每秒推理循环。</span>
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+            <span class="c1"># 等待服务端处理完最后的 chunk</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+            <span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;stop&quot;</span><span class="p">}))</span>
+
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">recv_results</span><span class="p">():</span>
+            <span class="n">current_text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="k">async</span> <span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">ws</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;result&quot;</span><span class="p">:</span>
+                    <span class="n">t</span> <span class="o">=</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;current_time&quot;</span><span class="p">]</span>
+                    <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;is_listen&quot;</span><span class="p">]:</span>
+                        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">ms] 监听中 (</span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;cost_all_ms&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">ms)&quot;</span><span class="p">)</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">current_text</span> <span class="o">+=</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+                        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">ms] 说话中: </span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;text&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">)</span><span class="si">!r}</span><span class="s2"> (</span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;cost_all_ms&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">ms)&quot;</span><span class="p">)</span>
+                        <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;end_of_turn&quot;</span><span class="p">]:</span>
+                            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  轮次结束: </span><span class="si">{</span><span class="n">current_text</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+                            <span class="n">current_text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+                <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;stopped&quot;</span><span class="p">,</span> <span class="s2">&quot;timeout&quot;</span><span class="p">):</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;会话结束: </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                    <span class="k">break</span>
+
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">send_audio</span><span class="p">(),</span> <span class="n">recv_results</span><span class="p">())</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">duplex_session</span><span class="p">(</span><span class="s2">&quot;test_audio.wav&quot;</span><span class="p">))</span>
+</code></pre></div>
+
+<h3 id="processor">Processor 方法链</h3>
+<p>Duplex 会话中每一秒的内部处理流水线：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>方法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>初始化</td>
+<td><code>UnifiedProcessor.set_duplex_mode()</code></td>
+<td>切换到 Duplex 模式（&lt; 0.1ms），返回 <code>DuplexView</code></td>
+</tr>
+<tr>
+<td>准备</td>
+<td><code>DuplexView.prepare(system_prompt, ref_audio_path, prompt_wav_path)</code></td>
+<td>初始化会话：prefill 系统提示，加载 TTS 参考音频</td>
+</tr>
+<tr>
+<td>每步</td>
+<td><code>DuplexView.prefill(audio_waveform, frame_list, ...)</code></td>
+<td>编码并追加 1 秒音频（+ 视频帧）到 KV Cache</td>
+</tr>
+<tr>
+<td>每步</td>
+<td><code>DuplexView.generate(force_listen)</code></td>
+<td>执行一步生成。返回 <code>DuplexGenerateResult</code>，包含监听/说话决策、文本、音频和耗时</td>
+</tr>
+<tr>
+<td>每步</td>
+<td><code>DuplexView.finalize()</code></td>
+<td>生成后的内务处理：更新轮次计数器，处理 end_of_turn 的延迟终结</td>
+</tr>
+<tr>
+<td>打断</td>
+<td><code>DuplexView.set_break()</code> / <code>clear_break()</code></td>
+<td>设置或清除打断标志。设置后模型在下一步将转为监听</td>
+</tr>
+<tr>
+<td>终止</td>
+<td><code>DuplexView.stop()</code></td>
+<td>通知会话停止</td>
+</tr>
+<tr>
+<td>清理</td>
+<td><code>DuplexView.cleanup()</code></td>
+<td>释放 GPU 显存，清空 KV Cache，终结会话状态</td>
+</tr>
+</tbody>
+</table></article>
+  <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; 由 build_docs.py 自动生成</p></footer>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({startOnLoad:true,theme:'default',securityLevel:'loose'});
+</script>
+<script>
+hljs.highlightAll();
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('content').classList.toggle('shifted');}
+document.querySelectorAll('.nav-group-header').forEach(function(h){h.addEventListener('click',function(){this.parentElement.classList.toggle('collapsed');});});
+document.addEventListener('click',function(e){var s=document.getElementById('sidebar'),t=document.querySelector('.sidebar-toggle');if(window.innerWidth<=768&&s.classList.contains('open')&&!s.contains(e.target)&&!t.contains(e.target)){s.classList.remove('open');document.getElementById('content').classList.remove('shifted');}});
+</script>
+</body>
+</html>

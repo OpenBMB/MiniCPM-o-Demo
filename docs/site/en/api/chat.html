@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Chat Mode - MiniCPM-o 4.5 Docs</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --sidebar-w: 260px;
+  --bg: #fff; --bg-side: #f8f9fa; --bg-code: #f6f8fa;
+  --c1: #24292f; --c2: #57606a;
+  --border: #d0d7de; --accent: #0969da; --nav-active: #ddf4ff;
+}
+body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif; color:var(--c1); line-height:1.6; background:var(--bg); }
+.sidebar-toggle { position:fixed; top:12px; left:12px; z-index:1001; background:var(--bg-side); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-size:18px; cursor:pointer; display:none; }
+.sidebar { position:fixed; top:0; left:0; width:var(--sidebar-w); height:100vh; overflow-y:auto; background:var(--bg-side); border-right:1px solid var(--border); padding:20px 0; z-index:1000; transition:transform .3s; }
+.sidebar-header { padding:0 20px 16px; border-bottom:1px solid var(--border); margin-bottom:8px; }
+.sidebar-header h2 { font-size:16px; font-weight:600; }
+.sidebar-subtitle { font-size:12px; color:var(--c2); }
+.lang-switch { display:inline-block; margin-top:6px; font-size:12px; color:var(--accent); text-decoration:none; padding:2px 8px; border:1px solid var(--border); border-radius:4px; transition:background .15s; }
+.lang-switch:hover { background:var(--nav-active); text-decoration:none; }
+
+.nav-list { list-style:none; padding:0 8px; }
+.nav-list > li > a { display:block; padding:7px 12px; color:var(--c2); text-decoration:none; font-size:14px; border-radius:6px; transition:background .15s,color .15s; }
+.nav-list > li > a:hover { background:#e8e8e8; color:var(--c1); }
+.nav-list > li > a.active { background:var(--nav-active); color:var(--accent); font-weight:600; }
+
+.nav-group { margin-top:4px; }
+.nav-group-header { display:flex; align-items:center; gap:6px; padding:8px 12px; color:var(--c1); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; border-radius:6px; user-select:none; transition:background .15s; }
+.nav-group-header:hover { background:#eaeef2; }
+.nav-group-header::before { content:""; display:inline-block; width:0; height:0; border-left:5px solid var(--c2); border-top:3.5px solid transparent; border-bottom:3.5px solid transparent; transition:transform .2s; transform:rotate(90deg); flex-shrink:0; }
+.nav-group.collapsed .nav-group-header::before { transform:rotate(0); }
+.nav-group-children { list-style:none; margin:0 0 4px 19px; padding:3px 0 3px 13px; border-left:2px solid #e1e4e8; overflow:hidden; max-height:500px; transition:max-height .25s ease,opacity .2s ease,padding .2s ease; opacity:1; }
+.nav-group.collapsed .nav-group-children { max-height:0; opacity:0; padding:0 0 0 13px; }
+.nav-group-children li a { display:block; padding:4px 10px; font-size:13px; color:var(--c2); text-decoration:none; border-radius:4px; transition:background .15s,color .15s; }
+.nav-group-children li a:hover { background:#e8e8e8; color:var(--c1); }
+.nav-group-children li a.active { background:var(--nav-active); color:var(--accent); font-weight:600; }
+
+.content { margin-left:var(--sidebar-w); max-width:900px; padding:40px 48px; }
+article h1 { font-size:28px; font-weight:600; padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:20px; }
+article h2 { font-size:22px; font-weight:600; margin-top:32px; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid #eaecef; }
+article h3 { font-size:18px; font-weight:600; margin-top:24px; margin-bottom:10px; }
+article h4 { font-size:15px; font-weight:600; margin-top:20px; margin-bottom:8px; }
+article p { margin-bottom:14px; }
+article ul,article ol { margin-bottom:14px; padding-left:24px; }
+article li { margin-bottom:4px; }
+article a { color:var(--accent); text-decoration:none; }
+article a:hover { text-decoration:underline; }
+article code { background:var(--bg-code); padding:2px 6px; border-radius:4px; font-size:13px; font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+article pre { background:var(--bg-code); border:1px solid var(--border); border-radius:6px; padding:16px; overflow-x:auto; margin-bottom:16px; line-height:1.5; }
+article pre code { background:none; padding:0; font-size:13px; }
+article table { width:100%; border-collapse:collapse; margin-bottom:16px; font-size:14px; }
+article th,article td { border:1px solid var(--border); padding:8px 12px; text-align:left; }
+article th { background:var(--bg-code); font-weight:600; }
+article tr:nth-child(even) { background:#f8f9fa; }
+article hr { border:none; border-top:1px solid var(--border); margin:28px 0; }
+article blockquote { border-left:4px solid var(--accent); padding:8px 16px; margin:0 0 16px; color:var(--c2); background:#f8f9fa; border-radius:0 6px 6px 0; }
+article .mermaid { text-align:center; margin:20px 0; }
+footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); color:var(--c2); font-size:13px; }
+@media(max-width:768px) {
+  .sidebar { transform:translateX(-100%); }
+  .sidebar.open { transform:translateX(0); box-shadow:2px 0 8px rgba(0,0,0,.15); }
+  .sidebar-toggle { display:block; }
+  .content { margin-left:0; padding:50px 20px 40px; }
+  .content.shifted { margin-left:var(--sidebar-w); }
+}
+</style>
+</head>
+<body>
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>MiniCPM-o 4.5</h2>
+    <span class="sidebar-subtitle">Documentation</span>
+    <a href="../../zh/api/chat.html" class="lang-switch">中文</a>
+  </div>
+  <ul class="nav-list">
+    <li><a href="../index.html">Home</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">Architecture</span>
+      <ul class="nav-group-children">
+        <li><a href="../architecture/index.html">Overview</a></li>
+        <li><a href="../architecture/chat.html">Chat Mode</a></li>
+        <li><a href="../architecture/half-duplex.html">Half-Duplex Mode</a></li>
+        <li><a href="../architecture/duplex.html">Duplex Mode</a></li>
+        <li><a href="../architecture/internals.html">Internals</a></li>
+      </ul>
+    </li>
+    <li><a href="../model.html">Model</a></li>
+    <li><a href="../compile.html">torch.compile</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">Frontend</span>
+      <ul class="nav-group-children">
+        <li><a href="../frontend/index.html">Overview</a></li>
+        <li><a href="../frontend/pages.html">Pages & Routes</a></li>
+        <li><a href="../frontend/audio.html">Audio</a></li>
+        <li><a href="../frontend/duplex-session.html">Duplex Session</a></li>
+        <li><a href="../frontend/components.html">UI Components</a></li>
+      </ul>
+    </li>
+    <li class="nav-group">
+      <span class="nav-group-header">API Reference</span>
+      <ul class="nav-group-children">
+        <li><a href="../api/chat.html" class="active">Chat Mode</a></li>
+        <li><a href="../api/half-duplex.html">Half-Duplex Mode</a></li>
+        <li><a href="../api/duplex.html">Duplex Mode</a></li>
+        <li><a href="../api.html">Common</a></li>
+      </ul>
+    </li>
+    <li><a href="../deployment.html">Deployment</a></li>
+  </ul>
+</nav>
+<main class="content" id="content">
+  <article><h1 id="chat-mode-turn-based-chat">Chat Mode (Turn-based Chat)</h1>
+<h2 id="audio-format-specification">Audio Format Specification</h2>
+<table>
+<thead>
+<tr>
+<th>Direction</th>
+<th>Format</th>
+<th>Sample Rate</th>
+<th>Channels</th>
+<th>Encoding</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Client → Server</td>
+<td>PCM Float32</td>
+<td>16000 Hz</td>
+<td>Mono</td>
+<td>Base64</td>
+</tr>
+<tr>
+<td>Server → Client</td>
+<td>PCM Float32</td>
+<td>24000 Hz</td>
+<td>Mono</td>
+<td>Base64</td>
+</tr>
+</tbody>
+</table>
+<p>Base64 encodes the raw bytes of the Float32 array directly (not WAV, not Opus).</p>
+<hr />
+<h2 id="common-data-types">Common Data Types</h2>
+<h3 id="message">Message</h3>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;system | user | assistant&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;plain text string&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>content</code> can also be a multimodal content list:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;text&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Describe this image&quot;</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;image&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64&gt;&quot;</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;audio&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 PCM float32&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sample_rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">16000</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;video&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 video file&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;stack_frames&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>Content Type</th>
+<th>Required Fields</th>
+<th>Optional Fields</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>text</code></td>
+<td><code>text</code></td>
+<td>—</td>
+<td>Text content</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td><code>data</code> (Base64)</td>
+<td>—</td>
+<td>Image content</td>
+</tr>
+<tr>
+<td><code>audio</code></td>
+<td><code>data</code> (Base64 PCM float32)</td>
+<td><code>sample_rate</code> (default: 16000)</td>
+<td>Audio content</td>
+</tr>
+<tr>
+<td><code>video</code></td>
+<td><code>data</code> (Base64 video file)</td>
+<td><code>stack_frames</code> (default: 1)</td>
+<td>Video content; frames and audio are auto-extracted</td>
+</tr>
+</tbody>
+</table>
+<h3 id="generationconfig">GenerationConfig</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_new_tokens</code></td>
+<td>int</td>
+<td>512</td>
+<td>Maximum number of tokens to generate</td>
+</tr>
+<tr>
+<td><code>temperature</code></td>
+<td>float</td>
+<td>0.7</td>
+<td>Sampling temperature</td>
+</tr>
+<tr>
+<td><code>top_p</code></td>
+<td>float</td>
+<td>0.8</td>
+<td>Top-P (nucleus) sampling</td>
+</tr>
+<tr>
+<td><code>length_penalty</code></td>
+<td>float</td>
+<td>1.0</td>
+<td>Length penalty coefficient</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ttsconfig">TTSConfig</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td>true</td>
+<td>Enable voice output</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>string</td>
+<td><code>"default"</code></td>
+<td>TTS mode: <code>default</code>, <code>audio_assistant</code>, <code>omni</code>, <code>audio_roleplay</code>, <code>voice_cloning</code></td>
+</tr>
+<tr>
+<td><code>ref_audio_path</code></td>
+<td>string</td>
+<td>—</td>
+<td>Server-side reference audio path</td>
+</tr>
+<tr>
+<td><code>ref_audio_data</code></td>
+<td>string</td>
+<td>—</td>
+<td>Base64-encoded reference audio (takes precedence over <code>ref_audio_path</code>)</td>
+</tr>
+<tr>
+<td><code>language</code></td>
+<td>string</td>
+<td>—</td>
+<td>Language hint</td>
+</tr>
+</tbody>
+</table>
+<h3 id="imageconfig">ImageConfig</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_slice_nums</code></td>
+<td>int</td>
+<td>null</td>
+<td>Maximum image slices for high-resolution processing</td>
+</tr>
+<tr>
+<td><code>use_image_id</code></td>
+<td>bool</td>
+<td>true</td>
+<td>Assign image IDs in multi-image contexts</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="overview">Overview</h3>
+<p>Turn-based Chat provides stateless multimodal dialogue with support for text, image, audio, and video inputs. It supports both <strong>streaming</strong> (token-by-token) and <strong>non-streaming</strong> (one-shot) generation.</p>
+<p>Each request is stateless — the server performs a full prefill of all messages without reusing KV Cache from previous requests. The GPU is released immediately after inference completes, making it the most resource-efficient mode.</p>
+<p><strong>Capabilities</strong>: Text + Image + Audio + Video input, Text + Audio output, streaming output, multi-turn dialogue (client-managed history).</p>
+<h3 id="lifecycle">Lifecycle</h3>
+<pre class="mermaid">
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    C->>S: WS /ws/chat
+    S-->>C: (queued → queue_done)
+    S-->>C: prefill_done
+    alt Streaming mode
+        loop Until generation complete
+            S-->>C: chunk (text_delta + audio_data)
+        end
+    end
+    S-->>C: done (full text + audio)
+    Note over C,S: Connection closed, GPU released
+</pre>
+
+<p><strong>Phase 1 — Request &amp; Queue</strong>: Client opens a WebSocket connection and sends the request. The server places it in a shared FIFO queue. When a GPU Worker becomes available, the request is dequeued and processing begins.</p>
+<p><strong>Phase 2 — Prefill</strong>: All messages are encoded and fed into the model in one shot. Upon completion, the server sends <code>prefill_done</code> with <code>input_tokens</code> count. This phase is the main latency contributor — it scales with total input size including images and audio.</p>
+<p><strong>Phase 3 — Generation</strong>: In streaming mode, the model generates tokens one by one, sending each as a <code>chunk</code> message containing <code>text_delta</code> and optionally <code>audio_data</code>. In non-streaming mode, all tokens are generated internally and only the final result is returned. Streaming mode provides much lower time-to-first-token.</p>
+<p><strong>Phase 4 — Completion</strong>: The server sends <code>done</code> with the full generated text, audio data, and token statistics. The WebSocket connection closes. The GPU Worker is returned to the pool.</p>
+<p><strong>Error handling</strong>: If any error occurs during processing, the server sends an <code>error</code> message and closes the connection. The GPU Worker is still released.</p>
+<h3 id="websocket-wsshostwschat">WebSocket — wss://host/ws/chat</h3>
+<p>Turn-based Chat via WebSocket, supporting both streaming and non-streaming modes. Delivers incremental results in real time.</p>
+<h4 id="full-session-lifecycle">Full Session Lifecycle</h4>
+<ol>
+<li>Client opens WebSocket connection to <code>wss://host/ws/chat</code>.</li>
+<li>Client sends <strong>one</strong> JSON message containing the full request (messages, config, etc.).</li>
+<li>Server enqueues the request. If the queue is not empty, the client waits.</li>
+<li>Server performs prefill and sends <code>prefill_done</code>.</li>
+<li>If <code>streaming: true</code>, server sends a sequence of <code>chunk</code> messages as tokens are generated.</li>
+<li>Server sends <code>done</code> with the complete result.</li>
+<li>Connection closes automatically.</li>
+</ol>
+<p>If an error occurs at any stage, the server sends <code>error</code> and closes the connection.</p>
+<h4 id="client-server">Client → Server</h4>
+<p>One JSON message sent immediately after connection:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;messages&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hello!&quot;</span><span class="p">}</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;streaming&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;generation&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;max_new_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;length_penalty&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.1</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;tts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;ref_audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64&gt;&quot;</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;image&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;max_slice_nums&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;omni_mode&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;enable_thinking&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>messages</code></td>
+<td>Message[]</td>
+<td>—</td>
+<td>Conversation messages</td>
+</tr>
+<tr>
+<td><code>streaming</code></td>
+<td>bool</td>
+<td>true</td>
+<td>Enable streaming output (token-by-token)</td>
+</tr>
+<tr>
+<td><code>generation</code></td>
+<td>GenerationConfig</td>
+<td>—</td>
+<td>Generation parameters</td>
+</tr>
+<tr>
+<td><code>tts</code></td>
+<td>TTSConfig</td>
+<td>—</td>
+<td>TTS configuration</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td>ImageConfig</td>
+<td>—</td>
+<td>Image processing parameters</td>
+</tr>
+<tr>
+<td><code>omni_mode</code></td>
+<td>bool</td>
+<td>false</td>
+<td>Enable omni mode for video input</td>
+</tr>
+<tr>
+<td><code>enable_thinking</code></td>
+<td>bool</td>
+<td>false</td>
+<td>Enable thinking mode</td>
+</tr>
+</tbody>
+</table>
+<h4 id="server-client">Server → Client</h4>
+<p>Messages arrive in strict order: <code>prefill_done</code> → (<code>chunk</code>...) → <code>done</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Message Type</th>
+<th>Key Fields</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prefill_done</code></td>
+<td><code>input_tokens</code></td>
+<td>Prefill complete; generation starting</td>
+</tr>
+<tr>
+<td><code>chunk</code></td>
+<td><code>text_delta</code>, <code>audio_data</code></td>
+<td>One streaming token (only when <code>streaming: true</code>). <code>text_delta</code> is the incremental text; <code>audio_data</code> is the corresponding audio segment (may be null for some chunks)</td>
+</tr>
+<tr>
+<td><code>done</code></td>
+<td><code>text</code>, <code>generated_tokens</code>, <code>input_tokens</code>, <code>audio_data</code>, <code>recording_session_id</code></td>
+<td>Generation complete. <code>text</code> contains the full accumulated text; <code>audio_data</code> contains the full audio (in non-streaming mode) or the final segment (in streaming mode)</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>error</code></td>
+<td>Error message; connection will close</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>chunk</code> example</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;chunk&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;text_delta&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hello&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64, 24kHz&gt;&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong><code>done</code> example</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;done&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hello! How can I help you?&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;generated_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">15</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;input_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64, 24kHz&gt;&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;recording_session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;chat_abc123&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="example-full-lifecycle">Example: Full Lifecycle</h3>
+<p><strong>JavaScript</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="c1">// -- Reference audio for voice cloning (base64 PCM float32, 16kHz) --</span>
+<span class="c1">// Loaded from an uploaded file or the server default (/api/default_ref_audio).</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">getRefAudioBase64</span><span class="p">();</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">ws</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">WebSocket</span><span class="p">(</span><span class="sb">`wss://</span><span class="si">${</span><span class="nx">location</span><span class="p">.</span><span class="nx">host</span><span class="si">}</span><span class="sb">/ws/chat`</span><span class="p">);</span>
+<span class="kd">let</span><span class="w"> </span><span class="nx">fullText</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">;</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onopen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">payload</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">messages</span><span class="o">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">      </span><span class="c1">// System message uses content-list format: [text, audio, text].</span>
+<span class="w">      </span><span class="c1">// The audio item embeds the reference voice into the LLM context.</span>
+<span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nx">role</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;system&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="o">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;text&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">text</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Mimic the voice from the audio sample.&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;audio&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">data</span><span class="o">:</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="w"> </span><span class="p">},</span><span class="w">          </span><span class="c1">// reference voice</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;text&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">text</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;You are a helpful assistant. Reply naturally.&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">      </span><span class="p">]},</span>
+<span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nx">role</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;user&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Hello!&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">],</span>
+<span class="w">    </span><span class="nx">streaming</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">generation</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">max_new_tokens</span><span class="o">:</span><span class="w"> </span><span class="mf">256</span><span class="p">,</span><span class="w"> </span><span class="nx">temperature</span><span class="o">:</span><span class="w"> </span><span class="mf">0.7</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">tts</span><span class="o">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nx">enabled</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">mode</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;audio_assistant&#39;</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">ref_audio_data</span><span class="o">:</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="p">,</span><span class="w">  </span><span class="c1">// same audio initializes TTS vocoder</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">  </span><span class="p">};</span>
+<span class="w">  </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">(</span><span class="nx">payload</span><span class="p">));</span>
+<span class="p">};</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onmessage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="nx">event</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">event</span><span class="p">.</span><span class="nx">data</span><span class="p">);</span>
+<span class="w">  </span><span class="k">switch</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">type</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;prefill_done&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// Server finished prefilling the prompt into KV Cache</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Prefill done, </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">input_tokens</span><span class="si">}</span><span class="sb"> input tokens`</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;chunk&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// Streaming token: incremental text and/or audio segment</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">text_delta</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fullText</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">text_delta</span><span class="p">;</span>
+<span class="w">        </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;Streaming:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">fullText</span><span class="p">);</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">audio_data</span><span class="p">)</span><span class="w"> </span><span class="nx">playAudio</span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">audio_data</span><span class="p">);</span><span class="w">  </span><span class="c1">// PCM float32, 24kHz</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;done&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// Generation complete — full text and token stats</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;Final text:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">text</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Tokens: </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">input_tokens</span><span class="si">}</span><span class="sb"> in, </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">generated_tokens</span><span class="si">}</span><span class="sb"> out`</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">ws</span><span class="p">.</span><span class="nx">close</span><span class="p">();</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;error&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="s1">&#39;Error:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">error</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">ws</span><span class="p">.</span><span class="nx">close</span><span class="p">();</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onerror</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="s1">&#39;WebSocket error&#39;</span><span class="p">);</span>
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onclose</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;Connection closed&#39;</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>Python</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">base64</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">websockets</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_ref_audio</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load a WAV file and return base64-encoded PCM float32 at 16kHz.&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
+    <span class="n">audio</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">samplerate</span><span class="o">=</span><span class="mi">16000</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">audio</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_streaming</span><span class="p">(</span>
+    <span class="n">server_url</span><span class="o">=</span><span class="s2">&quot;wss://localhost:8006/ws/chat&quot;</span><span class="p">,</span>
+    <span class="n">ref_audio_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="s2">&quot;ref.wav&quot;</span><span class="p">,</span>
+<span class="p">):</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">websockets</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">server_url</span><span class="p">)</span> <span class="k">as</span> <span class="n">ws</span><span class="p">:</span>
+        <span class="c1"># Load reference audio for voice cloning</span>
+        <span class="n">ref_b64</span> <span class="o">=</span> <span class="n">load_ref_audio</span><span class="p">(</span><span class="n">ref_audio_path</span><span class="p">)</span> <span class="k">if</span> <span class="n">ref_audio_path</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="c1"># System message uses content-list format: [text, audio, text].</span>
+        <span class="c1"># The audio item embeds the reference voice into the LLM context.</span>
+        <span class="n">system_content</span> <span class="o">=</span> <span class="s2">&quot;You are a helpful assistant.&quot;</span>
+        <span class="k">if</span> <span class="n">ref_b64</span><span class="p">:</span>
+            <span class="n">system_content</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;Mimic the voice from the audio sample.&quot;</span><span class="p">},</span>
+                <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;audio&quot;</span><span class="p">,</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="n">ref_b64</span><span class="p">},</span>          <span class="c1"># reference voice</span>
+                <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;You are a helpful assistant. Reply naturally.&quot;</span><span class="p">},</span>
+            <span class="p">]</span>
+
+        <span class="c1"># TTS config — ref_audio_data initializes the TTS vocoder separately</span>
+        <span class="n">tts_config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;enabled&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;mode&quot;</span><span class="p">:</span> <span class="s2">&quot;audio_assistant&quot;</span><span class="p">}</span>
+        <span class="k">if</span> <span class="n">ref_b64</span><span class="p">:</span>
+            <span class="n">tts_config</span><span class="p">[</span><span class="s2">&quot;ref_audio_data&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">ref_b64</span>
+
+        <span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+            <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">system_content</span><span class="p">},</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Hello!&quot;</span><span class="p">},</span>
+            <span class="p">],</span>
+            <span class="s2">&quot;streaming&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+            <span class="s2">&quot;generation&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;max_new_tokens&quot;</span><span class="p">:</span> <span class="mi">256</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">},</span>
+            <span class="s2">&quot;tts&quot;</span><span class="p">:</span> <span class="n">tts_config</span><span class="p">,</span>
+        <span class="p">}))</span>
+
+        <span class="n">full_text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="n">audio_chunks</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">async</span> <span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">ws</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;prefill_done&quot;</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Prefill done, </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;input_tokens&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> input tokens&quot;</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;chunk&quot;</span><span class="p">:</span>
+                <span class="c1"># Incremental text token</span>
+                <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;text_delta&quot;</span><span class="p">):</span>
+                    <span class="n">full_text</span> <span class="o">+=</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;text_delta&quot;</span><span class="p">]</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Streaming: </span><span class="si">{</span><span class="n">full_text</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="c1"># Incremental audio segment (PCM float32, 24kHz)</span>
+                <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;audio_data&quot;</span><span class="p">):</span>
+                    <span class="n">audio_chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="n">msg</span><span class="p">[</span><span class="s2">&quot;audio_data&quot;</span><span class="p">]))</span>
+            <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;done&quot;</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Final: </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;text&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tokens: </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;input_tokens&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> in, </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;generated_tokens&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> out&quot;</span><span class="p">)</span>
+                <span class="k">break</span>
+            <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error: </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;error&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">break</span>
+
+        <span class="k">if</span> <span class="n">audio_chunks</span><span class="p">:</span>
+            <span class="n">pcm</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">audio_chunks</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Received </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pcm</span><span class="p">)</span><span class="o">/</span><span class="mi">24000</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">s of audio&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">chat_streaming</span><span class="p">())</span>
+</code></pre></div>
+
+<h3 id="processor-method-chain">Processor Method Chain</h3>
+<p>The internal processing pipeline for each Chat request:</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>UnifiedProcessor.set_chat_mode()</code></td>
+<td>Switch to Chat mode (&lt; 0.1ms hot-switch), returns <code>ChatView</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>ChatView.prefill(session_id, msgs, ...)</code></td>
+<td>Encode all messages (text, image, audio, video) and fill into KV Cache in one shot</td>
+</tr>
+<tr>
+<td>3a</td>
+<td><code>ChatView.streaming_generate(session_id, ...)</code></td>
+<td>Streaming path: yields <code>StreamingChunk</code> objects one by one, each containing a text token and optional audio segment</td>
+</tr>
+<tr>
+<td>3b</td>
+<td><code>ChatView.generate(session_id, ...)</code></td>
+<td>Non-streaming path: runs HuggingFace <code>generate()</code> internally, then TTS, returns the complete result</td>
+</tr>
+</tbody>
+</table></article>
+  <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; Generated by build_docs.py</p></footer>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({startOnLoad:true,theme:'default',securityLevel:'loose'});
+</script>
+<script>
+hljs.highlightAll();
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('content').classList.toggle('shifted');}
+document.querySelectorAll('.nav-group-header').forEach(function(h){h.addEventListener('click',function(){this.parentElement.classList.toggle('collapsed');});});
+document.addEventListener('click',function(e){var s=document.getElementById('sidebar'),t=document.querySelector('.sidebar-toggle');if(window.innerWidth<=768&&s.classList.contains('open')&&!s.contains(e.target)&&!t.contains(e.target)){s.classList.remove('open');document.getElementById('content').classList.remove('shifted');}});
+</script>
+</body>
+</html>

@@ -1,12 +1,12 @@
-# API Reference
+# Common
 
-This document lists all HTTP REST APIs and WebSocket protocols provided by the system.
-
-The Gateway listens on `https://localhost:8006` by default.
+The Gateway listens on `https://localhost:8006` by default. All endpoints below are relative to the Gateway.
 
 ---
 
-## HTTP REST API
+## Service Management APIs
+
+These endpoints manage system status, queuing, configuration, and resources. They are independent of interaction mode.
 
 ### Health & Status
 
@@ -14,14 +14,11 @@ The Gateway listens on `https://localhost:8006` by default.
 
 Health check.
 
-**Response**:
-```json
-{"status": "ok"}
-```
+**Response**: `{"status": "ok"}`
 
 #### GET /status
 
-Global service status.
+Global service status summary.
 
 **Response**:
 ```json
@@ -36,7 +33,7 @@ Global service status.
 
 #### GET /workers
 
-Worker list.
+Detailed Worker list.
 
 **Response**:
 ```json
@@ -57,79 +54,77 @@ Worker list.
 
 ---
 
-### Chat API
+### Queue Management
 
-#### POST /api/chat
+The Gateway uses a FIFO queue to manage concurrent requests. All interaction modes share a single queue.
 
-Stateless Chat inference. Each request performs a full prefill without reusing the KV Cache.
+#### GET /api/queue
 
-**Request Body**:
+Get a snapshot of the queue status.
+
+**Response**:
 ```json
 {
-  "messages": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Hello!"}
-  ],
-  "generation": {
-    "max_new_tokens": 512,
-    "temperature": 0.7,
-    "top_p": 0.8
-  },
-  "tts": {
-    "enabled": true,
-    "mode": "audio_assistant",
-    "ref_audio_path": "assets/ref_audio/ref_minicpm_signature.wav"
-  }
-}
-```
-
-**Multimodal Messages**:
-```json
-{
-  "messages": [
+  "queue_length": 3,
+  "entries": [
     {
-      "role": "user",
-      "content": [
-        {"type": "text", "text": "Describe this image"},
-        {"type": "image", "data": "<base64>"},
-        {"type": "audio", "data": "<base64 PCM float32>", "sample_rate": 16000},
-        {"type": "video", "data": "<base64 video file>", "stack_frames": 1}
-      ]
+      "ticket_id": "tk_001",
+      "position": 1,
+      "task_type": "half_duplex",
+      "eta_seconds": 15.0
+    }
+  ],
+  "running": [
+    {
+      "worker_url": "http://localhost:22400",
+      "task_type": "half_duplex",
+      "session_id": "stream_xyz",
+      "started_at": "2026-02-24T10:30:00Z",
+      "elapsed_s": 5.2
     }
   ]
 }
 ```
 
-> **Note**: When video content is present, `omni_mode: true` must be set, and only Chat mode is supported (Streaming is not supported).
+#### GET /api/queue/{ticket_id}
+
+Query the status of a specific queue ticket.
+
+#### DELETE /api/queue/{ticket_id}
+
+Cancel a queued request.
+
+---
+
+### ETA Configuration
+
+ETA (Estimated Time of Arrival) baselines for each request type, refined at runtime via Exponential Moving Average.
+
+#### GET /api/config/eta
 
 **Response**:
 ```json
 {
-  "text": "Hello! How can I help you?",
-  "audio_data": "<base64>",
-  "audio_sample_rate": 24000,
-  "tokens_generated": 15,
-  "duration_ms": 234.5,
-  "token_stats": {
-    "cached_tokens": 0,
-    "input_tokens": 42,
-    "generated_tokens": 15,
-    "total_tokens": 57
-  },
-  "recording_session_id": "chat_abc123",
-  "success": true,
-  "error": null
+  "eta_chat_s": 15.0,
+  "eta_half_duplex_s": 180.0,
+  "eta_audio_duplex_s": 120.0,
+  "eta_omni_duplex_s": 90.0,
+  "eta_ema_alpha": 0.3,
+  "eta_ema_min_samples": 3
 }
 ```
 
-#### POST /api/half_duplex/stop
+#### PUT /api/config/eta
 
-Stop an ongoing half-duplex generation.
+Update ETA configuration. Request body uses the same fields as the GET response.
 
-**Request Body**:
-```json
-{"session_id": "stream_abc123"}
-```
+---
+
+### KV Cache
+
+#### GET /api/cache
+
+Query the KV Cache status of all Workers.
 
 ---
 
@@ -137,7 +132,7 @@ Stop an ongoing half-duplex generation.
 
 #### GET /api/frontend_defaults
 
-Get frontend default configuration.
+Get frontend default configuration values.
 
 **Response**:
 ```json
@@ -164,121 +159,9 @@ Get the list of System Prompt presets.
 
 ---
 
-### Reference Audio Management
-
-#### GET /api/default_ref_audio
-
-Get default reference audio information.
-
-#### GET /api/assets/ref_audio
-
-List all reference audios.
-
-**Response**:
-```json
-{
-  "audios": [
-    {
-      "id": "ref_001",
-      "name": "Default Voice",
-      "source": "builtin",
-      "file_path": "assets/ref_audio/ref_minicpm_signature.wav"
-    }
-  ]
-}
-```
-
-#### POST /api/assets/ref_audio/external
-
-Upload a reference audio. Uploaded audio is automatically normalized to 16kHz mono 16-bit WAV.
-
-**Request Body**:
-```json
-{
-  "name": "My Voice",
-  "audio_data": "<base64 audio>"
-}
-```
-
-#### DELETE /api/assets/ref_audio/{audio_id}
-
-Delete a specific reference audio.
-
----
-
-### Queue Management
-
-#### GET /api/queue
-
-Get a snapshot of the queue status.
-
-**Response**:
-```json
-{
-  "queue_length": 3,
-  "entries": [
-    {
-      "ticket_id": "tk_001",
-      "position": 1,
-      "task_type": "streaming",
-      "eta_seconds": 15.0
-    }
-  ],
-  "running": [
-    {
-      "worker_url": "http://localhost:22400",
-      "task_type": "streaming",
-      "session_id": "stream_xyz",
-      "started_at": "2026-02-24T10:30:00Z",
-      "elapsed_s": 5.2
-    }
-  ]
-}
-```
-
-#### GET /api/queue/{ticket_id}
-
-Query the status of a specific queue ticket.
-
-#### DELETE /api/queue/{ticket_id}
-
-Cancel a queued request.
-
----
-
-### ETA Configuration
-
-#### GET /api/config/eta
-
-Get ETA configuration.
-
-**Response**:
-```json
-{
-  "eta_chat_s": 15.0,
-  "eta_half_duplex_s": 180.0,
-  "eta_audio_duplex_s": 120.0,
-  "eta_omni_duplex_s": 90.0,
-  "eta_ema_alpha": 0.3,
-  "eta_ema_min_samples": 3
-}
-```
-
-#### PUT /api/config/eta
-
-Update ETA configuration.
-
----
-
-### KV Cache
-
-#### GET /api/cache
-
-Query the KV Cache status of all Workers.
-
----
-
 ### Session Management
+
+Sessions are automatically recorded for playback and debugging.
 
 #### GET /api/sessions/{session_id}
 
@@ -308,11 +191,13 @@ Download the entire session as a package.
 
 #### POST /api/sessions/{session_id}/upload-recording
 
-Upload frontend-recorded audio/video files. Size limit: 200MB.
+Upload frontend-recorded audio/video files. Size limit: 200 MB.
 
 ---
 
 ### App Management
+
+Control which interaction modes are available in the frontend.
 
 #### GET /api/apps
 
@@ -320,7 +205,7 @@ Get the list of enabled apps (for frontend use).
 
 #### GET /api/admin/apps
 
-Get the list of all apps (including enabled status, for Admin use).
+Get the list of all apps including enabled status (for Admin use).
 
 #### PUT /api/admin/apps
 
@@ -333,121 +218,3 @@ Toggle app enabled status.
   "enabled": false
 }
 ```
-
----
-
-## WebSocket Protocol
-
-### Chat WebSocket
-
-**Connection**: `wss://host/ws/chat`
-
-Unified Turn-based Chat interface supporting both streaming and non-streaming modes.
-
-**Request** (Client → Server, sent once after connection):
-
-```json
-{
-  "messages": [...],
-  "streaming": true,
-  "generation": {"max_new_tokens": 256, "length_penalty": 1.1},
-  "tts": {"enabled": true, "ref_audio_data": "<base64>"},
-  "image": {"max_slice_nums": null},
-  "omni_mode": false
-}
-```
-
-**Response** (Server → Client):
-
-| Message Type | Key Fields | Description |
-|-------------|-----------|-------------|
-| `prefill_done` | `input_tokens` | Prefill complete |
-| `chunk` | `text_delta`, `audio_data` | Streaming chunk (streaming=true only) |
-| `done` | `text`, `generated_tokens`, `input_tokens`, `audio_data` | Generation complete |
-| `error` | `error` | Error message |
-
----
-
-### Duplex Protocol
-
-**Connection**: `wss://localhost:8006/ws/duplex/{session_id}`
-
-#### Client → Server
-
-| Message Type | Fields | Description |
-|---------|------|------|
-| `prepare` | `system_prompt`, `config`, `ref_audio_path` | Initialize session |
-| `audio_chunk` | `audio` (Base64 PCM float32) | Send audio chunk |
-| `video_frame` | `frame` (Base64 JPEG) | Send video frame (Omni only) |
-| `pause` | — | Pause session |
-| `resume` | — | Resume session |
-| `stop` | — | Stop session |
-| `client_diagnostic` | `metrics` | Client diagnostic information |
-
-**prepare Example**:
-```json
-{
-  "type": "prepare",
-  "prefix_system_prompt": "You are a fun assistant.",
-  "config": {
-    "generate_audio": true,
-    "chunk_ms": 1000,
-    "temperature": 0.7,
-    "force_listen_count": 3
-  },
-  "ref_audio_path": "assets/ref_audio/ref_minicpm_signature.wav"
-}
-```
-
-**audio_chunk Example**:
-```json
-{
-  "type": "audio_chunk",
-  "audio": "<base64 PCM float32, 16kHz, 1s>"
-}
-```
-
-#### Server → Client
-
-| Message Type | Fields | Description |
-|---------|------|------|
-| `queued` | `ticket_id`, `position`, `eta_seconds` | Enqueued |
-| `queue_update` | `position`, `eta_seconds` | Queue position update |
-| `queue_done` | — | Left queue |
-| `prepared` | — | Preparation complete |
-| `result` | `is_listen`, `text`, `audio_data`, `end_of_turn`, `cost_all_ms` | Single-step result |
-| `paused` | — | Paused |
-| `resumed` | — | Resumed |
-| `stopped` | `session_id` | Stopped |
-| `timeout` | — | Pause timeout |
-| `error` | `message` | Error |
-
-**result Example**:
-```json
-{
-  "type": "result",
-  "is_listen": false,
-  "text": "Hello",
-  "audio_data": "<base64, 24kHz>",
-  "end_of_turn": false,
-  "current_time": 5000,
-  "cost_llm_ms": 45.2,
-  "cost_tts_ms": 12.3,
-  "cost_all_ms": 78.5,
-  "n_tokens": 3,
-  "server_send_ts": 1708771200.123
-}
-```
-
----
-
-## Audio Format Specification
-
-| Direction | Format | Sample Rate | Encoding |
-|------|------|--------|------|
-| Client → Server | PCM Float32 | 16000 Hz | Base64 |
-| Server → Client | PCM Float32 | 24000 Hz | Base64 |
-
-- Input audio must be **16kHz mono**
-- Output audio is **24kHz mono**
-- Base64 encodes the raw bytes of the Float32 array

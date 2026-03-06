@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Chat 模式 - MiniCPM-o 4.5 文档</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --sidebar-w: 260px;
+  --bg: #fff; --bg-side: #f8f9fa; --bg-code: #f6f8fa;
+  --c1: #24292f; --c2: #57606a;
+  --border: #d0d7de; --accent: #0969da; --nav-active: #ddf4ff;
+}
+body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif; color:var(--c1); line-height:1.6; background:var(--bg); }
+.sidebar-toggle { position:fixed; top:12px; left:12px; z-index:1001; background:var(--bg-side); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-size:18px; cursor:pointer; display:none; }
+.sidebar { position:fixed; top:0; left:0; width:var(--sidebar-w); height:100vh; overflow-y:auto; background:var(--bg-side); border-right:1px solid var(--border); padding:20px 0; z-index:1000; transition:transform .3s; }
+.sidebar-header { padding:0 20px 16px; border-bottom:1px solid var(--border); margin-bottom:8px; }
+.sidebar-header h2 { font-size:16px; font-weight:600; }
+.sidebar-subtitle { font-size:12px; color:var(--c2); }
+.lang-switch { display:inline-block; margin-top:6px; font-size:12px; color:var(--accent); text-decoration:none; padding:2px 8px; border:1px solid var(--border); border-radius:4px; transition:background .15s; }
+.lang-switch:hover { background:var(--nav-active); text-decoration:none; }
+
+.nav-list { list-style:none; padding:0 8px; }
+.nav-list > li > a { display:block; padding:7px 12px; color:var(--c2); text-decoration:none; font-size:14px; border-radius:6px; transition:background .15s,color .15s; }
+.nav-list > li > a:hover { background:#e8e8e8; color:var(--c1); }
+.nav-list > li > a.active { background:var(--nav-active); color:var(--accent); font-weight:600; }
+
+.nav-group { margin-top:4px; }
+.nav-group-header { display:flex; align-items:center; gap:6px; padding:8px 12px; color:var(--c1); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; border-radius:6px; user-select:none; transition:background .15s; }
+.nav-group-header:hover { background:#eaeef2; }
+.nav-group-header::before { content:""; display:inline-block; width:0; height:0; border-left:5px solid var(--c2); border-top:3.5px solid transparent; border-bottom:3.5px solid transparent; transition:transform .2s; transform:rotate(90deg); flex-shrink:0; }
+.nav-group.collapsed .nav-group-header::before { transform:rotate(0); }
+.nav-group-children { list-style:none; margin:0 0 4px 19px; padding:3px 0 3px 13px; border-left:2px solid #e1e4e8; overflow:hidden; max-height:500px; transition:max-height .25s ease,opacity .2s ease,padding .2s ease; opacity:1; }
+.nav-group.collapsed .nav-group-children { max-height:0; opacity:0; padding:0 0 0 13px; }
+.nav-group-children li a { display:block; padding:4px 10px; font-size:13px; color:var(--c2); text-decoration:none; border-radius:4px; transition:background .15s,color .15s; }
+.nav-group-children li a:hover { background:#e8e8e8; color:var(--c1); }
+.nav-group-children li a.active { background:var(--nav-active); color:var(--accent); font-weight:600; }
+
+.content { margin-left:var(--sidebar-w); max-width:900px; padding:40px 48px; }
+article h1 { font-size:28px; font-weight:600; padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:20px; }
+article h2 { font-size:22px; font-weight:600; margin-top:32px; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid #eaecef; }
+article h3 { font-size:18px; font-weight:600; margin-top:24px; margin-bottom:10px; }
+article h4 { font-size:15px; font-weight:600; margin-top:20px; margin-bottom:8px; }
+article p { margin-bottom:14px; }
+article ul,article ol { margin-bottom:14px; padding-left:24px; }
+article li { margin-bottom:4px; }
+article a { color:var(--accent); text-decoration:none; }
+article a:hover { text-decoration:underline; }
+article code { background:var(--bg-code); padding:2px 6px; border-radius:4px; font-size:13px; font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+article pre { background:var(--bg-code); border:1px solid var(--border); border-radius:6px; padding:16px; overflow-x:auto; margin-bottom:16px; line-height:1.5; }
+article pre code { background:none; padding:0; font-size:13px; }
+article table { width:100%; border-collapse:collapse; margin-bottom:16px; font-size:14px; }
+article th,article td { border:1px solid var(--border); padding:8px 12px; text-align:left; }
+article th { background:var(--bg-code); font-weight:600; }
+article tr:nth-child(even) { background:#f8f9fa; }
+article hr { border:none; border-top:1px solid var(--border); margin:28px 0; }
+article blockquote { border-left:4px solid var(--accent); padding:8px 16px; margin:0 0 16px; color:var(--c2); background:#f8f9fa; border-radius:0 6px 6px 0; }
+article .mermaid { text-align:center; margin:20px 0; }
+footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); color:var(--c2); font-size:13px; }
+@media(max-width:768px) {
+  .sidebar { transform:translateX(-100%); }
+  .sidebar.open { transform:translateX(0); box-shadow:2px 0 8px rgba(0,0,0,.15); }
+  .sidebar-toggle { display:block; }
+  .content { margin-left:0; padding:50px 20px 40px; }
+  .content.shifted { margin-left:var(--sidebar-w); }
+}
+</style>
+</head>
+<body>
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>MiniCPM-o 4.5</h2>
+    <span class="sidebar-subtitle">项目文档</span>
+    <a href="../../en/api/chat.html" class="lang-switch">English</a>
+  </div>
+  <ul class="nav-list">
+    <li><a href="../index.html">首页</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">系统架构</span>
+      <ul class="nav-group-children">
+        <li><a href="../architecture/index.html">架构概述</a></li>
+        <li><a href="../architecture/chat.html">Chat 模式</a></li>
+        <li><a href="../architecture/half-duplex.html">Half-Duplex 模式</a></li>
+        <li><a href="../architecture/duplex.html">Duplex 模式</a></li>
+        <li><a href="../architecture/internals.html">内部机制</a></li>
+      </ul>
+    </li>
+    <li><a href="../model.html">模型模块</a></li>
+    <li><a href="../compile.html">torch.compile</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">前端模块</span>
+      <ul class="nav-group-children">
+        <li><a href="../frontend/index.html">前端概述</a></li>
+        <li><a href="../frontend/pages.html">页面与路由</a></li>
+        <li><a href="../frontend/audio.html">音频处理</a></li>
+        <li><a href="../frontend/duplex-session.html">双工会话</a></li>
+        <li><a href="../frontend/components.html">UI 组件</a></li>
+      </ul>
+    </li>
+    <li class="nav-group">
+      <span class="nav-group-header">API 参考</span>
+      <ul class="nav-group-children">
+        <li><a href="../api/chat.html" class="active">Chat 模式</a></li>
+        <li><a href="../api/half-duplex.html">Half-Duplex 模式</a></li>
+        <li><a href="../api/duplex.html">Duplex 模式</a></li>
+        <li><a href="../api.html">通用</a></li>
+      </ul>
+    </li>
+    <li><a href="../deployment.html">配置与部署</a></li>
+  </ul>
+</nav>
+<main class="content" id="content">
+  <article><h1 id="chat-turn-based-chat">Chat 模式（Turn-based Chat）</h1>
+<h2 id="_1">音频格式规范</h2>
+<table>
+<thead>
+<tr>
+<th>方向</th>
+<th>格式</th>
+<th>采样率</th>
+<th>声道</th>
+<th>编码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>客户端 → 服务端</td>
+<td>PCM Float32</td>
+<td>16000 Hz</td>
+<td>单声道</td>
+<td>Base64</td>
+</tr>
+<tr>
+<td>服务端 → 客户端</td>
+<td>PCM Float32</td>
+<td>24000 Hz</td>
+<td>单声道</td>
+<td>Base64</td>
+</tr>
+</tbody>
+</table>
+<p>Base64 直接编码 Float32 数组的原始字节（非 WAV，非 Opus）。</p>
+<hr />
+<h2 id="_2">通用数据类型</h2>
+<h3 id="message">Message</h3>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;system | user | assistant&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;纯文本字符串&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>content</code> 也可以是多模态内容列表：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;text&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;描述这张图片&quot;</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;image&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64&gt;&quot;</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;audio&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 PCM float32&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sample_rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">16000</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;video&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 video file&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;stack_frames&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>内容类型</th>
+<th>必填字段</th>
+<th>可选字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>text</code></td>
+<td><code>text</code></td>
+<td>—</td>
+<td>文本内容</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td><code>data</code> (Base64)</td>
+<td>—</td>
+<td>图片内容</td>
+</tr>
+<tr>
+<td><code>audio</code></td>
+<td><code>data</code> (Base64 PCM float32)</td>
+<td><code>sample_rate</code>（默认 16000）</td>
+<td>音频内容</td>
+</tr>
+<tr>
+<td><code>video</code></td>
+<td><code>data</code> (Base64 视频文件)</td>
+<td><code>stack_frames</code>（默认 1）</td>
+<td>视频内容；自动提取帧和音频</td>
+</tr>
+</tbody>
+</table>
+<h3 id="generationconfig">GenerationConfig</h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_new_tokens</code></td>
+<td>int</td>
+<td>512</td>
+<td>最大生成 token 数</td>
+</tr>
+<tr>
+<td><code>temperature</code></td>
+<td>float</td>
+<td>0.7</td>
+<td>采样温度</td>
+</tr>
+<tr>
+<td><code>top_p</code></td>
+<td>float</td>
+<td>0.8</td>
+<td>Top-P（核采样）</td>
+</tr>
+<tr>
+<td><code>length_penalty</code></td>
+<td>float</td>
+<td>1.0</td>
+<td>长度惩罚系数</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ttsconfig">TTSConfig</h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td>true</td>
+<td>启用语音输出</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>string</td>
+<td><code>"default"</code></td>
+<td>TTS 模式：<code>default</code>、<code>audio_assistant</code>、<code>omni</code>、<code>audio_roleplay</code>、<code>voice_cloning</code></td>
+</tr>
+<tr>
+<td><code>ref_audio_path</code></td>
+<td>string</td>
+<td>—</td>
+<td>服务端参考音频路径</td>
+</tr>
+<tr>
+<td><code>ref_audio_data</code></td>
+<td>string</td>
+<td>—</td>
+<td>Base64 编码的参考音频（优先于 <code>ref_audio_path</code>）</td>
+</tr>
+<tr>
+<td><code>language</code></td>
+<td>string</td>
+<td>—</td>
+<td>语言提示</td>
+</tr>
+</tbody>
+</table>
+<h3 id="imageconfig">ImageConfig</h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_slice_nums</code></td>
+<td>int</td>
+<td>null</td>
+<td>高分辨率处理的最大图片切片数</td>
+</tr>
+<tr>
+<td><code>use_image_id</code></td>
+<td>bool</td>
+<td>true</td>
+<td>多图场景下是否分配图片 ID</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="_3">概述</h3>
+<p>Turn-based Chat 提供无状态的多模态对话，支持文本、图片、音频和视频输入。同时支持<strong>流式</strong>（逐 token 输出）和<strong>非流式</strong>（一次性输出）两种生成模式。</p>
+<p>每次请求都是无状态的——服务端对所有消息执行完整 prefill，不复用上次请求的 KV Cache。推理完成后立即释放 GPU，是资源利用率最高的模式。</p>
+<p><strong>能力</strong>：文本 + 图片 + 音频 + 视频输入，文本 + 音频输出，流式输出，多轮对话（客户端维护历史）。</p>
+<h3 id="_4">生命周期</h3>
+<pre class="mermaid">
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    C->>S: WS /ws/chat
+    S-->>C: (queued → queue_done)
+    S-->>C: prefill_done
+    alt 流式模式
+        loop 直到生成完成
+            S-->>C: chunk (text_delta + audio_data)
+        end
+    end
+    S-->>C: done (完整文本 + 音频)
+    Note over C,S: 连接关闭，GPU 释放
+</pre>
+
+<p><strong>阶段 1 — 请求与排队</strong>：客户端打开 WebSocket 连接并发送请求。服务端将其放入共享 FIFO 队列。当有空闲 GPU Worker 时，请求出队并开始处理。</p>
+<p><strong>阶段 2 — Prefill</strong>：所有消息被编码并一次性填入模型。完成后服务端发送 <code>prefill_done</code>，包含 <code>input_tokens</code> 计数。此阶段是主要延迟来源——延迟随输入总量（含图片和音频）线性增长。</p>
+<p><strong>阶段 3 — 生成</strong>：流式模式下，模型逐个生成 token，每个 token 作为 <code>chunk</code> 消息发送，包含 <code>text_delta</code> 和可选的 <code>audio_data</code>。非流式模式下，所有 token 在内部生成完毕后才返回最终结果。流式模式的首 token 延迟（TTFT）远低于非流式。</p>
+<p><strong>阶段 4 — 完成</strong>：服务端发送 <code>done</code>，包含完整生成文本、音频数据和 token 统计。WebSocket 连接关闭。GPU Worker 归还到池中。</p>
+<p><strong>错误处理</strong>：处理过程中发生任何错误，服务端发送 <code>error</code> 消息并关闭连接。GPU Worker 仍会被释放。</p>
+<h3 id="websocket-wsshostwschat">WebSocket — wss://host/ws/chat</h3>
+<p>Turn-based Chat 的 WebSocket 接口，支持流式和非流式两种模式，实时增量返回结果。</p>
+<h4 id="_5">完整会话生命周期</h4>
+<ol>
+<li>客户端打开 WebSocket 连接到 <code>wss://host/ws/chat</code>。</li>
+<li>客户端发送<strong>一条</strong> JSON 消息，包含完整请求（消息、配置等）。</li>
+<li>服务端将请求入队。如果队列非空，客户端等待。</li>
+<li>服务端执行 prefill，发送 <code>prefill_done</code>。</li>
+<li>如果 <code>streaming: true</code>，服务端在 token 生成过程中逐个发送 <code>chunk</code> 消息。</li>
+<li>服务端发送 <code>done</code>，包含完整结果。</li>
+<li>连接自动关闭。</li>
+</ol>
+<p>任何阶段发生错误，服务端发送 <code>error</code> 并关闭连接。</p>
+<h4 id="_6">客户端 → 服务端</h4>
+<p>连接后立即发送一条 JSON 消息：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;messages&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;你好！&quot;</span><span class="p">}</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;streaming&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;generation&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;max_new_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;length_penalty&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.1</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;tts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;ref_audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64&gt;&quot;</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;image&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;max_slice_nums&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;omni_mode&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;enable_thinking&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>messages</code></td>
+<td>Message[]</td>
+<td>—</td>
+<td>对话消息</td>
+</tr>
+<tr>
+<td><code>streaming</code></td>
+<td>bool</td>
+<td>true</td>
+<td>启用流式输出（逐 token）</td>
+</tr>
+<tr>
+<td><code>generation</code></td>
+<td>GenerationConfig</td>
+<td>—</td>
+<td>生成参数</td>
+</tr>
+<tr>
+<td><code>tts</code></td>
+<td>TTSConfig</td>
+<td>—</td>
+<td>TTS 配置</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td>ImageConfig</td>
+<td>—</td>
+<td>图片处理参数</td>
+</tr>
+<tr>
+<td><code>omni_mode</code></td>
+<td>bool</td>
+<td>false</td>
+<td>启用 omni 模式以支持视频输入</td>
+</tr>
+<tr>
+<td><code>enable_thinking</code></td>
+<td>bool</td>
+<td>false</td>
+<td>启用思考模式</td>
+</tr>
+</tbody>
+</table>
+<h4 id="_7">服务端 → 客户端</h4>
+<p>消息按严格顺序到达：<code>prefill_done</code> → (<code>chunk</code>...) → <code>done</code>。</p>
+<table>
+<thead>
+<tr>
+<th>消息类型</th>
+<th>关键字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prefill_done</code></td>
+<td><code>input_tokens</code></td>
+<td>Prefill 完成，开始生成</td>
+</tr>
+<tr>
+<td><code>chunk</code></td>
+<td><code>text_delta</code>, <code>audio_data</code></td>
+<td>一个流式 token（仅 <code>streaming: true</code> 时）。<code>text_delta</code> 为增量文本；<code>audio_data</code> 为对应音频段（部分 chunk 可能为 null）</td>
+</tr>
+<tr>
+<td><code>done</code></td>
+<td><code>text</code>, <code>generated_tokens</code>, <code>input_tokens</code>, <code>audio_data</code>, <code>recording_session_id</code></td>
+<td>生成完成。<code>text</code> 为完整累积文本；<code>audio_data</code> 为完整音频（非流式）或最后一段（流式）</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>error</code></td>
+<td>错误信息；连接将关闭</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>chunk</code> 示例</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;chunk&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;text_delta&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;你好&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64, 24kHz&gt;&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong><code>done</code> 示例</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;done&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;你好！有什么可以帮你的？&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;generated_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">15</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;input_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64, 24kHz&gt;&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;recording_session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;chat_abc123&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="_8">示例：完整生命周期</h3>
+<p><strong>JavaScript</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="c1">// -- 声音克隆参考音频 (base64 PCM float32, 16kHz) --</span>
+<span class="c1">// 从用户上传的文件或服务器默认音频 (/api/default_ref_audio) 加载</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">getRefAudioBase64</span><span class="p">();</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">ws</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">WebSocket</span><span class="p">(</span><span class="sb">`wss://</span><span class="si">${</span><span class="nx">location</span><span class="p">.</span><span class="nx">host</span><span class="si">}</span><span class="sb">/ws/chat`</span><span class="p">);</span>
+<span class="kd">let</span><span class="w"> </span><span class="nx">fullText</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">;</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onopen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">payload</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">messages</span><span class="o">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">      </span><span class="c1">// System message 使用 content-list 格式：[text, audio, text]。</span>
+<span class="w">      </span><span class="c1">// 其中的 audio 项将参考音色嵌入 LLM 上下文。</span>
+<span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nx">role</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;system&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="o">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;text&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">text</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;模仿音频样本的音色并生成新的内容。&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;audio&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">data</span><span class="o">:</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="w"> </span><span class="p">},</span><span class="w">          </span><span class="c1">// 参考音色</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;text&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">text</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;你是一个有帮助的助手，请自然地回复。&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">      </span><span class="p">]},</span>
+<span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nx">role</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;user&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;你好！&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">],</span>
+<span class="w">    </span><span class="nx">streaming</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">generation</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">max_new_tokens</span><span class="o">:</span><span class="w"> </span><span class="mf">256</span><span class="p">,</span><span class="w"> </span><span class="nx">temperature</span><span class="o">:</span><span class="w"> </span><span class="mf">0.7</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">tts</span><span class="o">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nx">enabled</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">mode</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;audio_assistant&#39;</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">ref_audio_data</span><span class="o">:</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="p">,</span><span class="w">  </span><span class="c1">// 同一音频用于初始化 TTS vocoder</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">  </span><span class="p">};</span>
+<span class="w">  </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">(</span><span class="nx">payload</span><span class="p">));</span>
+<span class="p">};</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onmessage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="nx">event</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">event</span><span class="p">.</span><span class="nx">data</span><span class="p">);</span>
+<span class="w">  </span><span class="k">switch</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">type</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;prefill_done&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// 服务端已将 prompt 填入 KV Cache</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Prefill 完成，</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">input_tokens</span><span class="si">}</span><span class="sb"> 个输入 token`</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;chunk&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// 流式 token：增量文本和/或音频片段</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">text_delta</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fullText</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">text_delta</span><span class="p">;</span>
+<span class="w">        </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;流式输出:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">fullText</span><span class="p">);</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">audio_data</span><span class="p">)</span><span class="w"> </span><span class="nx">playAudio</span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">audio_data</span><span class="p">);</span><span class="w">  </span><span class="c1">// PCM float32, 24kHz</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;done&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// 生成完毕 — 完整文本和 token 统计</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;最终文本:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">text</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Token 统计: </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">input_tokens</span><span class="si">}</span><span class="sb"> 输入, </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">generated_tokens</span><span class="si">}</span><span class="sb"> 输出`</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">ws</span><span class="p">.</span><span class="nx">close</span><span class="p">();</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;error&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="s1">&#39;错误:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">error</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">ws</span><span class="p">.</span><span class="nx">close</span><span class="p">();</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onerror</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="s1">&#39;WebSocket 错误&#39;</span><span class="p">);</span>
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onclose</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;连接已关闭&#39;</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>Python</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">base64</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">websockets</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_ref_audio</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;加载 WAV 文件，返回 base64 编码的 PCM float32 (16kHz)。&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
+    <span class="n">audio</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">samplerate</span><span class="o">=</span><span class="mi">16000</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">audio</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_streaming</span><span class="p">(</span>
+    <span class="n">server_url</span><span class="o">=</span><span class="s2">&quot;wss://localhost:8006/ws/chat&quot;</span><span class="p">,</span>
+    <span class="n">ref_audio_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="s2">&quot;ref.wav&quot;</span><span class="p">,</span>
+<span class="p">):</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">websockets</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">server_url</span><span class="p">)</span> <span class="k">as</span> <span class="n">ws</span><span class="p">:</span>
+        <span class="c1"># 加载参考音频用于声音克隆</span>
+        <span class="n">ref_b64</span> <span class="o">=</span> <span class="n">load_ref_audio</span><span class="p">(</span><span class="n">ref_audio_path</span><span class="p">)</span> <span class="k">if</span> <span class="n">ref_audio_path</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="c1"># System message 使用 content-list 格式：[text, audio, text]。</span>
+        <span class="c1"># 其中的 audio 项将参考音色嵌入 LLM 上下文。</span>
+        <span class="n">system_content</span> <span class="o">=</span> <span class="s2">&quot;You are a helpful assistant.&quot;</span>
+        <span class="k">if</span> <span class="n">ref_b64</span><span class="p">:</span>
+            <span class="n">system_content</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;模仿音频样本的音色并生成新的内容。&quot;</span><span class="p">},</span>
+                <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;audio&quot;</span><span class="p">,</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="n">ref_b64</span><span class="p">},</span>          <span class="c1"># 参考音色</span>
+                <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;你是一个有帮助的助手，请自然地回复。&quot;</span><span class="p">},</span>
+            <span class="p">]</span>
+
+        <span class="c1"># TTS 配置 — ref_audio_data 单独初始化 TTS vocoder</span>
+        <span class="n">tts_config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;enabled&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;mode&quot;</span><span class="p">:</span> <span class="s2">&quot;audio_assistant&quot;</span><span class="p">}</span>
+        <span class="k">if</span> <span class="n">ref_b64</span><span class="p">:</span>
+            <span class="n">tts_config</span><span class="p">[</span><span class="s2">&quot;ref_audio_data&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">ref_b64</span>
+
+        <span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+            <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">system_content</span><span class="p">},</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;你好！&quot;</span><span class="p">},</span>
+            <span class="p">],</span>
+            <span class="s2">&quot;streaming&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+            <span class="s2">&quot;generation&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;max_new_tokens&quot;</span><span class="p">:</span> <span class="mi">256</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">},</span>
+            <span class="s2">&quot;tts&quot;</span><span class="p">:</span> <span class="n">tts_config</span><span class="p">,</span>
+        <span class="p">}))</span>
+
+        <span class="n">full_text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="n">audio_chunks</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">async</span> <span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">ws</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;prefill_done&quot;</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Prefill 完成，</span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;input_tokens&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> 个输入 token&quot;</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;chunk&quot;</span><span class="p">:</span>
+                <span class="c1"># 增量文本 token</span>
+                <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;text_delta&quot;</span><span class="p">):</span>
+                    <span class="n">full_text</span> <span class="o">+=</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;text_delta&quot;</span><span class="p">]</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;流式输出: </span><span class="si">{</span><span class="n">full_text</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="c1"># 增量音频片段 (PCM float32, 24kHz)</span>
+                <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;audio_data&quot;</span><span class="p">):</span>
+                    <span class="n">audio_chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="n">msg</span><span class="p">[</span><span class="s2">&quot;audio_data&quot;</span><span class="p">]))</span>
+            <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;done&quot;</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;最终文本: </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;text&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Token 统计: </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;input_tokens&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> 输入, </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;generated_tokens&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> 输出&quot;</span><span class="p">)</span>
+                <span class="k">break</span>
+            <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;错误: </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;error&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">break</span>
+
+        <span class="k">if</span> <span class="n">audio_chunks</span><span class="p">:</span>
+            <span class="n">pcm</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">audio_chunks</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;收到 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pcm</span><span class="p">)</span><span class="o">/</span><span class="mi">24000</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> 秒音频&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">chat_streaming</span><span class="p">())</span>
+</code></pre></div>
+
+<h3 id="processor">Processor 方法链</h3>
+<p>每个 Chat 请求的内部处理流水线：</p>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>方法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>UnifiedProcessor.set_chat_mode()</code></td>
+<td>切换到 Chat 模式（&lt; 0.1ms 热切换），返回 <code>ChatView</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>ChatView.prefill(session_id, msgs, ...)</code></td>
+<td>编码所有消息（文本、图片、音频、视频）并一次性填入 KV Cache</td>
+</tr>
+<tr>
+<td>3a</td>
+<td><code>ChatView.streaming_generate(session_id, ...)</code></td>
+<td>流式路径：逐个 yield <code>StreamingChunk</code> 对象，每个包含一个文本 token 和可选音频段</td>
+</tr>
+<tr>
+<td>3b</td>
+<td><code>ChatView.generate(session_id, ...)</code></td>
+<td>非流式路径：内部运行 HuggingFace <code>generate()</code>，然后 TTS，返回完整结果</td>
+</tr>
+</tbody>
+</table></article>
+  <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; 由 build_docs.py 自动生成</p></footer>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({startOnLoad:true,theme:'default',securityLevel:'loose'});
+</script>
+<script>
+hljs.highlightAll();
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('content').classList.toggle('shifted');}
+document.querySelectorAll('.nav-group-header').forEach(function(h){h.addEventListener('click',function(){this.parentElement.classList.toggle('collapsed');});});
+document.addEventListener('click',function(e){var s=document.getElementById('sidebar'),t=document.querySelector('.sidebar-toggle');if(window.innerWidth<=768&&s.classList.contains('open')&&!s.contains(e.target)&&!t.contains(e.target)){s.classList.remove('open');document.getElementById('content').classList.remove('shifted');}});
+</script>
+</body>
+</html>

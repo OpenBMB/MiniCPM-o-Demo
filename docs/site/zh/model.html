@@ -77,7 +77,7 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
     <a href="../en/model.html" class="lang-switch">English</a>
   </div>
   <ul class="nav-list">
-    <li><a href="index.html">项目概述</a></li>
+    <li><a href="index.html">首页</a></li>
     <li class="nav-group">
       <span class="nav-group-header">系统架构</span>
       <ul class="nav-group-children">
@@ -88,9 +88,6 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="architecture/internals.html">内部机制</a></li>
       </ul>
     </li>
-    <li><a href="gateway.html">Gateway 模块</a></li>
-    <li><a href="worker.html">Worker 模块</a></li>
-    <li><a href="schema.html">Schema</a></li>
     <li><a href="model.html" class="active">模型模块</a></li>
     <li><a href="compile.html">torch.compile</a></li>
     <li class="nav-group">
@@ -103,7 +100,15 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="frontend/components.html">UI 组件</a></li>
       </ul>
     </li>
-    <li><a href="api.html">API 参考</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">API 参考</span>
+      <ul class="nav-group-children">
+        <li><a href="api/chat.html">Chat 模式</a></li>
+        <li><a href="api/half-duplex.html">Half-Duplex 模式</a></li>
+        <li><a href="api/duplex.html">Duplex 模式</a></li>
+        <li><a href="api.html">通用</a></li>
+      </ul>
+    </li>
     <li><a href="deployment.html">配置与部署</a></li>
   </ul>
 </nav>
@@ -171,586 +176,131 @@ graph TB
 </pre>
 
 <hr />
-<h2 id="configuration_minicpmopy">configuration_minicpmo.py — 模型配置</h2>
+<h2 id="_3">核心模型结构</h2>
+<p><code>MiniCPMO</code> 是整个系统的核心类（继承自 <code>Qwen3PreTrainedModel</code>），内部组合了 6 个子模块，各负责一个模态或功能：</p>
+<ul>
+<li><strong><code>llm</code></strong> — <code>Qwen3ForCausalLM</code>，语言模型主干，负责多模态融合后的因果推理与文本生成。</li>
+<li><strong><code>vpm</code></strong> — <code>SiglipVisionTransformer</code>，视觉编码器，将图像 patch 编码为视觉特征序列。</li>
+<li><strong><code>resampler</code></strong> — <code>Resampler</code>（Perceiver 式交叉注意力），将可变长度的视觉特征压缩为固定数量的查询向量。</li>
+<li><strong><code>apm</code></strong> — <code>MiniCPMWhisperEncoder</code>，音频编码器（基于 Whisper），将梅尔频谱编码为音频特征。</li>
+<li><strong><code>audio_projection_layer</code></strong> — <code>MultiModalProjector</code>（Linear → ReLU → Linear），将音频特征映射到 LLM 的嵌入空间。</li>
+<li><strong><code>tts</code></strong> — <code>MiniCPMTTS</code>，语音合成模块，将 LLM 的隐状态转化为音频 token。</li>
+</ul>
+<p>各子模块可通过配置项 <code>init_vision</code> / <code>init_audio</code> / <code>init_tts</code> 独立启用或禁用。</p>
+<h3 id="_4">统一模型与模式切换</h3>
+<p><code>modeling_minicpmo_unified.py</code> 中的 <code>MiniCPMO</code> 在上述基础上增加了<strong>统一模式管理</strong>，通过 <code>ProcessorMode</code> 枚举在三种模式间热切换：</p>
+<ul>
+<li><strong><code>CHAT</code></strong> — 标准多模态对话，支持图像/音频/视频输入，文本或语音输出。</li>
+<li><strong><code>STREAMING</code></strong> — 流式对话，支持逐块输入与流式输出。</li>
+<li><strong><code>DUPLEX</code></strong> — 全双工实时对话，同时进行听与说。</li>
+</ul>
+<p>切换通过 <code>set_mode(mode)</code> 完成，仅重置会话状态（KV Cache、Token2Wav 缓存等），不重新加载模型权重，因此切换开销极低。</p>
+<hr />
+<h2 id="_5">输入编码</h2>
+<h3 id="_6">文本编码</h3>
+<p>文本输入经 Qwen2 Tokenizer 分词后，通过 <code>llm.model.embed_tokens</code> 转换为嵌入向量。嵌入后会乘以可选的 <code>scale_emb</code> 缩放因子。</p>
+<h3 id="_7">视觉编码（图像与视频）</h3>
+<p>图像处理分三步：</p>
+<ol>
+<li><strong>图像切片</strong>（<code>MiniCPMVImageProcessor</code>）— 大图按 <code>MiniCPMVSliceConfig</code> 配置切分为多个 patch（最多 <code>max_slice_nums=9</code> 块，每块 <code>448×448</code>），保留一份全局缩略图。这使模型能处理高分辨率图像。</li>
+<li><strong>VPM 编码</strong>（<code>SiglipVisionTransformer</code>）— 每个 patch 经 SigLIP ViT 编码。ViT 由 <code>SiglipVisionEmbeddings</code>（Conv2d patch embedding + 位置编码）和多层 <code>SiglipEncoder</code>（多头自注意力 + FFN）组成，支持 Flash Attention 2 加速。输出为可变长度的 patch 特征序列。</li>
+<li><strong>Resampler 压缩</strong>（<code>Resampler</code>）— 使用可学习的查询向量（默认 64 个）对 VPM 输出做交叉注意力，将可变长度的视觉特征压缩为固定长度。位置信息通过 2D sincos 位置编码注入。输出形状为 <code>(num_queries, embed_dim)</code>。</li>
+</ol>
+<p><strong>视频</strong>被拆解为帧序列 + 音频段，帧走视觉编码路径，音频段走音频编码路径。</p>
+<h3 id="_8">音频编码</h3>
+<p>音频处理分三步：</p>
+<ol>
+<li><strong>梅尔频谱提取</strong>（<code>MiniCPMAAudioProcessor</code>）— 输入 16kHz 音频，提取 80 维梅尔频谱特征。</li>
+<li><strong>APM 编码</strong>（<code>MiniCPMWhisperEncoder</code>）— 基于 Whisper 的编码器，先经两层 1D 卷积（Conv1 stride=1 → GELU → Conv2 stride=2）下采样，再经多层 Transformer 编码器层处理。支持 KV Cache 实现流式音频编码，可通过 <code>prefix_extra_frames</code> / <code>suffix_extra_frames</code> 添加上下文重叠。</li>
+<li><strong>投影 + 池化</strong> — <code>MultiModalProjector</code>（Linear → ReLU → Linear）将音频特征映射到 LLM 嵌入维度，随后 <code>AvgPool1d</code>（步长 <code>audio_pool_step=5</code>）进一步压缩序列长度。</li>
+</ol>
+<hr />
+<h2 id="_9">多模态嵌入融合</h2>
+<p>各模态编码完成后，通过两步融合汇入统一的嵌入序列：</p>
+<ol>
+<li><strong>视觉融合</strong>（<code>get_vllm_embedding</code>）— 文本序列中预留了视觉占位符 token。通过 <code>image_bound</code>（记录每个图像占位符的起止位置），将对应位置的文本嵌入<strong>替换</strong>为 Resampler 输出的视觉嵌入（scatter 操作）。</li>
+<li><strong>音频融合</strong>（<code>get_omni_embedding</code>）— 在视觉融合后的序列上，通过 <code>audio_bounds</code>（记录音频占位符的起止位置），将对应位置的嵌入<strong>替换</strong>为音频编码器输出的音频嵌入。</li>
+</ol>
+<p>融合后得到统一的 <code>inputs_embeds</code>（包含文本 + 视觉 + 音频），送入 LLM 进行因果推理。</p>
+<hr />
+<h2 id="_10">语言模型推理</h2>
+<p>融合后的 <code>inputs_embeds</code> 送入 <code>Qwen3ForCausalLM</code> 进行自回归生成。LLM 不区分输入来自哪个模态——所有模态在融合后共享同一嵌入空间。</p>
+<p>文本生成支持两种模式：</p>
+<ul>
+<li><strong>标准生成</strong> — <code>_decode</code> 方法，一次性生成完整输出。</li>
+<li><strong>流式生成</strong> — <code>_decode_stream</code> 方法，逐 token 返回，支持 <code>ChunkPrefillChunkGenerate</code> 分块预填充与分块生成策略。</li>
+</ul>
+<hr />
+<h2 id="_11">输出生成</h2>
+<h3 id="_12">文本输出</h3>
+<p>LLM 直接输出 token 序列，经 Tokenizer 解码为文本。</p>
+<h3 id="tts">语音合成（TTS）</h3>
+<p>当需要语音输出时，LLM 的隐状态经 <code>MiniCPMTTS</code> 模块转换为音频 token，再由声码器合成波形。</p>
+<p><strong>MiniCPMTTS 架构</strong>：</p>
+<ul>
+<li><strong><code>emb_text</code></strong> — 文本嵌入层，编码输入文本条件。</li>
+<li><strong><code>emb_code</code></strong> — 音频 codebook 嵌入层，编码已生成的音频 token。</li>
+<li><strong><code>model</code></strong> — <code>LlamaModel</code> 作为 TTS 的 Transformer 主干。</li>
+<li><strong><code>head_code</code></strong> — 线性预测头，输出下一个音频 token 的概率分布。</li>
+</ul>
+<p>输入布局为 <code>[Text BOS | Speaker Embedding | Text Tokens | Audio BOS | Audio Tokens...]</code>，模型自回归地预测音频 token 序列。</p>
+<p><strong>四种注意力模式</strong>（通过 <code>attention_type</code> 配置）：</p>
+<ul>
+<li><strong><code>full_attention</code></strong> — 全注意力，精度最高，内存开销最大。</li>
+<li><strong><code>sliding_window</code></strong> — 滑动窗口，截断超出窗口的 KV Cache，平衡精度与效率。</li>
+<li><strong><code>sliding_recompute</code></strong> — 滑动重计算（默认），每步仅保留窗口内的 KV Cache 并重新计算，在精度与效率间取得较好平衡。</li>
+<li><strong><code>reindex</code></strong> — RoPE 重索引，调整位置编码以适应窗口截断（实验性）。</li>
+</ul>
+<p><strong>Token2Wav 声码器</strong> — 将 TTS 输出的音频 token 转换为 24kHz 波形。支持流式（逐块转换）和非流式（批量转换）两种模式。</p>
+<hr />
+<h2 id="duplexcapability">双工能力（DuplexCapability）</h2>
+<p><code>DuplexCapability</code> 是一个<strong>组合组件</strong>（非继承），通过 <code>self.model</code> 引用主模型 <code>MiniCPMO</code> 的全部参数，以 <code>model.duplex</code> 方式访问。它实现了实时的听-说交互。</p>
+<h3 id="_13">三步工作流程</h3>
+<ol>
+<li><strong><code>prepare</code></strong> — 初始化双工会话。预填充系统提示词到 KV Cache，加载 TTS 参考音频（用于声音克隆），注册特殊 token（<code>&lt;|listen|&gt;</code>, <code>&lt;|speak|&gt;</code>, <code>&lt;|tts_bos|&gt;</code>, <code>&lt;|tts_eos|&gt;</code> 等）。</li>
+<li><strong><code>streaming_prefill</code></strong> — 逐块预填充。每个时间步将音频特征和/或视频帧编码后填入 KV Cache，使模型持续"听到"输入。</li>
+<li><strong><code>streaming_generate</code></strong> — 逐步生成。每步模型决定继续"听"（输出 listen token）还是开始"说"（输出 speak token 后接文本和音频 token）。生成的音频 token 通过 Token2Wav 实时转换为波形。</li>
+</ol>
+<h3 id="_14">滑动窗口策略</h3>
+<p>长时间双工对话中，KV Cache 会持续增长。通过滑动窗口策略控制内存：</p>
+<ul>
+<li><strong><code>basic</code></strong> — 基础滑动窗口，仅保留最近 N 个 token 的 KV Cache。</li>
+<li><strong><code>context</code></strong> — 上下文滑动窗口，保留系统提示词 + 最近 N 个 token，确保模型始终记得系统指令。</li>
+</ul>
+<hr />
+<h2 id="_15">配置参考</h2>
 <h3 id="minicpmoconfig">MiniCPMOConfig</h3>
-<p>继承自 <code>Qwen3Config</code>，定义完整的多模态模型配置。</p>
-<p><strong>子配置</strong>：
-- <code>vision_config: SiglipVisionConfig</code> — 视觉编码器配置
-- <code>audio_config: WhisperConfig</code> — 音频编码器配置
-- <code>tts_config: MiniCPMTTSConfig</code> — TTS 模块配置
-- <code>slice_config: MiniCPMVSliceConfig</code> — 图像切片配置</p>
+<p>继承自 <code>Qwen3Config</code>，包含四个子配置：</p>
+<ul>
+<li><code>vision_config: SiglipVisionConfig</code> — 视觉编码器配置</li>
+<li><code>audio_config: WhisperConfig</code> — 音频编码器配置</li>
+<li><code>tts_config: MiniCPMTTSConfig</code> — TTS 模块配置</li>
+<li><code>slice_config: MiniCPMVSliceConfig</code> — 图像切片配置</li>
+</ul>
 <p><strong>关键参数</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>默认值</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>query_num</code></td>
-<td>64</td>
-<td>Resampler 查询数量</td>
-</tr>
-<tr>
-<td><code>image_size</code></td>
-<td>448</td>
-<td>默认图像尺寸</td>
-</tr>
-<tr>
-<td><code>drop_vision_last_layer</code></td>
-<td>True</td>
-<td>丢弃视觉编码器最后一层</td>
-</tr>
-<tr>
-<td><code>vision_batch_size</code></td>
-<td>16</td>
-<td>视觉批处理大小</td>
-</tr>
-<tr>
-<td><code>audio_pool_step</code></td>
-<td>5</td>
-<td>音频特征池化步长</td>
-</tr>
-<tr>
-<td><code>audio_chunk_length</code></td>
-<td>1.0</td>
-<td>音频块长度（秒）</td>
-</tr>
-<tr>
-<td><code>init_vision</code></td>
-<td>True</td>
-<td>初始化视觉编码器</td>
-</tr>
-<tr>
-<td><code>init_audio</code></td>
-<td>True</td>
-<td>初始化音频编码器</td>
-</tr>
-<tr>
-<td><code>init_tts</code></td>
-<td>True</td>
-<td>初始化 TTS 模块</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><code>query_num = 64</code> — Resampler 查询向量数量</li>
+<li><code>image_size = 448</code> — 默认图像尺寸</li>
+<li><code>drop_vision_last_layer = True</code> — 丢弃视觉编码器最后一层</li>
+<li><code>vision_batch_size = 16</code> — 视觉批处理大小</li>
+<li><code>audio_pool_step = 5</code> — 音频特征池化步长</li>
+<li><code>audio_chunk_length = 1.0</code> — 音频块长度（秒）</li>
+<li><code>init_vision = True</code> — 是否初始化视觉编码器</li>
+<li><code>init_audio = True</code> — 是否初始化音频编码器</li>
+<li><code>init_tts = True</code> — 是否初始化 TTS 模块</li>
+</ul>
 <h3 id="minicpmttsconfig">MiniCPMTTSConfig</h3>
-<p>TTS 模块专用配置。</p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>默认值</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>llm_dim</code></td>
-<td>2560</td>
-<td>LLM 投影维度</td>
-</tr>
-<tr>
-<td><code>hidden_size</code></td>
-<td>768</td>
-<td>TTS 隐藏层大小</td>
-</tr>
-<tr>
-<td><code>num_hidden_layers</code></td>
-<td>20</td>
-<td>TTS 层数</td>
-</tr>
-<tr>
-<td><code>num_attention_heads</code></td>
-<td>12</td>
-<td>TTS 注意力头数</td>
-</tr>
-<tr>
-<td><code>num_audio_tokens</code></td>
-<td>4097</td>
-<td>音频 token 数量</td>
-</tr>
-<tr>
-<td><code>num_text_tokens</code></td>
-<td>21178</td>
-<td>文本 token 数量</td>
-</tr>
-<tr>
-<td><code>streaming</code></td>
-<td>True</td>
-<td>流式模式</td>
-</tr>
-<tr>
-<td><code>attention_type</code></td>
-<td><code>"sliding_recompute"</code></td>
-<td>注意力类型</td>
-</tr>
-<tr>
-<td><code>window_size</code></td>
-<td>2</td>
-<td>滑动窗口大小</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="modeling_navit_siglippy">modeling_navit_siglip.py — 视觉编码器</h2>
-<h3 id="siglip-vision-transformer">SigLIP Vision Transformer</h3>
-<p>基于 <strong>SigLIP</strong> 的视觉编码器，处理图像输入。</p>
-<h4 id="_3">架构组件</h4>
-<table>
-<thead>
-<tr>
-<th>组件</th>
-<th>类</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>嵌入层</td>
-<td><code>SiglipVisionEmbeddings</code></td>
-<td>Patch Embedding (Conv2d) + 位置编码</td>
-</tr>
-<tr>
-<td>编码器</td>
-<td><code>SiglipEncoder</code></td>
-<td>多层 Transformer 编码器</td>
-</tr>
-<tr>
-<td>注意力</td>
-<td><code>SiglipAttention</code></td>
-<td>多头自注意力（支持 Flash Attention 2）</td>
-</tr>
-<tr>
-<td>FFN</td>
-<td><code>SiglipMLP</code></td>
-<td>前馈网络</td>
-</tr>
-<tr>
-<td>后处理</td>
-<td><code>post_layernorm</code></td>
-<td>层归一化</td>
-</tr>
-</tbody>
-</table>
-<h4 id="_4">特性</h4>
 <ul>
-<li>支持 Flash Attention 2 加速</li>
-<li>动态 patch attention mask 处理不同尺寸图像</li>
-<li>支持 <code>tgt_sizes</code> 批量处理多尺寸图像</li>
-</ul>
-<hr />
-<h2 id="modeling_minicpmopy">modeling_minicpmo.py — 主模型实现</h2>
-<h3 id="minicpmo">MiniCPMO 类</h3>
-<p>继承自 <code>MiniCPMOPreTrainedModel</code>（基于 <code>Qwen3PreTrainedModel</code>），实现完整的多模态推理。</p>
-<h4 id="_5">模型组件</h4>
-<table>
-<thead>
-<tr>
-<th>组件</th>
-<th>类型</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>llm</code></td>
-<td><code>Qwen3ForCausalLM</code></td>
-<td>语言模型 backbone</td>
-</tr>
-<tr>
-<td><code>vpm</code></td>
-<td><code>SiglipVisionTransformer</code></td>
-<td>视觉编码器</td>
-</tr>
-<tr>
-<td><code>resampler</code></td>
-<td><code>Resampler</code></td>
-<td>视觉特征重采样（Perceiver 架构）</td>
-</tr>
-<tr>
-<td><code>apm</code></td>
-<td><code>MiniCPMWhisperEncoder</code></td>
-<td>音频编码器（Whisper）</td>
-</tr>
-<tr>
-<td><code>audio_projection_layer</code></td>
-<td><code>MultiModalProjector</code></td>
-<td>音频特征投影</td>
-</tr>
-<tr>
-<td><code>tts</code></td>
-<td><code>MiniCPMTTS</code></td>
-<td>TTS 生成器</td>
-</tr>
-</tbody>
-</table>
-<h4 id="_6">核心方法</h4>
-<p><strong>视觉处理</strong>：
-- <code>get_vision_embedding(pixel_values, tgt_sizes)</code> — 图像编码 + Resampler 映射</p>
-<p><strong>音频处理</strong>：
-- <code>get_audio_embedding(audio_features, audio_feature_lens)</code> — Whisper 编码 + AvgPool1d + 投影</p>
-<p><strong>推理方法</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>方法</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>forward(input_ids, pixel_values, audio_features, ...)</code></td>
-<td>前向传播（支持 KV Cache）</td>
-</tr>
-<tr>
-<td><code>streaming_prefill(session_id, msgs, tokenizer, ...)</code></td>
-<td>流式预填充（支持 KV Cache 复用）</td>
-</tr>
-<tr>
-<td><code>streaming_generate(session_id, tokenizer, ...)</code></td>
-<td>流式生成（Generator）</td>
-</tr>
-</tbody>
-</table>
-<h3 id="minicpmoduplex">MiniCPMODuplex 类</h3>
-<p>专门的双工推理类，支持边听边说。</p>
-<h4 id="_7">关键方法</h4>
-<table>
-<thead>
-<tr>
-<th>方法</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>streaming_prefill(audio_features, frames, ...)</code></td>
-<td>预填充音频块和视频帧</td>
-</tr>
-<tr>
-<td><code>streaming_generate(...)</code></td>
-<td>生成一步（决定 listen 或 speak）</td>
-</tr>
-</tbody>
-</table>
-<h4 id="_8">滑动窗口策略</h4>
-<table>
-<thead>
-<tr>
-<th>策略</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>basic</code></td>
-<td>基础滑动窗口 — 保留最近 N 个 token</td>
-</tr>
-<tr>
-<td><code>context</code></td>
-<td>上下文滑动窗口 — 保留系统提示词 + 最近 N 个 token</td>
-</tr>
-</tbody>
-</table>
-<h3 id="minicpmtts">MiniCPMTTS 类</h3>
-<p>TTS 生成器，将 LLM 输出的文本 token 转换为音频 token。</p>
-<h4 id="_9">架构</h4>
-<table>
-<thead>
-<tr>
-<th>组件</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>emb_text</code></td>
-<td>文本嵌入层</td>
-</tr>
-<tr>
-<td><code>emb_code</code></td>
-<td>音频 codebook 嵌入</td>
-</tr>
-<tr>
-<td><code>model</code></td>
-<td>LlamaModel backbone</td>
-</tr>
-<tr>
-<td><code>head_code</code></td>
-<td>音频 token 预测头</td>
-</tr>
-</tbody>
-</table>
-<h4 id="_10">注意力模式</h4>
-<table>
-<thead>
-<tr>
-<th>模式</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>full_attention</code></td>
-<td>全注意力（精度最高，内存最大）</td>
-</tr>
-<tr>
-<td><code>sliding_window</code></td>
-<td>滑动窗口（平衡方案）</td>
-</tr>
-<tr>
-<td><code>sliding_recompute</code></td>
-<td>滑动重计算（默认，平衡精度与效率）</td>
-</tr>
-<tr>
-<td><code>reindex</code></td>
-<td>RoPE 重索引（实验性）</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="modeling_minicpmo_unifiedpy">modeling_minicpmo_unified.py — 统一模型</h2>
-<h3 id="_11">设计目标</h3>
-<p>统一模型将 Streaming、Duplex 两种模式合并到同一个模型实例中，实现毫秒级模式切换（&lt; 0.1ms），避免重复加载模型权重。</p>
-<h3 id="minicpmo_1">MiniCPMO（统一版）</h3>
-<p>继承标准 <code>MiniCPMO</code>，组合 <code>DuplexCapability</code>。</p>
-<pre class="mermaid">
-graph LR
-    UModel["MiniCPMO\n(统一入口)"]
-    StreamMode["Streaming 模式"]
-    DuplexCap["DuplexCapability\n(双工能力)"]
-
-    UModel -->|"set_mode(STREAMING)"| StreamMode
-    UModel -->|"set_mode(DUPLEX)"| DuplexCap
-</pre>
-
-<h4 id="_12">核心方法</h4>
-<table>
-<thead>
-<tr>
-<th>方法</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>init_unified(preload_both_tts)</code></td>
-<td>初始化统一模型，预加载双 TTS</td>
-</tr>
-<tr>
-<td><code>set_mode(mode)</code></td>
-<td>切换模式（自动切换 TTS tokenizer，清理 KV Cache）</td>
-</tr>
-<tr>
-<td><code>streaming_prefill(...)</code> / <code>streaming_generate(...)</code></td>
-<td>Streaming 推理</td>
-</tr>
-<tr>
-<td><code>duplex_prepare(...)</code> / <code>duplex_prefill(...)</code> / <code>duplex_generate(...)</code></td>
-<td>在线双工推理</td>
-</tr>
-</tbody>
-</table>
-<h3 id="duplexcapability">DuplexCapability</h3>
-<p>组合模式的双工能力组件，不继承模型，通过引用共享模型参数。</p>
-<h4 id="_13">封装逻辑</h4>
-<ul>
-<li>双工 system prompt 处理</li>
-<li>音频/视频预填充</li>
-<li>Listen/Speak 决策生成</li>
-<li>使用 <code>StreamDecoder</code> 进行流式解码</li>
-</ul>
-<hr />
-<h2 id="processing_minicpmopy">processing_minicpmo.py — 多模态处理器</h2>
-<h3 id="minicpmoprocessor">MiniCPMOProcessor</h3>
-<p>统一的多模态预处理器，组合图像、音频和文本处理。</p>
-<h4 id="_14">子处理器</h4>
-<table>
-<thead>
-<tr>
-<th>组件</th>
-<th>类</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>图像</td>
-<td><code>MiniCPMVImageProcessor</code></td>
-<td>图像切片、预处理、padding</td>
-</tr>
-<tr>
-<td>音频</td>
-<td><code>MiniCPMAAudioProcessor</code></td>
-<td>Mel spectrogram 提取</td>
-</tr>
-<tr>
-<td>文本</td>
-<td><code>MiniCPMOTokenizerFast</code></td>
-<td>分词</td>
-</tr>
-</tbody>
-</table>
-<h4 id="minicpmvimageprocessor">MiniCPMVImageProcessor</h4>
-<table>
-<thead>
-<tr>
-<th>方法</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>slice_image(image, max_slice_nums)</code></td>
-<td>大图切片（最大 9 片）</td>
-</tr>
-<tr>
-<td><code>get_sliced_grid(image_size, max_slice_nums)</code></td>
-<td>计算最优切片网格</td>
-</tr>
-<tr>
-<td><code>preprocess(images, ...)</code></td>
-<td>图像预处理（归一化、resize）</td>
-</tr>
-</tbody>
-</table>
-<h4 id="minicpmaaudioprocessor">MiniCPMAAudioProcessor</h4>
-<p>继承 <code>WhisperFeatureExtractor</code>，提取 Mel spectrogram。</p>
-<table>
-<thead>
-<tr>
-<th>方法</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>__call__(audio, sampling_rate, ...)</code></td>
-<td>提取音频特征</td>
-</tr>
-<tr>
-<td><code>StreamingMelProcessorExact</code></td>
-<td>精确流式 Mel 处理器</td>
-</tr>
-</tbody>
-</table>
-<h4 id="_15">统一入口</h4>
-<table>
-<thead>
-<tr>
-<th>方法</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>__call__(text, images, audios, ...)</code></td>
-<td>统一处理多模态输入</td>
-</tr>
-<tr>
-<td><code>process_image(images, ...)</code></td>
-<td>图像批处理</td>
-</tr>
-<tr>
-<td><code>process_audio(audios, ...)</code></td>
-<td>音频批处理</td>
-</tr>
-<tr>
-<td><code>process_audio_streaming(audio_chunk, ...)</code></td>
-<td>流式音频处理</td>
-</tr>
-<tr>
-<td><code>_convert_omni_to_inputs(...)</code></td>
-<td>Omni 模式输入转换</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="tokenization_minicpmo_fastpy">tokenization_minicpmo_fast.py — 快速分词器</h2>
-<h3 id="minicpmotokenizerfast">MiniCPMOTokenizerFast</h3>
-<p>继承 <code>Qwen2TokenizerFast</code>，扩展多模态特殊 token。</p>
-<h4 id="token">特殊 Token</h4>
-<table>
-<thead>
-<tr>
-<th>类别</th>
-<th>Token</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>图像</td>
-<td><code>&lt;image&gt;</code>, <code>&lt;/image&gt;</code></td>
-<td>图像内容边界</td>
-</tr>
-<tr>
-<td>图像切片</td>
-<td><code>&lt;slice&gt;</code>, <code>&lt;/slice&gt;</code></td>
-<td>图像切片边界</td>
-</tr>
-<tr>
-<td>音频</td>
-<td><code>&lt;|audio_start|&gt;</code>, <code>&lt;|audio_end|&gt;</code></td>
-<td>音频内容边界</td>
-</tr>
-<tr>
-<td>TTS</td>
-<td><code>&lt;|tts_bos|&gt;</code>, <code>&lt;|tts_eos|&gt;</code></td>
-<td>TTS 生成边界</td>
-</tr>
-<tr>
-<td>双工</td>
-<td><code>&lt;|listen|&gt;</code>, <code>&lt;|speak|&gt;</code></td>
-<td>双工模式动作标记</td>
-</tr>
-</tbody>
-</table>
-<p>这些特殊 token 通过属性方法提供对应的 token ID，用于模型推理中的条件判断和生成控制。</p>
-<hr />
-<h2 id="utilspy">utils.py — 工具函数</h2>
-<h3 id="chunkprefillchunkgenerate">ChunkPrefillChunkGenerate</h3>
-<p>分块预填充和生成器，支持：
-- 重复惩罚（repetition penalty）
-- 长度惩罚（length penalty）
-- 禁止 token 过滤
-- 分块 prefill（减少内存峰值）</p>
-<h3 id="streamdecoder">StreamDecoder</h3>
-<p>流式解码器，管理双工模式的 token 流。</p>
-<table>
-<thead>
-<tr>
-<th>方法</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>enforce_window(max_len)</code></td>
-<td>基础滑动窗口 — 截断超过 max_len 的序列</td>
-</tr>
-<tr>
-<td><code>enforce_window_with_context(max_len, context_len)</code></td>
-<td>上下文保留滑动窗口</td>
-</tr>
-<tr>
-<td><code>register_unit_start()</code> / <code>register_unit_end()</code></td>
-<td>注册生成单元的边界</td>
-</tr>
-</tbody>
-</table>
-<h3 id="ttsstreaminggenerator">TTSStreamingGenerator</h3>
-<p>流式 TTS 生成器，管理 TTS 模型的流式推理。</p>
-<p>支持多种注意力模式：
-- <code>full_attention</code> — 全注意力
-- <code>sliding_window</code> — 滑动窗口
-- <code>sliding_recompute</code> — 滑动重计算（默认）
-- <code>reindex</code> — RoPE 重索引</p>
-<h3 id="speculativesnapshot">SpeculativeSnapshot</h3>
-<p>VAD 抢跑快照工具，用于保存和恢复推理状态（KV Cache、Mel 处理器状态），支持投机性预生成和回滚。</p></article>
+<li><code>llm_dim = 2560</code> — LLM 投影维度</li>
+<li><code>hidden_size = 768</code> — TTS 隐藏层大小</li>
+<li><code>num_hidden_layers = 20</code> — TTS Transformer 层数</li>
+<li><code>num_attention_heads = 12</code> — 注意力头数</li>
+<li><code>num_audio_tokens = 4097</code> — 音频 token 词表大小</li>
+<li><code>num_text_tokens = 21178</code> — 文本 token 词表大小</li>
+<li><code>streaming = True</code> — 是否启用流式模式</li>
+<li><code>attention_type = "sliding_recompute"</code> — 注意力类型</li>
+<li><code>window_size = 2</code> — 滑动窗口大小</li>
+</ul></article>
   <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; 由 build_docs.py 自动生成</p></footer>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>

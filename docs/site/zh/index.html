@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>项目概述 - MiniCPM-o 4.5 文档</title>
+<title>首页 - MiniCPM-o 4.5 文档</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -77,7 +77,7 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
     <a href="../en/index.html" class="lang-switch">English</a>
   </div>
   <ul class="nav-list">
-    <li><a href="index.html" class="active">项目概述</a></li>
+    <li><a href="index.html" class="active">首页</a></li>
     <li class="nav-group">
       <span class="nav-group-header">系统架构</span>
       <ul class="nav-group-children">
@@ -88,9 +88,6 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="architecture/internals.html">内部机制</a></li>
       </ul>
     </li>
-    <li><a href="gateway.html">Gateway 模块</a></li>
-    <li><a href="worker.html">Worker 模块</a></li>
-    <li><a href="schema.html">Schema</a></li>
     <li><a href="model.html">模型模块</a></li>
     <li><a href="compile.html">torch.compile</a></li>
     <li class="nav-group">
@@ -103,190 +100,29 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="frontend/components.html">UI 组件</a></li>
       </ul>
     </li>
-    <li><a href="api.html">API 参考</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">API 参考</span>
+      <ul class="nav-group-children">
+        <li><a href="api/chat.html">Chat 模式</a></li>
+        <li><a href="api/half-duplex.html">Half-Duplex 模式</a></li>
+        <li><a href="api/duplex.html">Duplex 模式</a></li>
+        <li><a href="api.html">通用</a></li>
+      </ul>
+    </li>
     <li><a href="deployment.html">配置与部署</a></li>
   </ul>
 </nav>
 <main class="content" id="content">
-  <article><h1 id="minicpm-o-45-pytorch">MiniCPM-o 4.5 PyTorch 简易演示系统 — 项目文档</h1>
-<h2 id="_1">项目简介</h2>
-<p>MiniCPM-o 4.5 PyTorch 简易演示系统是由 MiniCPM-o 4.5 模型训练团队官方提供的演示系统。它使用 <strong>PyTorch + CUDA</strong> 推理后端，结合简易的前后端设计，以透明、简洁、无性能损失的方式全面演示 MiniCPM-o 4.5 的音视频全模态全双工能力。</p>
-<h2 id="_2">交互模式</h2>
-<p>系统支持三种交互模式，共享同一个模型实例，支持毫秒级热切换（&lt; 0.1ms）：</p>
-<table>
-<thead>
-<tr>
-<th>模式</th>
-<th>特点</th>
-<th>输入输出模态</th>
-<th>范式</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Turn-based Chat</strong></td>
-<td>低延迟流式交互，按钮或 VAD 触发回复，基础能力强</td>
-<td>音频 + 文本 + 视频输入，音频 + 文本输出</td>
-<td>轮次对话</td>
-</tr>
-<tr>
-<td><strong>Omnimodal Full-Duplex</strong></td>
-<td>全模态全双工，视觉+语音输入、语音输出同时进行</td>
-<td>视觉 + 语音输入，文本 + 语音输出</td>
-<td>全双工</td>
-</tr>
-<tr>
-<td><strong>Audio Full-Duplex</strong></td>
-<td>语音全双工，语音输入和输出同时进行</td>
-<td>语音输入，文本 + 语音输出</td>
-<td>全双工</td>
-</tr>
-</tbody>
-</table>
-<h2 id="_3">其他特性</h2>
+  <article><h1 id="minicpm-o-45">MiniCPM-o 4.5 文档</h1>
+<p>MiniCPM-o 4.5 PyTorch 简易演示系统是由模型训练团队官方提供的推理与演示系统，使用 PyTorch + CUDA 推理后端，以透明、简洁的方式全面展示 MiniCPM-o 4.5 的音视频全模态全双工能力。</p>
+<p>系统支持四种交互模式（Turn-based Chat、Half-Duplex、Omnimodal Full-Duplex、Audio Full-Duplex），共享同一模型实例，毫秒级热切换。</p>
+<h2 id="_1">快速开始</h2>
 <ul>
-<li>可自定义系统提示词</li>
-<li>可自定义参考音频（TTS 声音克隆）</li>
-<li>代码简洁易读，便于二次开发</li>
-<li>可作为 API 后端供第三方应用调用</li>
-<li>支持会话录制与回放</li>
-</ul>
-<h2 id="_4">文档导航</h2>
-<table>
-<thead>
-<tr>
-<th>文档</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="architecture.md">系统架构</a></td>
-<td>整体架构拓扑、请求流转、模块依赖关系</td>
-</tr>
-<tr>
-<td><a href="gateway.md">Gateway 模块</a></td>
-<td>请求路由、WebSocket 代理、队列调度、LRU 缓存</td>
-</tr>
-<tr>
-<td><a href="worker.md">Worker 模块</a></td>
-<td>模型推理服务、状态机、会话录制与清理</td>
-</tr>
-<tr>
-<td><a href="core.md">Core 模块</a></td>
-<td>Schema 定义、处理器架构、能力声明系统</td>
-</tr>
-<tr>
-<td><a href="model.md">模型模块</a></td>
-<td>MiniCPMO45 多模态模型架构详解</td>
-</tr>
-<tr>
-<td><a href="compile.md">torch.compile</a></td>
-<td>编译加速实现、目标子模块、预热机制</td>
-</tr>
-<tr>
-<td><strong>前端模块</strong></td>
-<td></td>
-</tr>
-<tr>
-<td><a href="frontend/index.md">前端概述</a></td>
-<td>模块结构、技术栈、导航索引</td>
-</tr>
-<tr>
-<td><a href="frontend/pages.md">页面与路由</a></td>
-<td>各页面详解、Turn-based Chat 状态管理</td>
-</tr>
-<tr>
-<td><a href="frontend/audio.md">音频处理</a></td>
-<td>AudioWorklet 采集、播放器、LUFS 测量</td>
-</tr>
-<tr>
-<td><a href="frontend/duplex-session.md">双工会话</a></td>
-<td>DuplexSession 类、状态机、录制系统</td>
-</tr>
-<tr>
-<td><a href="frontend/components.md">UI 组件</a></td>
-<td>共享组件、内容编辑器、指标面板</td>
-</tr>
-<tr>
-<td><a href="api.md">API 参考</a></td>
-<td>HTTP REST API、WebSocket 协议消息格式</td>
-</tr>
-<tr>
-<td><a href="deployment.md">配置与部署</a></td>
-<td>系统要求、配置说明、启动部署、测试</td>
-</tr>
-</tbody>
-</table>
-<h2 id="_5">项目代码结构总览</h2>
-<div class="codehilite"><pre><span></span><code><span class="nx">minicpm</span><span class="o">-</span><span class="nx">o</span><span class="o">-</span><span class="mi">4</span><span class="nx">_5</span><span class="o">-</span><span class="nx">pytorch</span><span class="o">-</span><span class="nx">simple</span><span class="o">-</span><span class="nx">demo</span><span class="o">/</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">config</span><span class="p">.</span><span class="nx">json</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nx">config</span><span class="p">.</span><span class="nx">example</span><span class="p">.</span><span class="nx">json</span><span class="w">  </span><span class="err">#</span><span class="w"> </span><span class="nx">服务配置</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">config</span><span class="p">.</span><span class="nx">py</span><span class="w">                          </span><span class="err">#</span><span class="w"> </span><span class="nx">配置加载</span><span class="err">（</span><span class="nx">Pydantic</span><span class="err">）</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">requirements</span><span class="p">.</span><span class="nx">txt</span><span class="w">                   </span><span class="err">#</span><span class="w"> </span><span class="nx">Python</span><span class="w"> </span><span class="nx">依赖</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">install</span><span class="p">.</span><span class="nx">sh</span><span class="w">                         </span><span class="err">#</span><span class="w"> </span><span class="nx">一键安装脚本</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">start_all</span><span class="p">.</span><span class="nx">sh</span><span class="w">                       </span><span class="err">#</span><span class="w"> </span><span class="nx">一键启动脚本</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">gateway</span><span class="p">.</span><span class="nx">py</span><span class="w">                         </span><span class="err">#</span><span class="w"> </span><span class="nx">Gateway</span><span class="w"> </span><span class="nx">服务入口</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">gateway_modules</span><span class="o">/</span><span class="w">                   </span><span class="err">#</span><span class="w"> </span><span class="nx">Gateway</span><span class="w"> </span><span class="nx">业务模块</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">worker_pool</span><span class="p">.</span><span class="nx">py</span><span class="w">                 </span><span class="err">#</span><span class="w">   </span><span class="nx">Worker</span><span class="w"> </span><span class="nx">池调度器</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">app_registry</span><span class="p">.</span><span class="nx">py</span><span class="w">                </span><span class="err">#</span><span class="w">   </span><span class="nx">应用注册表</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">models</span><span class="p">.</span><span class="nx">py</span><span class="w">                      </span><span class="err">#</span><span class="w">   </span><span class="nx">数据模型</span>
-<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">ref_audio_registry</span><span class="p">.</span><span class="nx">py</span><span class="w">          </span><span class="err">#</span><span class="w">   </span><span class="nx">参考音频注册表</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">worker</span><span class="p">.</span><span class="nx">py</span><span class="w">                          </span><span class="err">#</span><span class="w"> </span><span class="nx">Worker</span><span class="w"> </span><span class="nx">推理服务入口</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">session_recorder</span><span class="p">.</span><span class="nx">py</span><span class="w">                </span><span class="err">#</span><span class="w"> </span><span class="nx">会话录制器</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">session_cleanup</span><span class="p">.</span><span class="nx">py</span><span class="w">                 </span><span class="err">#</span><span class="w"> </span><span class="nx">会话清理器</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">core</span><span class="o">/</span><span class="w">                              </span><span class="err">#</span><span class="w"> </span><span class="nx">核心封装层</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">schemas</span><span class="o">/</span><span class="w">                       </span><span class="err">#</span><span class="w">   </span><span class="nx">Pydantic</span><span class="w"> </span><span class="nx">Schema</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">common</span><span class="p">.</span><span class="nx">py</span><span class="w">                  </span><span class="err">#</span><span class="w">     </span><span class="nx">公共类型</span><span class="err">（</span><span class="nx">Role</span><span class="p">,</span><span class="w"> </span><span class="nx">Message</span><span class="p">,</span><span class="w"> </span><span class="nx">Config</span><span class="err">）</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">chat</span><span class="p">.</span><span class="nx">py</span><span class="w">                    </span><span class="err">#</span><span class="w">     </span><span class="nx">Chat</span><span class="w"> </span><span class="nx">请求</span><span class="o">/</span><span class="nx">响应</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">streaming</span><span class="p">.</span><span class="nx">py</span><span class="w">               </span><span class="err">#</span><span class="w">     </span><span class="nx">Streaming</span><span class="w"> </span><span class="nx">请求</span><span class="o">/</span><span class="nx">响应</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">duplex</span><span class="p">.</span><span class="nx">py</span><span class="w">                  </span><span class="err">#</span><span class="w">     </span><span class="nx">Duplex</span><span class="w"> </span><span class="nx">请求</span><span class="o">/</span><span class="nx">响应</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">processors</span><span class="o">/</span><span class="w">                    </span><span class="err">#</span><span class="w">   </span><span class="nx">推理处理器</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="kd">base</span><span class="p">.</span><span class="nx">py</span><span class="w">                    </span><span class="err">#</span><span class="w">     </span><span class="nx">基类与</span><span class="w"> </span><span class="nx">Mixin</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">unified</span><span class="p">.</span><span class="nx">py</span><span class="w">                 </span><span class="err">#</span><span class="w">     </span><span class="nx">统一处理器</span><span class="err">（</span><span class="nx">三</span><span class="w"> </span><span class="nx">View</span><span class="err">）</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">capabilities</span><span class="p">.</span><span class="nx">py</span><span class="w">                </span><span class="err">#</span><span class="w">   </span><span class="nx">能力声明</span>
-<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">factory</span><span class="p">.</span><span class="nx">py</span><span class="w">                     </span><span class="err">#</span><span class="w">   </span><span class="nx">工厂模式</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">MiniCPMO45</span><span class="o">/</span><span class="w">                        </span><span class="err">#</span><span class="w"> </span><span class="nx">模型核心推理代码</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">configuration_minicpmo</span><span class="p">.</span><span class="nx">py</span><span class="w">      </span><span class="err">#</span><span class="w">   </span><span class="nx">模型配置</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">modeling_minicpmo</span><span class="p">.</span><span class="nx">py</span><span class="w">           </span><span class="err">#</span><span class="w">   </span><span class="nx">主模型实现</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">modeling_minicpmo_unified</span><span class="p">.</span><span class="nx">py</span><span class="w">   </span><span class="err">#</span><span class="w">   </span><span class="nx">统一模型</span><span class="err">（</span><span class="nx">热切换</span><span class="err">）</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">modeling_navit_siglip</span><span class="p">.</span><span class="nx">py</span><span class="w">       </span><span class="err">#</span><span class="w">   </span><span class="nx">SigLIP</span><span class="w"> </span><span class="nx">视觉编码器</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">processing_minicpmo</span><span class="p">.</span><span class="nx">py</span><span class="w">         </span><span class="err">#</span><span class="w">   </span><span class="nx">多模态处理器</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">tokenization_minicpmo_fast</span><span class="p">.</span><span class="nx">py</span><span class="w">  </span><span class="err">#</span><span class="w">   </span><span class="nx">快速分词器</span>
-<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">utils</span><span class="p">.</span><span class="nx">py</span><span class="w">                       </span><span class="err">#</span><span class="w">   </span><span class="nx">工具函数</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">static</span><span class="o">/</span><span class="w">                            </span><span class="err">#</span><span class="w"> </span><span class="nx">前端页面</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">index</span><span class="p">.</span><span class="nx">html</span><span class="w">                     </span><span class="err">#</span><span class="w">   </span><span class="nx">首页</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">turnbased</span><span class="p">.</span><span class="nx">html</span><span class="w">                 </span><span class="err">#</span><span class="w">   </span><span class="nx">轮次对话页</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">admin</span><span class="p">.</span><span class="nx">html</span><span class="w">                     </span><span class="err">#</span><span class="w">   </span><span class="nx">管理面板</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">session</span><span class="o">-</span><span class="nx">viewer</span><span class="p">.</span><span class="nx">html</span><span class="w">            </span><span class="err">#</span><span class="w">   </span><span class="nx">会话回放</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">omni</span><span class="o">/</span><span class="w">                          </span><span class="err">#</span><span class="w">   </span><span class="nx">Omni</span><span class="w"> </span><span class="nx">全双工页面</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">audio</span><span class="o">-</span><span class="nx">duplex</span><span class="o">/</span><span class="w">                  </span><span class="err">#</span><span class="w">   </span><span class="nx">音频全双工页面</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">duplex</span><span class="o">/</span><span class="w">                        </span><span class="err">#</span><span class="w">   </span><span class="nx">双工共享库</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">lib</span><span class="o">/</span><span class="w">                       </span><span class="err">#</span><span class="w">     </span><span class="nx">核心库</span><span class="err">（</span><span class="nx">音频</span><span class="o">/</span><span class="nx">视频</span><span class="o">/</span><span class="nx">会话</span><span class="err">）</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">ui</span><span class="o">/</span><span class="w">                        </span><span class="err">#</span><span class="w">     </span><span class="nx">UI</span><span class="w"> </span><span class="nx">组件</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">shared</span><span class="o">/</span><span class="w">                        </span><span class="err">#</span><span class="w">   </span><span class="nx">跨页面共享组件</span>
-<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">lib</span><span class="o">/</span><span class="w">                           </span><span class="err">#</span><span class="w">   </span><span class="nx">通用工具库</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">resources</span><span class="o">/</span><span class="w">                         </span><span class="err">#</span><span class="w"> </span><span class="nx">资源文件</span><span class="err">（</span><span class="nx">参考音频等</span><span class="err">）</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">tests</span><span class="o">/</span><span class="w">                             </span><span class="err">#</span><span class="w"> </span><span class="nx">测试套件</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">docs</span><span class="o">/</span><span class="w">                              </span><span class="err">#</span><span class="w"> </span><span class="nx">项目文档</span>
-<span class="err">└──</span><span class="w"> </span><span class="nx">tmp</span><span class="o">/</span><span class="w">                               </span><span class="err">#</span><span class="w"> </span><span class="nx">运行时日志和</span><span class="w"> </span><span class="nx">PID</span><span class="w"> </span><span class="nx">文件</span>
-</code></pre></div>
-
-<h2 id="_6">快速开始</h2>
-<ol>
-<li>确保有 NVIDIA GPU（显存 &gt; 28GB）和 Linux 系统</li>
-<li>安装 FFmpeg</li>
-<li>运行 <code>bash install.sh</code> 安装依赖</li>
-<li>复制 <code>cp config.example.json config.json</code></li>
-<li>运行 <code>CUDA_VISIBLE_DEVICES=0 bash start_all.sh</code> 启动服务</li>
-<li>访问 <code>https://localhost:8006</code></li>
-</ol>
-<p>详细部署说明请参考 <a href="deployment.md">配置与部署</a>。</p></article>
+<li><a href="architecture/index.md">系统架构</a> — 整体架构、模式拓扑与请求流转</li>
+<li><a href="model.md">模型模块</a> — 多模态模型的内部结构与数据流</li>
+<li><a href="api.md">API 参考</a> — 接口定义与调用方式</li>
+<li><a href="deployment.md">配置与部署</a> — 环境要求、配置说明与部署步骤</li>
+</ul></article>
   <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; 由 build_docs.py 自动生成</p></footer>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>

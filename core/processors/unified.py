@@ -1312,8 +1312,32 @@ class UnifiedProcessor(BaseProcessor):
             )
             return "sdpa"
 
+    def _is_quantized_model(self, model_path: str) -> bool:
+        """Check if the model at *model_path* uses quantization (AWQ / GPTQ / BnB).
+
+        Reads ``config.json`` in the model directory and looks for a
+        ``quantization_config`` section with a ``quant_method``.
+        """
+        config_file = os.path.join(model_path, "config.json")
+        if not os.path.isfile(config_file):
+            return False
+        try:
+            import json as _json
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = _json.load(f)
+            qcfg = cfg.get("quantization_config")
+            return bool(qcfg and qcfg.get("quant_method"))
+        except Exception:
+            return False
+
     def _load_model(self) -> None:
-        """Load the unified model."""
+        """Load the unified model.
+
+        Supports both full-precision (bf16) and quantized (AWQ) model weights.
+        Quantization metadata (including ``modules_to_not_convert``) is read
+        from the model's own ``config.json``.  When quantization is detected
+        the loader skips ``.bfloat16()`` and ``torch.compile``.
+        """
         logger.info(f"Loading unified model: {self.model_path}")
         if self.pt_path:
             logger.info(f"Extra weights: {self.pt_path}")
@@ -1324,13 +1348,28 @@ class UnifiedProcessor(BaseProcessor):
         # Resolve attention implementation (auto-detect when set to "auto")
         resolved_attn = self._resolve_attn_implementation()
 
+        is_quantized = self._is_quantized_model(self.model_path)
+        if is_quantized:
+            logger.info("Quantized model detected")
+
         # Load base model
         self.model = MiniCPMO.from_pretrained(
             self.model_path,
             trust_remote_code=True,
             _attn_implementation=resolved_attn,
         )
-        self.model.bfloat16().eval()
+
+        if is_quantized:
+            # AWQ/GPTQ: integer qweight/qzeros must NOT be cast to bfloat16.
+            # Non-quantized sub-modules (vpm, apm, tts, resampler) are already
+            # stored in the correct dtype by the checkpoint.
+            self.model.eval()
+            logger.info(
+                "Quantized model detected — skipping .bfloat16() cast "
+                "(quantized layers use integer weights)"
+            )
+        else:
+            self.model.bfloat16().eval()
 
         if self.device == "cuda":
             self.model.cuda()
@@ -1338,7 +1377,7 @@ class UnifiedProcessor(BaseProcessor):
         load_time = time.time() - start
         logger.info(
             f"Base model loaded in {load_time:.1f}s, "
-            f"attn_implementation={resolved_attn}"
+            f"attn_implementation={resolved_attn}, quantized={is_quantized}"
         )
 
         # Unified initialization (supports all three modes)
@@ -1367,7 +1406,10 @@ class UnifiedProcessor(BaseProcessor):
         # torch.compile acceleration + warmup (optional)
         if self.compile:
             compile_start = time.time()
-            self.model.apply_torch_compile(mode="default", dynamic=True)
+            # AWQ: skip llm.model (custom INT4 kernels incompatible with compile),
+            # but still compile vpm / resampler / tts.model (all float, full benefit).
+            skip = ["llm.model"] if is_quantized else None
+            self.model.apply_torch_compile(mode="default", dynamic=True, skip_modules=skip)
             self.model.warmup_compile(ref_audio_path=self.ref_audio_path)
             compile_time = time.time() - compile_start
             logger.info(f"torch.compile + warmup done in {compile_time:.1f}s")

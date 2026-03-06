@@ -392,6 +392,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         self,
         mode: str = "default",
         dynamic: bool = True,
+        skip_modules: Optional[List[str]] = None,
     ) -> "MiniCPMO":
         """Apply torch.compile to compute-intensive sub-modules.
 
@@ -424,32 +425,47 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 - "max-autotune": maximum optimization (very long compile time)
             dynamic: Enable dynamic shape support (recommended True to avoid
                 recompilation when shapes change).
+            skip_modules: Module names to skip (e.g. ["llm.model"] for AWQ
+                quantized LLM whose custom kernels are incompatible with compile).
 
         Returns:
             self (for method chaining).
         """
         import time as _time
-        logger.info(f"[torch.compile] Compiling sub-modules (mode={mode}, dynamic={dynamic})")
+        skip = set(skip_modules or [])
+        logger.info(
+            f"[torch.compile] Compiling sub-modules "
+            f"(mode={mode}, dynamic={dynamic}, skip={skip or 'none'})"
+        )
         t0 = _time.time()
 
         compile_kwargs = dict(mode=mode, dynamic=dynamic)
         compiled_modules: list = []
+        skipped_modules: list = []
 
-        if hasattr(self, "vpm"):
+        if hasattr(self, "vpm") and "vpm" not in skip:
             self.vpm = torch.compile(self.vpm, **compile_kwargs)
             compiled_modules.append("vpm")
+        elif "vpm" in skip:
+            skipped_modules.append("vpm")
 
-        if hasattr(self, "llm"):
+        if hasattr(self, "llm") and "llm.model" not in skip:
             self.llm.model = torch.compile(self.llm.model, **compile_kwargs)
             compiled_modules.append("llm.model")
+        elif "llm.model" in skip:
+            skipped_modules.append("llm.model")
 
-        if hasattr(self, "resampler"):
+        if hasattr(self, "resampler") and "resampler" not in skip:
             self.resampler = torch.compile(self.resampler, **compile_kwargs)
             compiled_modules.append("resampler")
+        elif "resampler" in skip:
+            skipped_modules.append("resampler")
 
-        if hasattr(self, "tts") and hasattr(self.tts, "model"):
+        if hasattr(self, "tts") and hasattr(self.tts, "model") and "tts.model" not in skip:
             self.tts.model = torch.compile(self.tts.model, **compile_kwargs)
             compiled_modules.append("tts.model")
+        elif "tts.model" in skip:
+            skipped_modules.append("tts.model")
 
         # Enable TF32 for faster matmul on Ampere+ GPUs
         torch.set_float32_matmul_precision("high")
@@ -458,7 +474,9 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         self._compiled = True
         logger.info(
             f"[torch.compile] Wrapping done ({elapsed:.2f}s), "
-            f"compiled: {compiled_modules}. Actual compilation triggers on first forward."
+            f"compiled: {compiled_modules}"
+            + (f", skipped: {skipped_modules}" if skipped_modules else "")
+            + ". Actual compilation triggers on first forward."
         )
         return self
 
@@ -704,6 +722,314 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             "%s[warmup] ✓ omni duplex warmup complete (total=%.1fs, tts_triggered=%s)%s",
             _G, total, tts_triggered, _R,
         )
+
+    def benchmark(
+        self,
+        video_paths: Optional[List[str]] = None,
+        video_dir: Optional[str] = None,
+        ref_audio_path: Optional[str] = None,
+        system_prompt: str = "Streaming Omni Conversation.",
+        max_chunks_per_video: int = 0,
+    ) -> dict:
+        """Run omni duplex benchmark, collecting per-module timing for LISTEN / SPEAK.
+
+        Processes one or more MP4 videos through the full duplex pipeline
+        (prepare → prefill → generate → finalize) and logs per-unit timing
+        breakdown.  Summary statistics are printed at the end, grouped by
+        decision type (LISTEN vs SPEAK).
+
+        Args:
+            video_paths: List of MP4 video file paths.
+            video_dir: Directory containing MP4 videos (scanned for ``*.mp4``).
+                Can be used together with *video_paths*; all paths are merged.
+            ref_audio_path: Reference audio for TTS voice cloning.
+            system_prompt: Content of the system prompt (wrapped in the
+                standard ``<|im_start|>`` framing automatically).
+            max_chunks_per_video: Maximum number of 1-second chunks to process
+                per video.  ``0`` means process the entire video.
+
+        Returns:
+            Dict with ``units`` (per-unit records), counts, and elapsed time.
+        """
+        import time as _time
+
+        if self.duplex is None:
+            logger.warning("[bench] duplex not initialized, cannot benchmark")
+            return {}
+
+        # ── Resolve video paths ──
+        resolved_videos: List[str] = []
+        if video_dir and os.path.isdir(video_dir):
+            for f in sorted(os.listdir(video_dir)):
+                if f.lower().endswith(".mp4"):
+                    resolved_videos.append(os.path.join(video_dir, f))
+        if video_paths:
+            for p in video_paths:
+                if os.path.isfile(p):
+                    resolved_videos.append(p)
+                else:
+                    logger.warning("[bench] video not found, skipping: %s", p)
+        if not resolved_videos:
+            logger.warning("[bench] no valid video files found, aborting")
+            return {}
+
+        # ── Resolve ref audio ──
+        if ref_audio_path is None:
+            project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+            ref_audio_path = os.path.join(
+                project_root, "assets", "ref_audio", "ref_minicpm_signature.wav"
+            )
+        if not os.path.isfile(ref_audio_path):
+            logger.warning("[bench] ref audio not found: %s", ref_audio_path)
+            return {}
+
+        import librosa as _librosa
+        ref_audio, _ = _librosa.load(ref_audio_path, sr=16000, mono=True)
+
+        prefix_prompt = f"<|im_start|>system\n{system_prompt}\n<|audio_start|>"
+        suffix_prompt = "<|audio_end|><|im_end|>"
+
+        all_units: List[dict] = []
+        t_total = _time.time()
+
+        logger.info(
+            "[bench] Starting benchmark: %d video(s), system_prompt=%r",
+            len(resolved_videos), system_prompt,
+        )
+
+        for vid_idx, video_path in enumerate(resolved_videos):
+            video_name = os.path.basename(video_path)
+            max_c = max_chunks_per_video if max_chunks_per_video > 0 else 99999
+
+            logger.info(
+                "[bench] ── Video %d/%d: %s (max_chunks=%s) ──",
+                vid_idx + 1, len(resolved_videos), video_name,
+                max_chunks_per_video if max_chunks_per_video > 0 else "all",
+            )
+
+            # ── Extract audio chunks and video frames ──
+            audio_chunks, frames = self._extract_mp4_chunks(
+                video_path, max_chunks=max_c
+            )
+            if not audio_chunks:
+                logger.warning("[bench] no audio extracted from %s, skipping", video_name)
+                continue
+
+            num_chunks = (
+                min(len(audio_chunks), len(frames)) if frames else len(audio_chunks)
+            )
+            logger.info("[bench] Extracted %d chunks, %d frames", len(audio_chunks), len(frames))
+
+            # ── Prepare duplex session ──
+            self.duplex.prepare(
+                prefix_system_prompt=prefix_prompt,
+                suffix_system_prompt=suffix_prompt,
+                ref_audio=ref_audio,
+                prompt_wav_path=ref_audio_path,
+            )
+
+            # ── Per-chunk loop ──
+            for i in range(num_chunks):
+                frame_list = [frames[i]] if frames and i < len(frames) else None
+
+                # Prefill
+                t_pf = _time.time()
+                try:
+                    prefill_result = self.duplex.streaming_prefill(
+                        audio_waveform=audio_chunks[i],
+                        frame_list=frame_list,
+                        max_slice_nums=1,
+                    )
+                except Exception as e:
+                    logger.error("[bench] video=%s unit=%d prefill failed: %s", video_name, i, e)
+                    break
+                cost_prefill = (_time.time() - t_pf) * 1000
+
+                pf = {
+                    "vision_process": prefill_result.get("cost_vision_process", 0) * 1000,
+                    "vision_embed": prefill_result.get("cost_vision_embed", 0) * 1000,
+                    "vision_feed": prefill_result.get("cost_vision_feed", 0) * 1000,
+                    "audio_process": prefill_result.get("cost_audio_process", 0) * 1000,
+                    "audio_embed": prefill_result.get("cost_audio_embed", 0) * 1000,
+                    "audio_feed": prefill_result.get("cost_audio_feed", 0) * 1000,
+                    "total": cost_prefill,
+                }
+
+                # Generate
+                t_gen = _time.time()
+                try:
+                    gen_result = self.duplex.streaming_generate()
+                except Exception as e:
+                    logger.error("[bench] video=%s unit=%d generate failed: %s", video_name, i, e)
+                    break
+                cost_generate = (_time.time() - t_gen) * 1000
+
+                is_listen = gen_result.get("is_listen", True)
+                gn = {
+                    "llm": (gen_result.get("cost_llm") or 0) * 1000,
+                    "tts_prep": (gen_result.get("cost_tts_prep") or 0) * 1000,
+                    "tts": (gen_result.get("cost_tts") or 0) * 1000,
+                    "token2wav": (gen_result.get("cost_token2wav") or 0) * 1000,
+                    "total": cost_generate,
+                }
+
+                decision = "LISTEN" if is_listen else "SPEAK"
+                unit_total = pf["total"] + gn["total"]
+                text_snippet = ""
+                if not is_listen:
+                    text_snippet = gen_result.get("text", "")[:40]
+
+                unit_record = {
+                    "video": video_name,
+                    "unit_idx": i,
+                    "num_chunks": num_chunks,
+                    "decision": decision,
+                    "prefill": pf,
+                    "generate": gn,
+                    "unit_total": unit_total,
+                }
+                if text_snippet:
+                    unit_record["text"] = text_snippet
+
+                # Per-unit log
+                decision_str = decision
+                if text_snippet:
+                    decision_str += f' "{text_snippet}"'
+
+                logger.info(
+                    "[bench] video=%s unit=%d/%d | %s | "
+                    "prefill: vis_proc=%.0fms vis_emb=%.0fms vis_feed=%.0fms "
+                    "aud_proc=%.0fms aud_emb=%.0fms aud_feed=%.0fms total=%.0fms | "
+                    "generate: llm=%.0fms tts_prep=%.0fms tts=%.0fms token2wav=%.0fms "
+                    "total=%.0fms | unit_total=%.0fms",
+                    video_name, i, num_chunks, decision_str,
+                    pf["vision_process"], pf["vision_embed"], pf["vision_feed"],
+                    pf["audio_process"], pf["audio_embed"], pf["audio_feed"], pf["total"],
+                    gn["llm"], gn["tts_prep"], gn["tts"], gn["token2wav"], gn["total"],
+                    unit_total,
+                )
+
+                all_units.append(unit_record)
+
+                # Finalize
+                try:
+                    self.duplex.finalize_unit()
+                except Exception as e:
+                    logger.error("[bench] video=%s unit=%d finalize failed: %s", video_name, i, e)
+                    break
+
+                if gen_result.get("end_of_turn", False):
+                    logger.info("[bench] end_of_turn at unit %d, stopping video", i)
+                    break
+
+            # ── Cleanup after each video ──
+            self.duplex._reset_streaming_state()
+            self.duplex.decoder.reset()
+            if hasattr(self.tts, "audio_tokenizer"):
+                tokenizer = self.tts.audio_tokenizer
+                for attr in ("stream_cache", "hift_cache_dict", "cache"):
+                    if hasattr(tokenizer, attr) and getattr(tokenizer, attr) is not None:
+                        setattr(tokenizer, attr, None)
+            self.reset_session(reset_token2wav_cache=True)
+            torch.cuda.empty_cache()
+
+        total_elapsed = _time.time() - t_total
+
+        # ── Summary ──
+        listen_units = [u for u in all_units if u["decision"] == "LISTEN"]
+        speak_units = [u for u in all_units if u["decision"] == "SPEAK"]
+
+        def _agg(records: list, key_path: str) -> dict:
+            vals = []
+            for r in records:
+                v = r
+                for k in key_path.split("."):
+                    v = v[k]
+                vals.append(v)
+            if not vals:
+                return {"avg": 0.0, "min": 0.0, "max": 0.0}
+            return {
+                "avg": sum(vals) / len(vals),
+                "min": min(vals),
+                "max": max(vals),
+            }
+
+        def _print_group(label: str, records: list):
+            if not records:
+                logger.info("[bench] %s: (no units)", label)
+                return
+            n = len(records)
+            logger.info("[bench] %s (n=%d):", label, n)
+
+            pf_t = _agg(records, "prefill.total")
+            logger.info(
+                "[bench]   prefill:        avg=%.0fms  min=%.0fms  max=%.0fms",
+                pf_t["avg"], pf_t["min"], pf_t["max"],
+            )
+            for key in ("vision_process", "vision_embed", "vision_feed",
+                        "audio_process", "audio_embed", "audio_feed"):
+                s = _agg(records, f"prefill.{key}")
+                logger.info(
+                    "[bench]     %-14s avg=%.0fms  min=%.0fms  max=%.0fms",
+                    key + ":", s["avg"], s["min"], s["max"],
+                )
+
+            gn_t = _agg(records, "generate.total")
+            logger.info(
+                "[bench]   generate:       avg=%.0fms  min=%.0fms  max=%.0fms",
+                gn_t["avg"], gn_t["min"], gn_t["max"],
+            )
+            for key in ("llm", "tts_prep", "tts", "token2wav"):
+                s = _agg(records, f"generate.{key}")
+                if s["avg"] > 0 or key == "llm":
+                    logger.info(
+                        "[bench]     %-14s avg=%.0fms  min=%.0fms  max=%.0fms",
+                        key + ":", s["avg"], s["min"], s["max"],
+                    )
+
+            ut = _agg(records, "unit_total")
+            logger.info(
+                "[bench]   unit_total:     avg=%.0fms  min=%.0fms  max=%.0fms",
+                ut["avg"], ut["min"], ut["max"],
+            )
+
+        logger.info("[bench] " + "=" * 60)
+        logger.info("[bench] Benchmark Summary")
+        logger.info("[bench] " + "=" * 60)
+        logger.info(
+            "[bench] Total: %d units (%d LISTEN, %d SPEAK) over %d video(s), elapsed=%.1fs",
+            len(all_units), len(listen_units), len(speak_units),
+            len(resolved_videos), total_elapsed,
+        )
+        logger.info("[bench]")
+        _print_group("LISTEN", listen_units)
+        logger.info("[bench]")
+        _print_group("SPEAK", speak_units)
+        logger.info("[bench] " + "=" * 60)
+
+        def _build_group_stats(records: list) -> dict:
+            if not records:
+                return {}
+            prefill_keys = ("vision_process", "vision_embed", "vision_feed",
+                            "audio_process", "audio_embed", "audio_feed", "total")
+            generate_keys = ("llm", "tts_prep", "tts", "token2wav", "total")
+            return {
+                "count": len(records),
+                "prefill": {k: _agg(records, f"prefill.{k}") for k in prefill_keys},
+                "generate": {k: _agg(records, f"generate.{k}") for k in generate_keys},
+                "unit_total": _agg(records, "unit_total"),
+            }
+
+        return {
+            "total_time": total_elapsed,
+            "num_videos": len(resolved_videos),
+            "num_units": len(all_units),
+            "listen_count": len(listen_units),
+            "speak_count": len(speak_units),
+            "listen_stats": _build_group_stats(listen_units),
+            "speak_stats": _build_group_stats(speak_units),
+            "units": all_units,
+        }
 
     def _extract_mp4_chunks(
         self,

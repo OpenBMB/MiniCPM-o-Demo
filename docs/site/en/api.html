@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>API Reference - MiniCPM-o 4.5 Docs</title>
+<title>Common - MiniCPM-o 4.5 Docs</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -77,7 +77,7 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
     <a href="../zh/api.html" class="lang-switch">中文</a>
   </div>
   <ul class="nav-list">
-    <li><a href="index.html">Overview</a></li>
+    <li><a href="index.html">Home</a></li>
     <li class="nav-group">
       <span class="nav-group-header">Architecture</span>
       <ul class="nav-group-children">
@@ -88,9 +88,6 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="architecture/internals.html">Internals</a></li>
       </ul>
     </li>
-    <li><a href="gateway.html">Gateway</a></li>
-    <li><a href="worker.html">Worker</a></li>
-    <li><a href="schema.html">Schema</a></li>
     <li><a href="model.html">Model</a></li>
     <li><a href="compile.html">torch.compile</a></li>
     <li class="nav-group">
@@ -103,25 +100,30 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="frontend/components.html">UI Components</a></li>
       </ul>
     </li>
-    <li><a href="api.html" class="active">API Reference</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">API Reference</span>
+      <ul class="nav-group-children">
+        <li><a href="api/chat.html">Chat Mode</a></li>
+        <li><a href="api/half-duplex.html">Half-Duplex Mode</a></li>
+        <li><a href="api/duplex.html">Duplex Mode</a></li>
+        <li><a href="api.html" class="active">Common</a></li>
+      </ul>
+    </li>
     <li><a href="deployment.html">Deployment</a></li>
   </ul>
 </nav>
 <main class="content" id="content">
-  <article><h1 id="api-reference">API Reference</h1>
-<p>This document lists all HTTP REST APIs and WebSocket protocols provided by the system.</p>
-<p>The Gateway listens on <code>https://localhost:8006</code> by default.</p>
+  <article><h1 id="common">Common</h1>
+<p>The Gateway listens on <code>https://localhost:8006</code> by default. All endpoints below are relative to the Gateway.</p>
 <hr />
-<h2 id="http-rest-api">HTTP REST API</h2>
+<h2 id="service-management-apis">Service Management APIs</h2>
+<p>These endpoints manage system status, queuing, configuration, and resources. They are independent of interaction mode.</p>
 <h3 id="health-status">Health &amp; Status</h3>
 <h4 id="get-health">GET /health</h4>
 <p>Health check.</p>
-<p><strong>Response</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ok&quot;</span><span class="p">}</span>
-</code></pre></div>
-
+<p><strong>Response</strong>: <code>{"status": "ok"}</code></p>
 <h4 id="get-status">GET /status</h4>
-<p>Global service status.</p>
+<p>Global service status summary.</p>
 <p><strong>Response</strong>:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;total_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span>
@@ -133,7 +135,7 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
 </code></pre></div>
 
 <h4 id="get-workers">GET /workers</h4>
-<p>Worker list.</p>
+<p>Detailed Worker list.</p>
 <p><strong>Response</strong>:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
@@ -151,76 +153,62 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
 </code></pre></div>
 
 <hr />
-<h3 id="chat-api">Chat API</h3>
-<h4 id="post-apichat">POST /api/chat</h4>
-<p>Stateless Chat inference. Each request performs a full prefill without reusing the KV Cache.</p>
-<p><strong>Request Body</strong>:</p>
+<h3 id="queue-management">Queue Management</h3>
+<p>The Gateway uses a FIFO queue to manage concurrent requests. All interaction modes share a single queue.</p>
+<h4 id="get-apiqueue">GET /api/queue</h4>
+<p>Get a snapshot of the queue status.</p>
+<p><strong>Response</strong>:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;messages&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;system&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;You are a helpful assistant.&quot;</span><span class="p">},</span>
-<span class="w">    </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hello!&quot;</span><span class="p">}</span>
-<span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;generation&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;max_new_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">512</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;temperature&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;top_p&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.8</span>
-<span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;tts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;mode&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;audio_assistant&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;ref_audio_path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;assets/ref_audio/ref_minicpm_signature.wav&quot;</span>
-<span class="w">  </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<p><strong>Multimodal Messages</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;messages&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">&quot;queue_length&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;entries&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">        </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;text&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Describe this image&quot;</span><span class="p">},</span>
-<span class="w">        </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;image&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64&gt;&quot;</span><span class="p">},</span>
-<span class="w">        </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;audio&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 PCM float32&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sample_rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">16000</span><span class="p">},</span>
-<span class="w">        </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;video&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 video file&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;stack_frames&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
-<span class="w">      </span><span class="p">]</span>
+<span class="w">      </span><span class="nt">&quot;ticket_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;tk_001&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;position&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;task_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;half_duplex&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;eta_seconds&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">15.0</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;running&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;worker_url&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://localhost:22400&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;task_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;half_duplex&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;stream_xyz&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;started_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-02-24T10:30:00Z&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;elapsed_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">5.2</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">]</span>
 <span class="p">}</span>
 </code></pre></div>
 
-<blockquote>
-<p><strong>Note</strong>: When video content is present, <code>omni_mode: true</code> must be set, and only Chat mode is supported (Streaming is not supported).</p>
-</blockquote>
+<h4 id="get-apiqueueticket_id">GET /api/queue/{ticket_id}</h4>
+<p>Query the status of a specific queue ticket.</p>
+<h4 id="delete-apiqueueticket_id">DELETE /api/queue/{ticket_id}</h4>
+<p>Cancel a queued request.</p>
+<hr />
+<h3 id="eta-configuration">ETA Configuration</h3>
+<p>ETA (Estimated Time of Arrival) baselines for each request type, refined at runtime via Exponential Moving Average.</p>
+<h4 id="get-apiconfigeta">GET /api/config/eta</h4>
 <p><strong>Response</strong>:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hello! How can I help you?&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64&gt;&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;audio_sample_rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">24000</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;tokens_generated&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">15</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;duration_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">234.5</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;token_stats&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;cached_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;input_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;generated_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">15</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;total_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">57</span>
-<span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;recording_session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;chat_abc123&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;success&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<span class="w">  </span><span class="nt">&quot;eta_chat_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">15.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;eta_half_duplex_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">180.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;eta_audio_duplex_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">120.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;eta_omni_duplex_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">90.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;eta_ema_alpha&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.3</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;eta_ema_min_samples&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span>
 <span class="p">}</span>
 </code></pre></div>
 
-<h4 id="post-apihalf_duplexstop">POST /api/half_duplex/stop</h4>
-<p>Stop an ongoing half-duplex generation.</p>
-<p><strong>Request Body</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;stream_abc123&quot;</span><span class="p">}</span>
-</code></pre></div>
-
+<h4 id="put-apiconfigeta">PUT /api/config/eta</h4>
+<p>Update ETA configuration. Request body uses the same fields as the GET response.</p>
+<hr />
+<h3 id="kv-cache">KV Cache</h3>
+<h4 id="get-apicache">GET /api/cache</h4>
+<p>Query the KV Cache status of all Workers.</p>
 <hr />
 <h3 id="configuration-presets">Configuration &amp; Presets</h3>
 <h4 id="get-apifrontend_defaults">GET /api/frontend_defaults</h4>
-<p>Get frontend default configuration.</p>
+<p>Get frontend default configuration values.</p>
 <p><strong>Response</strong>:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;playback_delay_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span>
@@ -241,89 +229,8 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
 </code></pre></div>
 
 <hr />
-<h3 id="reference-audio-management">Reference Audio Management</h3>
-<h4 id="get-apidefault_ref_audio">GET /api/default_ref_audio</h4>
-<p>Get default reference audio information.</p>
-<h4 id="get-apiassetsref_audio">GET /api/assets/ref_audio</h4>
-<p>List all reference audios.</p>
-<p><strong>Response</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;audios&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ref_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Default Voice&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;builtin&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;file_path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;assets/ref_audio/ref_minicpm_signature.wav&quot;</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">  </span><span class="p">]</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<h4 id="post-apiassetsref_audioexternal">POST /api/assets/ref_audio/external</h4>
-<p>Upload a reference audio. Uploaded audio is automatically normalized to 16kHz mono 16-bit WAV.</p>
-<p><strong>Request Body</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;My Voice&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 audio&gt;&quot;</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<h4 id="delete-apiassetsref_audioaudio_id">DELETE /api/assets/ref_audio/{audio_id}</h4>
-<p>Delete a specific reference audio.</p>
-<hr />
-<h3 id="queue-management">Queue Management</h3>
-<h4 id="get-apiqueue">GET /api/queue</h4>
-<p>Get a snapshot of the queue status.</p>
-<p><strong>Response</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;queue_length&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;entries&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;ticket_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;tk_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;position&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;task_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;streaming&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;eta_seconds&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">15.0</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;running&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;worker_url&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://localhost:22400&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;task_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;streaming&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;stream_xyz&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;started_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-02-24T10:30:00Z&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;elapsed_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">5.2</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">  </span><span class="p">]</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<h4 id="get-apiqueueticket_id">GET /api/queue/{ticket_id}</h4>
-<p>Query the status of a specific queue ticket.</p>
-<h4 id="delete-apiqueueticket_id">DELETE /api/queue/{ticket_id}</h4>
-<p>Cancel a queued request.</p>
-<hr />
-<h3 id="eta-configuration">ETA Configuration</h3>
-<h4 id="get-apiconfigeta">GET /api/config/eta</h4>
-<p>Get ETA configuration.</p>
-<p><strong>Response</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;eta_chat_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">15.0</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;eta_half_duplex_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">180.0</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;eta_audio_duplex_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">120.0</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;eta_omni_duplex_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">90.0</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;eta_ema_alpha&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.3</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;eta_ema_min_samples&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<h4 id="put-apiconfigeta">PUT /api/config/eta</h4>
-<p>Update ETA configuration.</p>
-<hr />
-<h3 id="kv-cache">KV Cache</h3>
-<h4 id="get-apicache">GET /api/cache</h4>
-<p>Query the KV Cache status of all Workers.</p>
-<hr />
 <h3 id="session-management">Session Management</h3>
+<p>Sessions are automatically recorded for playback and debugging.</p>
 <h4 id="get-apisessionssession_id">GET /api/sessions/{session_id}</h4>
 <p>Get session metadata.</p>
 <p><strong>Response</strong>:</p>
@@ -342,13 +249,14 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
 <h4 id="get-apisessionssession_iddownload">GET /api/sessions/{session_id}/download</h4>
 <p>Download the entire session as a package.</p>
 <h4 id="post-apisessionssession_idupload-recording">POST /api/sessions/{session_id}/upload-recording</h4>
-<p>Upload frontend-recorded audio/video files. Size limit: 200MB.</p>
+<p>Upload frontend-recorded audio/video files. Size limit: 200 MB.</p>
 <hr />
 <h3 id="app-management">App Management</h3>
+<p>Control which interaction modes are available in the frontend.</p>
 <h4 id="get-apiapps">GET /api/apps</h4>
 <p>Get the list of enabled apps (for frontend use).</p>
 <h4 id="get-apiadminapps">GET /api/admin/apps</h4>
-<p>Get the list of all apps (including enabled status, for Admin use).</p>
+<p>Get the list of all apps including enabled status (for Admin use).</p>
 <h4 id="put-apiadminapps">PUT /api/admin/apps</h4>
 <p>Toggle app enabled status.</p>
 <p><strong>Request Body</strong>:</p>
@@ -356,236 +264,7 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
 <span class="w">  </span><span class="nt">&quot;app_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;omni&quot;</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
 <span class="p">}</span>
-</code></pre></div>
-
-<hr />
-<h2 id="websocket-protocol">WebSocket Protocol</h2>
-<h3 id="chat-websocket">Chat WebSocket</h3>
-<p><strong>Connection</strong>: <code>wss://host/ws/chat</code></p>
-<p>Unified Turn-based Chat interface supporting both streaming and non-streaming modes.</p>
-<p><strong>Request</strong> (Client → Server, sent once after connection):</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;messages&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;streaming&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;generation&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;max_new_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;length_penalty&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.1</span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;tts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;ref_audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64&gt;&quot;</span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;image&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;max_slice_nums&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;omni_mode&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<p><strong>Response</strong> (Server → Client):</p>
-<table>
-<thead>
-<tr>
-<th>Message Type</th>
-<th>Key Fields</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>prefill_done</code></td>
-<td><code>input_tokens</code></td>
-<td>Prefill complete</td>
-</tr>
-<tr>
-<td><code>chunk</code></td>
-<td><code>text_delta</code>, <code>audio_data</code></td>
-<td>Streaming chunk (streaming=true only)</td>
-</tr>
-<tr>
-<td><code>done</code></td>
-<td><code>text</code>, <code>generated_tokens</code>, <code>input_tokens</code>, <code>audio_data</code></td>
-<td>Generation complete</td>
-</tr>
-<tr>
-<td><code>error</code></td>
-<td><code>error</code></td>
-<td>Error message</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h3 id="duplex-protocol">Duplex Protocol</h3>
-<p><strong>Connection</strong>: <code>wss://localhost:8006/ws/duplex/{session_id}</code></p>
-<h4 id="client-server">Client → Server</h4>
-<table>
-<thead>
-<tr>
-<th>Message Type</th>
-<th>Fields</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>prepare</code></td>
-<td><code>system_prompt</code>, <code>config</code>, <code>ref_audio_path</code></td>
-<td>Initialize session</td>
-</tr>
-<tr>
-<td><code>audio_chunk</code></td>
-<td><code>audio</code> (Base64 PCM float32)</td>
-<td>Send audio chunk</td>
-</tr>
-<tr>
-<td><code>video_frame</code></td>
-<td><code>frame</code> (Base64 JPEG)</td>
-<td>Send video frame (Omni only)</td>
-</tr>
-<tr>
-<td><code>pause</code></td>
-<td>—</td>
-<td>Pause session</td>
-</tr>
-<tr>
-<td><code>resume</code></td>
-<td>—</td>
-<td>Resume session</td>
-</tr>
-<tr>
-<td><code>stop</code></td>
-<td>—</td>
-<td>Stop session</td>
-</tr>
-<tr>
-<td><code>client_diagnostic</code></td>
-<td><code>metrics</code></td>
-<td>Client diagnostic information</td>
-</tr>
-</tbody>
-</table>
-<p><strong>prepare Example</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;prepare&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;prefix_system_prompt&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;You are a fun assistant.&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;config&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;generate_audio&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;chunk_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1000</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;temperature&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;force_listen_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span>
-<span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;ref_audio_path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;assets/ref_audio/ref_minicpm_signature.wav&quot;</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<p><strong>audio_chunk Example</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;audio_chunk&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;audio&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 PCM float32, 16kHz, 1s&gt;&quot;</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<h4 id="server-client">Server → Client</h4>
-<table>
-<thead>
-<tr>
-<th>Message Type</th>
-<th>Fields</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>queued</code></td>
-<td><code>ticket_id</code>, <code>position</code>, <code>eta_seconds</code></td>
-<td>Enqueued</td>
-</tr>
-<tr>
-<td><code>queue_update</code></td>
-<td><code>position</code>, <code>eta_seconds</code></td>
-<td>Queue position update</td>
-</tr>
-<tr>
-<td><code>queue_done</code></td>
-<td>—</td>
-<td>Left queue</td>
-</tr>
-<tr>
-<td><code>prepared</code></td>
-<td>—</td>
-<td>Preparation complete</td>
-</tr>
-<tr>
-<td><code>result</code></td>
-<td><code>is_listen</code>, <code>text</code>, <code>audio_data</code>, <code>end_of_turn</code>, <code>cost_all_ms</code></td>
-<td>Single-step result</td>
-</tr>
-<tr>
-<td><code>paused</code></td>
-<td>—</td>
-<td>Paused</td>
-</tr>
-<tr>
-<td><code>resumed</code></td>
-<td>—</td>
-<td>Resumed</td>
-</tr>
-<tr>
-<td><code>stopped</code></td>
-<td><code>session_id</code></td>
-<td>Stopped</td>
-</tr>
-<tr>
-<td><code>timeout</code></td>
-<td>—</td>
-<td>Pause timeout</td>
-</tr>
-<tr>
-<td><code>error</code></td>
-<td><code>message</code></td>
-<td>Error</td>
-</tr>
-</tbody>
-</table>
-<p><strong>result Example</strong>:</p>
-<div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;result&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;is_listen&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hello&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;audio_data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64, 24kHz&gt;&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;end_of_turn&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;current_time&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5000</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;cost_llm_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">45.2</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;cost_tts_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">12.3</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;cost_all_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">78.5</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;n_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;server_send_ts&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1708771200.123</span>
-<span class="p">}</span>
-</code></pre></div>
-
-<hr />
-<h2 id="audio-format-specification">Audio Format Specification</h2>
-<table>
-<thead>
-<tr>
-<th>Direction</th>
-<th>Format</th>
-<th>Sample Rate</th>
-<th>Encoding</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Client → Server</td>
-<td>PCM Float32</td>
-<td>16000 Hz</td>
-<td>Base64</td>
-</tr>
-<tr>
-<td>Server → Client</td>
-<td>PCM Float32</td>
-<td>24000 Hz</td>
-<td>Base64</td>
-</tr>
-</tbody>
-</table>
-<ul>
-<li>Input audio must be <strong>16kHz mono</strong></li>
-<li>Output audio is <strong>24kHz mono</strong></li>
-<li>Base64 encodes the raw bytes of the Float32 array</li>
-</ul></article>
+</code></pre></div></article>
   <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; Generated by build_docs.py</p></footer>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
