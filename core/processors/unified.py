@@ -1432,6 +1432,11 @@ class UnifiedProcessor(BaseProcessor):
 
     # ==================== Mode Switching ====================
 
+    def _sync_compile_state(self, want_compiled: bool) -> None:
+        """Enable/disable torch.compile based on target mode."""
+        if self.compile and self.model is not None:
+            self.model.set_compile_enabled(want_compiled)
+
     def set_chat_mode(self) -> ChatView:
         """Switch to Chat mode.
 
@@ -1442,6 +1447,7 @@ class UnifiedProcessor(BaseProcessor):
 
         if self._current_mode != ProcessorMode.CHAT:
             start = time.time()
+            self._sync_compile_state(False)
             self.model.set_mode(ModelProcessorMode.CHAT)
             self._current_mode = ProcessorMode.CHAT
             logger.info(f"Switched to CHAT mode in {(time.time()-start)*1000:.1f}ms")
@@ -1458,6 +1464,7 @@ class UnifiedProcessor(BaseProcessor):
 
         if self._current_mode != ProcessorMode.HALF_DUPLEX:
             start = time.time()
+            self._sync_compile_state(False)
             self.model.set_mode(ModelProcessorMode.STREAMING)
             self._current_mode = ProcessorMode.HALF_DUPLEX
             logger.info(f"Switched to HALF_DUPLEX mode in {(time.time()-start)*1000:.1f}ms")
@@ -1474,6 +1481,7 @@ class UnifiedProcessor(BaseProcessor):
 
         if self._current_mode != ProcessorMode.DUPLEX:
             start = time.time()
+            self._sync_compile_state(True)
             self.model.set_mode(ModelProcessorMode.DUPLEX)
             self._current_mode = ProcessorMode.DUPLEX
             logger.info(f"Switched to DUPLEX mode in {(time.time()-start)*1000:.1f}ms")

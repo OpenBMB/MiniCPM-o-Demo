@@ -443,11 +443,11 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         compiled_modules: list = []
         skipped_modules: list = []
 
-        if hasattr(self, "vpm") and "vpm" not in skip:
-            self.vpm = torch.compile(self.vpm, **compile_kwargs)
-            compiled_modules.append("vpm")
-        elif "vpm" in skip:
-            skipped_modules.append("vpm")
+        # if hasattr(self, "vpm") and "vpm" not in skip:
+        #     self.vpm = torch.compile(self.vpm, **compile_kwargs)
+        #     compiled_modules.append("vpm")
+        # elif "vpm" in skip:
+        #     skipped_modules.append("vpm")
 
         if hasattr(self, "llm") and "llm.model" not in skip:
             self.llm.model = torch.compile(self.llm.model, **compile_kwargs)
@@ -455,11 +455,11 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         elif "llm.model" in skip:
             skipped_modules.append("llm.model")
 
-        if hasattr(self, "resampler") and "resampler" not in skip:
-            self.resampler = torch.compile(self.resampler, **compile_kwargs)
-            compiled_modules.append("resampler")
-        elif "resampler" in skip:
-            skipped_modules.append("resampler")
+        # if hasattr(self, "resampler") and "resampler" not in skip:
+        #     self.resampler = torch.compile(self.resampler, **compile_kwargs)
+        #     compiled_modules.append("resampler")
+        # elif "resampler" in skip:
+        #     skipped_modules.append("resampler")
 
         if hasattr(self, "tts") and hasattr(self.tts, "model") and "tts.model" not in skip:
             self.tts.model = torch.compile(self.tts.model, **compile_kwargs)
@@ -472,6 +472,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         elapsed = _time.time() - t0
         self._compiled = True
+        self._compile_active = True
         logger.info(
             f"[torch.compile] Wrapping done ({elapsed:.2f}s), "
             f"compiled: {compiled_modules}"
@@ -479,6 +480,51 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             + ". Actual compilation triggers on first forward."
         )
         return self
+
+    def set_compile_enabled(self, enabled: bool) -> None:
+        """Switch between compiled and eager execution for all compiled sub-modules.
+
+        Only effective after apply_torch_compile() has been called.
+        Compiled and eager modules share the same weights (zero copy),
+        so switching is instant and costs no extra memory.
+        """
+        if not getattr(self, "_compiled", False):
+            return
+        if enabled == getattr(self, "_compile_active", True):
+            return
+
+        swapped: list = []
+
+        if hasattr(self, "llm"):
+            cur = self.llm.model
+            if enabled:
+                compiled = getattr(cur, "_compiled_ref", None)
+                if compiled is not None:
+                    self.llm.model = compiled
+                    swapped.append("llm.model")
+            else:
+                orig = getattr(cur, "_orig_mod", None)
+                if orig is not None:
+                    orig._compiled_ref = cur
+                    self.llm.model = orig
+                    swapped.append("llm.model")
+
+        if hasattr(self, "tts") and hasattr(self.tts, "model"):
+            cur = self.tts.model
+            if enabled:
+                compiled = getattr(cur, "_compiled_ref", None)
+                if compiled is not None:
+                    self.tts.model = compiled
+                    swapped.append("tts.model")
+            else:
+                orig = getattr(cur, "_orig_mod", None)
+                if orig is not None:
+                    orig._compiled_ref = cur
+                    self.tts.model = orig
+                    swapped.append("tts.model")
+
+        self._compile_active = enabled
+        logger.info(f"[torch.compile] {'enabled' if enabled else 'disabled'} → swapped {swapped}")
 
     def warmup_compile(
         self,
