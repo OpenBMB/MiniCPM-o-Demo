@@ -1117,7 +1117,9 @@ class DuplexView:
                     
                     # 生成
                     result = self.generate()
-                    
+
+                    self.finalize()
+
                     chunk_elapsed = (time.time() - chunk_start) * 1000
                     
                     # 记录结果
