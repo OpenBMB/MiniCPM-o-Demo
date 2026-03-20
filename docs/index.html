@@ -1,11 +1,720 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta http-equiv="refresh" content="0; url=site/en/index.html">
-<title>MiniCPM-o 4.5 Docs</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiniCPM-o 4.5 — Gemini 2.5 Flash Level Multimodal LLM for Vision, Speech &amp; Full-Duplex Live Streaming</title>
+    <meta name="description" content="MiniCPM-o 4.5 is a 9B-parameter end-to-end multimodal large language model supporting vision, speech, OCR, full-duplex omni-modal live streaming, proactive interaction, and configurable voice cloning. It approaches Gemini 2.5 Flash performance on your phone.">
+    <meta name="keywords" content="MiniCPM-o, MiniCPM-o 4.5, multimodal LLM, MLLM, full-duplex, live streaming, speech conversation, OCR, vision language model, OpenBMB, open source AI, 多模态大模型, 全双工, 语音对话">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://openbmb.github.io/MiniCPM-o-Demo/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="MiniCPM-o 4.5 — Full-Duplex Multimodal LLM Web Demo">
+    <meta property="og:description" content="A Gemini 2.5 Flash level MLLM for vision, speech, and full-duplex multimodal live streaming on your phone. 9B parameters, open source.">
+    <meta property="og:url" content="https://openbmb.github.io/MiniCPM-o-Demo/">
+    <meta property="og:image" content="https://openbmb.github.io/MiniCPM-o-Demo/assets/minicpm-o-45-framework.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="MiniCPM-o 4.5 — Full-Duplex Multimodal LLM">
+    <meta name="twitter:description" content="9B-parameter end-to-end multimodal LLM supporting vision, speech, OCR, full-duplex live streaming, and voice cloning.">
+    <meta name="twitter:image" content="https://openbmb.github.io/MiniCPM-o-Demo/assets/minicpm-o-45-framework.png">
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "MiniCPM-o 4.5",
+        "applicationCategory": "Artificial Intelligence",
+        "operatingSystem": "Linux, macOS, Windows",
+        "description": "MiniCPM-o 4.5 is a 9B-parameter end-to-end multimodal large language model supporting vision, speech, OCR, full-duplex omni-modal live streaming, proactive interaction, and configurable voice cloning.",
+        "url": "https://openbmb.github.io/MiniCPM-o-Demo/",
+        "downloadUrl": "https://huggingface.co/openbmb/MiniCPM-o-4_5",
+        "softwareVersion": "4.5",
+        "author": {
+            "@type": "Organization",
+            "name": "OpenBMB",
+            "url": "https://github.com/OpenBMB"
+        },
+        "codeRepository": "https://github.com/OpenBMB/MiniCPM-o-Demo",
+        "license": "https://github.com/OpenBMB/MiniCPM-o/blob/main/LICENSE"
+    }
+    </script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
+            background: #f5f5f0;
+            color: #2d2d2d;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #fff;
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e5e5e0;
+            flex-shrink: 0;
+        }
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .header h1 { font-size: 16px; font-weight: 600; color: #2d2d2d; letter-spacing: -0.3px; }
+
+        .home-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 48px 24px 40px;
+            gap: 20px;
+        }
+
+        .home-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #2d2d2d;
+            margin-bottom: 4px;
+        }
+        .home-subtitle {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 36px;
+            text-align: center;
+            line-height: 1.6;
+        }
+
+        /* Primary cards */
+        .primary-cards {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 24px;
+            max-width: 960px;
+            width: 100%;
+        }
+        .card {
+            width: 280px;
+            display: flex;
+            flex-direction: column;
+            background: #fff;
+            border: 1px solid #e5e5e0;
+            border-radius: 16px;
+            padding: 28px 24px;
+            text-decoration: none;
+            color: inherit;
+            transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+            min-height: 180px;
+        }
+        .card:hover {
+            border-color: #999;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            transform: translateY(-2px);
+        }
+        .card .card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+        .card.china .card-icon  { background: #fce4e4; }
+        .card.us .card-icon     { background: #d4e4f7; }
+        .card.code .card-icon   { background: #e8e8e3; }
+        .card .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2d2d2d;
+            margin-bottom: 8px;
+        }
+        .card .card-desc {
+            font-size: 13px;
+            color: #666;
+            line-height: 1.5;
+            flex: 1;
+        }
+        .card .card-url {
+            font-size: 11px;
+            color: #bbb;
+            margin-top: 10px;
+            word-break: break-all;
+            font-family: 'SF Mono', Menlo, Consolas, monospace;
+        }
+        .card .card-enter {
+            font-size: 12px;
+            color: #999;
+            margin-top: 12px;
+        }
+        .card:hover .card-enter { color: #2d2d2d; }
+
+        /* SSL hint */
+        .ssl-hint {
+            max-width: 960px;
+            width: 100%;
+            margin-top: 4px;
+        }
+        .ssl-hint details {
+            background: #fffbeb;
+            border: 1px solid #f0e4c4;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .ssl-hint summary {
+            padding: 10px 16px;
+            font-size: 13px;
+            color: #96792f;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            list-style: none;
+            user-select: none;
+        }
+        .ssl-hint summary::-webkit-details-marker { display: none; }
+        .ssl-hint summary::before {
+            content: '▸';
+            font-size: 18px;
+            transition: transform 0.2s;
+        }
+        .ssl-hint details[open] summary::before { transform: rotate(90deg); }
+        .ssl-hint .ssl-steps {
+            padding: 4px 20px 20px;
+            display: flex;
+            gap: 20px;
+        }
+        .ssl-hint .ssl-step {
+            flex: 1;
+            min-width: 0;
+        }
+        .ssl-hint .ssl-step-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #96792f;
+            margin-bottom: 8px;
+        }
+        .ssl-hint .ssl-step img {
+            width: 100%;
+            border-radius: 8px;
+            border: 1px solid #e8dfc8;
+        }
+
+        @media (max-width: 600px) {
+            .ssl-hint .ssl-steps { flex-direction: column; }
+        }
+
+        /* Secondary section */
+        .secondary-section {
+            max-width: 960px;
+            width: 100%;
+            margin-top: 16px;
+        }
+        .secondary-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #bbb;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+        .secondary-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .secondary-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 14px;
+            background: #fff;
+            border: 1px solid #e5e5e0;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #666;
+            font-size: 13px;
+            transition: border-color 0.15s, color 0.15s, background 0.15s;
+        }
+        .secondary-link:hover {
+            border-color: #ccc;
+            color: #2d2d2d;
+            background: #fafaf8;
+        }
+        .secondary-link .link-icon {
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        /* Introduction section */
+        .intro-section {
+            max-width: 960px;
+            width: 100%;
+            margin-top: 48px;
+            padding-top: 40px;
+            border-top: 1px solid #e5e5e0;
+        }
+        .intro-header {
+            font-size: 20px;
+            font-weight: 600;
+            color: #2d2d2d;
+            margin-bottom: 12px;
+        }
+        .intro-lead {
+            font-size: 14px;
+            color: #555;
+            line-height: 1.8;
+            margin-bottom: 32px;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 36px;
+        }
+        .feature-card {
+            background: #fff;
+            border: 1px solid #e5e5e0;
+            border-radius: 14px;
+            padding: 24px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .feature-card:hover {
+            border-color: #ccc;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+        }
+        .feature-card .feat-icon {
+            font-size: 22px;
+            margin-bottom: 10px;
+        }
+        .feature-card .feat-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #2d2d2d;
+            margin-bottom: 8px;
+        }
+        .feature-card .feat-desc {
+            font-size: 13px;
+            color: #666;
+            line-height: 1.7;
+        }
+        .arch-section {
+            max-width: 960px;
+            width: 100%;
+            margin-top: 8px;
+            margin-bottom: 48px;
+        }
+        .arch-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2d2d2d;
+            margin-bottom: 20px;
+        }
+        .arch-figure {
+            width: 100%;
+            margin-bottom: 28px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #e5e5e0;
+            background: #fff;
+        }
+        .arch-figure img {
+            width: 100%;
+            display: block;
+        }
+        .arch-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .arch-item {
+            background: #fff;
+            border: 1px solid #e5e5e0;
+            border-radius: 12px;
+            padding: 20px 24px;
+        }
+        .arch-item .arch-item-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #2d2d2d;
+            margin-bottom: 6px;
+        }
+        .arch-item .arch-item-desc {
+            font-size: 13px;
+            color: #666;
+            line-height: 1.7;
+        }
+
+        /* Comparison table */
+        .comparison-section {
+            max-width: 960px;
+            width: 100%;
+            margin-top: 8px;
+            margin-bottom: 48px;
+        }
+        .comparison-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2d2d2d;
+            margin-bottom: 20px;
+        }
+        .comparison-wrap {
+            background: #fff;
+            border: 1px solid #e5e5e0;
+            border-radius: 14px;
+            overflow: hidden;
+        }
+        .comparison-scroll {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            min-width: 720px;
+        }
+        .comparison-table caption {
+            text-align: left;
+            padding: 16px 20px 12px;
+            font-size: 13px;
+            color: #888;
+            line-height: 1.5;
+            caption-side: bottom;
+        }
+        .comparison-table thead th {
+            background: #fafaf8;
+            font-weight: 600;
+            color: #2d2d2d;
+            text-align: center;
+            padding: 14px 12px;
+            border-bottom: 1px solid #e5e5e0;
+            white-space: nowrap;
+            font-size: 12px;
+            letter-spacing: 0.01em;
+        }
+        .comparison-table thead th:first-child {
+            text-align: left;
+            padding-left: 20px;
+            font-size: 13px;
+        }
+        .comparison-table tbody td {
+            padding: 12px 12px;
+            text-align: center;
+            border-bottom: 1px solid #f0f0ec;
+            color: #666;
+            vertical-align: middle;
+        }
+        .comparison-table tbody td:first-child {
+            text-align: left;
+            padding-left: 20px;
+            font-weight: 500;
+            color: #2d2d2d;
+            white-space: nowrap;
+        }
+        .comparison-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        .comparison-table tbody tr:hover {
+            background: #fafaf8;
+        }
+        .comparison-table tbody tr.highlight-row {
+            background: #f0f7ee;
+        }
+        .comparison-table tbody tr.highlight-row:hover {
+            background: #e6f2e2;
+        }
+        .comparison-table tbody tr.highlight-row td:first-child {
+            font-weight: 700;
+            color: #2d7a2d;
+        }
+        .cmp-yes {
+            color: #2d7a2d;
+            font-weight: 700;
+            font-size: 16px;
+        }
+        .cmp-no {
+            color: #ccc;
+            font-size: 16px;
+        }
+        .cmp-partial {
+            color: #c8982f;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .cmp-all-badge {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 2px 8px;
+            background: #2d7a2d;
+            color: #fff;
+            font-size: 10px;
+            font-weight: 600;
+            border-radius: 4px;
+            letter-spacing: 0.03em;
+            vertical-align: middle;
+            text-transform: uppercase;
+        }
+
+        @media (max-width: 800px) {
+            .card { width: 100%; min-height: unset; }
+            .home-main { padding: 32px 16px; }
+            .feature-grid { grid-template-columns: 1fr; }
+        }
+    </style>
 </head>
 <body>
-<p>Redirecting to <a href="site/en/index.html">English documentation</a>...</p>
+    <div class="header">
+        <div class="header-left">
+            <h1>MiniCPM-o 4.5</h1>
+        </div>
+    </div>
+
+    <main class="home-main">
+        <div class="home-title">MiniCPM-o 4.5 Web Demo</div>
+        <div class="home-subtitle">A Gemini 2.5 Flash Level MLLM for Vision, Speech, and Full-Duplex Multimodal Live Streaming on Your Phone</div>
+
+        <div class="primary-cards">
+            <a href="https://39.107.237.62:7023/" class="card china" target="_blank" rel="noopener">
+                <div class="card-icon" aria-hidden="true">🇨🇳</div>
+                <div class="card-title">China Server</div>
+                <div class="card-desc">Demo server hosted in mainland China. Best for users with Chinese network access.</div>
+                <div class="card-url">39.107.237.62:7023</div>
+                <div class="card-enter">Open →</div>
+            </a>
+            <a href="https://35.226.63.1:8008/" class="card us" target="_blank" rel="noopener">
+                <div class="card-icon" aria-hidden="true">🇺🇸</div>
+                <div class="card-title">U.S. Server</div>
+                <div class="card-desc">Demo server hosted in the United States. Best for global access.</div>
+                <div class="card-url">35.226.63.1:8008</div>
+                <div class="card-enter">Open →</div>
+            </a>
+            <a href="https://github.com/OpenBMB/MiniCPM-o-Demo" class="card code" target="_blank" rel="noopener">
+                <div class="card-icon" aria-hidden="true">💻</div>
+                <div class="card-title">Self-Deployable Code</div>
+                <div class="card-desc">Deploy MiniCPM-o 4.5 on your own infrastructure. Full source code on GitHub.</div>
+                <div class="card-url">github.com/OpenBMB/MiniCPM-o-Demo</div>
+                <div class="card-enter">View on GitHub →</div>
+            </a>
+        </div>
+
+        <div class="ssl-hint">
+            <details>
+                <summary>⚠️ Seeing a security warning?</summary>
+                <div class="ssl-steps">
+                    <div class="ssl-step">
+                        <div class="ssl-step-label">Step 1 — Click "Advanced"</div>
+                        <img src="assets/step1.png" alt="Click Advanced button" />
+                    </div>
+                    <div class="ssl-step">
+                        <div class="ssl-step-label">Step 2 — Click "Proceed to …"</div>
+                        <img src="assets/step2.png" alt="Click Proceed to link" />
+                    </div>
+                </div>
+            </details>
+        </div>
+
+        <div class="secondary-section">
+            <div class="secondary-title">Resources</div>
+            <div class="secondary-list">
+                <a href="https://huggingface.co/openbmb/MiniCPM-o-4_5" class="secondary-link" target="_blank" rel="noopener">
+                    <span class="link-icon">🤗</span> HuggingFace Model
+                </a>
+                <a href="https://github.com/OpenBMB/MiniCPM-o" class="secondary-link" target="_blank" rel="noopener">
+                    <span class="link-icon">📦</span> GitHub Repo
+                </a>
+                <a href="https://openbmb.github.io/minicpm-o-4_5/" class="secondary-link" target="_blank" rel="noopener">
+                    <span class="link-icon">🎧</span> Audio Casebook
+                </a>
+                <a href="https://openbmb.github.io/minicpm-o-4_5-omni/" class="secondary-link" target="_blank" rel="noopener">
+                    <span class="link-icon">🎥</span> Omni Duplex Casebook
+                </a>
+            </div>
+        </div>
+
+        <div class="intro-section">
+            <div class="intro-header">About MiniCPM-o 4.5</div>
+            <div class="intro-lead">
+                MiniCPM-o 4.5 is the latest and most capable model in the MiniCPM-o series. The model is built in an end-to-end fashion based on SigLip2, Whisper-medium, CosyVoice2, and Qwen3-8B with a total of 9B parameters. It exhibits a significant performance improvement, and introduces new features for full-duplex multimodal live streaming.
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feat-icon">🔥</div>
+                    <div class="feat-title">Leading Visual Capability</div>
+                    <div class="feat-desc">
+                        MiniCPM-o 4.5 achieves an average score of 77.6 on OpenCompass, a comprehensive evaluation of 8 popular benchmarks. With only 9B parameters, it surpasses widely used proprietary models like GPT-4o, Gemini 2.0 Pro, and approaches Gemini 2.5 Flash for vision-language capabilities. It supports instruct and thinking modes in a single model, better covering efficiency and performance trade-offs in different user scenarios.
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feat-icon">🎙</div>
+                    <div class="feat-title">Strong Speech Capability</div>
+                    <div class="feat-desc">
+                        MiniCPM-o 4.5 supports bilingual real-time speech conversation with configurable voices in English and Chinese. It features more natural, expressive and stable speech conversation. The model also allows for fun features such as voice cloning and role play via a simple reference audio clip, where the cloning performance surpasses strong TTS tools such as CosyVoice2.
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feat-icon">🎬</div>
+                    <div class="feat-title">Full-Duplex Multimodal Live Streaming</div>
+                    <div class="feat-desc">
+                        MiniCPM-o 4.5 can process real-time, continuous video and audio input streams simultaneously while generating concurrent text and speech output streams in an end-to-end fashion, without mutual blocking. This allows MiniCPM-o 4.5 to see, listen, and speak simultaneously, creating a fluid, real-time omnimodal conversation experience. Beyond reactive responses, the model can also perform proactive interaction, such as initiating reminders or comments based on its continuous understanding of the live scene.
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feat-icon">💪</div>
+                    <div class="feat-title">Strong OCR Capability &amp; Efficiency</div>
+                    <div class="feat-desc">
+                        MiniCPM-o 4.5 can process high-resolution images (up to 1.8 million pixels) and high-FPS videos (up to 10fps) in any aspect ratio efficiently. It achieves state-of-the-art performance for end-to-end English document parsing on OmniDocBench, outperforming proprietary models such as Gemini-3 Flash and GPT-5, and specialized tools such as DeepSeek-OCR 2. It also features trustworthy behaviors, matching Gemini 2.5 Flash on MMHal-Bench, and supports multilingual capabilities on more than 30 languages.
+                    </div>
+                </div>
+                <div class="feature-card" style="grid-column: 1 / -1;">
+                    <div class="feat-icon">💫</div>
+                    <div class="feat-title">Easy Usage</div>
+                    <div class="feat-desc">
+                        MiniCPM-o 4.5 can be easily used in various ways: Basic usage, recommended for 100% precision — PyTorch inference with Nvidia GPU. Other end-side adaptation includes (1) llama.cpp and Ollama support for efficient CPU inference on local devices, (2) int4 and GGUF format quantized models in 16 sizes, (3) vLLM and SGLang support for high-throughput and memory-efficient inference, (4) FlagOS support for the unified multi-chip backend plugin. We also open-sourced web demos which enable the full-duplex multimodal live streaming experience on local devices such as GPUs, PCs (e.g., on a MacBook).
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arch-section">
+            <div class="arch-title">Model Architecture</div>
+            <div class="arch-figure">
+                <img src="assets/minicpm-o-45-framework.png" alt="MiniCPM-o 4.5 Model Architecture" />
+            </div>
+            <div class="arch-list">
+                <div class="arch-item">
+                    <div class="arch-item-title">End-to-end Omni-modal Architecture</div>
+                    <div class="arch-item-desc">The modality encoders/decoders and LLM are densely connected via hidden states in an end-to-end fashion. This enables better information flow and control, and also facilitates full exploitation of rich multimodal knowledge during training.</div>
+                </div>
+                <div class="arch-item">
+                    <div class="arch-item-title">Full-Duplex Omni-modal Live Streaming Mechanism</div>
+                    <div class="arch-item-desc">We turn the offline modality encoder/decoders into online and full-duplex ones for streaming inputs/outputs. The speech token decoder models text and speech tokens in an interleaved fashion to support full-duplex speech generation (i.e., sync timely with new input). This also facilitates more stable long speech generation (e.g., &gt; 1min). We sync all the input and output streams on timeline in milliseconds, which are jointly modeled by a time-division multiplexing (TDM) mechanism for omni-modality streaming processing in the LLM backbone. It divides parallel omni-modality streams into sequential info groups within small periodic time slices.</div>
+                </div>
+                <div class="arch-item">
+                    <div class="arch-item-title">Proactive Interaction Mechanism</div>
+                    <div class="arch-item-desc">The LLM continuously monitors the input video and audio streams, and decides at a frequency of 1Hz to speak or not. This high decision-making frequency together with full-duplex nature are crucial to enable the proactive interaction capability.</div>
+                </div>
+                <div class="arch-item">
+                    <div class="arch-item-title">Configurable Speech Modeling Design</div>
+                    <div class="arch-item-desc">We inherit the multimodal system prompt design of MiniCPM-o 2.6, which includes a traditional text system prompt, and a new audio system prompt to determine the assistant voice. This enables cloning new voices and role play in inference time for speech conversation.</div>
+                </div>
+            </div>
+        </div>
+
+        <section class="comparison-section" aria-labelledby="comparison-heading">
+            <h2 class="comparison-title" id="comparison-heading">Model Capability Comparison</h2>
+            <div class="comparison-wrap">
+                <div class="comparison-scroll">
+                    <table class="comparison-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Model</th>
+                                <th scope="col" data-zh="边听边说（语音的全双工）">Simultaneously Listen<br>&amp; Speak (Speech Duplex)</th>
+                                <th scope="col" data-zh="边看边听边说（全模态的全双工）">Simultaneously See,<br>Listen &amp; Speak (Omni Duplex)</th>
+                                <th scope="col" data-zh="边看边说（视频入文本出）">Live Video<br>Captioning<br>(Video→Text)</th>
+                                <th scope="col" data-zh="全模态全双工下的问答能力">Omni-modal<br>Full-Duplex Q&amp;A</th>
+                                <th scope="col" data-zh="全模态全双工下的主动提醒">Omni-modal Full-Duplex<br>Proactive Reminders</th>
+                                <th scope="col" data-zh="半双工音频/视频通话">Half-Duplex<br>Audio Call/Video Call</th>
+                                <th scope="col" data-zh="自定义模型聊天韵律与音色">Custom Voice<br>&amp; Prosody in <br>Speech Conversation</th>
+                                <th scope="col" data-zh="语音合成">Speech<br>Synthesis</th>
+                                <th scope="col">OCR</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Moshi</td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                            </tr>
+                            <tr>
+                                <td>Qwen3-Omni</td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                            </tr>
+                            <tr>
+                                <td>StreamingVLM</td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                            </tr>
+                            <tr>
+                                <td>LiveCC</td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                            </tr>
+                            <tr>
+                                <td>GPT-4o</td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                            </tr>
+                            <tr>
+                                <td>Gemini 2.5</td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-no" aria-label="Not supported">✗</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                            </tr>
+                            <tr class="highlight-row">
+                                <td>MiniCPM-o 4.5</td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                                <td><span class="cmp-yes" aria-label="Supported">✓</span></td>
+                            </tr>
+                        </tbody>
+                        <caption>Capability comparison of multimodal LLMs. ✓ = supported, ✗ = not supported. MiniCPM-o 4.5 is the only model that supports all capabilities simultaneously — full-duplex speech, omni-modal duplex streaming, Q&amp;A, proactive reminders, offline audio-video understanding, customizable voice, live video captioning, speech synthesis, and OCR.</caption>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
 </body>
 </html>

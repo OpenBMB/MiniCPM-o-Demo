@@ -22,6 +22,7 @@ data/
 
 # 临时文件
 tmp/
+temp/
 
 # 测试输出（可重新生成）
 tests/results/
@@ -41,3 +42,8 @@ playbook/
 public/
 
 torch_compile_cache/
+AutoAWQ/
+
+dev_tools/
+
+benchmark.json

@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Half-Duplex Mode - MiniCPM-o 4.5 Docs</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --sidebar-w: 260px;
+  --bg: #fff; --bg-side: #f8f9fa; --bg-code: #f6f8fa;
+  --c1: #24292f; --c2: #57606a;
+  --border: #d0d7de; --accent: #0969da; --nav-active: #ddf4ff;
+}
+body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif; color:var(--c1); line-height:1.6; background:var(--bg); }
+.sidebar-toggle { position:fixed; top:12px; left:12px; z-index:1001; background:var(--bg-side); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-size:18px; cursor:pointer; display:none; }
+.sidebar { position:fixed; top:0; left:0; width:var(--sidebar-w); height:100vh; overflow-y:auto; background:var(--bg-side); border-right:1px solid var(--border); padding:20px 0; z-index:1000; transition:transform .3s; }
+.sidebar-header { padding:0 20px 16px; border-bottom:1px solid var(--border); margin-bottom:8px; }
+.sidebar-header h2 { font-size:16px; font-weight:600; }
+.sidebar-subtitle { font-size:12px; color:var(--c2); }
+.lang-switch { display:inline-block; margin-top:6px; font-size:12px; color:var(--accent); text-decoration:none; padding:2px 8px; border:1px solid var(--border); border-radius:4px; transition:background .15s; }
+.lang-switch:hover { background:var(--nav-active); text-decoration:none; }
+
+.nav-list { list-style:none; padding:0 8px; }
+.nav-list > li > a { display:block; padding:7px 12px; color:var(--c2); text-decoration:none; font-size:14px; border-radius:6px; transition:background .15s,color .15s; }
+.nav-list > li > a:hover { background:#e8e8e8; color:var(--c1); }
+.nav-list > li > a.active { background:var(--nav-active); color:var(--accent); font-weight:600; }
+
+.nav-group { margin-top:4px; }
+.nav-group-header { display:flex; align-items:center; gap:6px; padding:8px 12px; color:var(--c1); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; border-radius:6px; user-select:none; transition:background .15s; }
+.nav-group-header:hover { background:#eaeef2; }
+.nav-group-header::before { content:""; display:inline-block; width:0; height:0; border-left:5px solid var(--c2); border-top:3.5px solid transparent; border-bottom:3.5px solid transparent; transition:transform .2s; transform:rotate(90deg); flex-shrink:0; }
+.nav-group.collapsed .nav-group-header::before { transform:rotate(0); }
+.nav-group-children { list-style:none; margin:0 0 4px 19px; padding:3px 0 3px 13px; border-left:2px solid #e1e4e8; overflow:hidden; max-height:500px; transition:max-height .25s ease,opacity .2s ease,padding .2s ease; opacity:1; }
+.nav-group.collapsed .nav-group-children { max-height:0; opacity:0; padding:0 0 0 13px; }
+.nav-group-children li a { display:block; padding:4px 10px; font-size:13px; color:var(--c2); text-decoration:none; border-radius:4px; transition:background .15s,color .15s; }
+.nav-group-children li a:hover { background:#e8e8e8; color:var(--c1); }
+.nav-group-children li a.active { background:var(--nav-active); color:var(--accent); font-weight:600; }
+
+.content { margin-left:var(--sidebar-w); max-width:900px; padding:40px 48px; }
+article h1 { font-size:28px; font-weight:600; padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:20px; }
+article h2 { font-size:22px; font-weight:600; margin-top:32px; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid #eaecef; }
+article h3 { font-size:18px; font-weight:600; margin-top:24px; margin-bottom:10px; }
+article h4 { font-size:15px; font-weight:600; margin-top:20px; margin-bottom:8px; }
+article p { margin-bottom:14px; }
+article ul,article ol { margin-bottom:14px; padding-left:24px; }
+article li { margin-bottom:4px; }
+article a { color:var(--accent); text-decoration:none; }
+article a:hover { text-decoration:underline; }
+article code { background:var(--bg-code); padding:2px 6px; border-radius:4px; font-size:13px; font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+article pre { background:var(--bg-code); border:1px solid var(--border); border-radius:6px; padding:16px; overflow-x:auto; margin-bottom:16px; line-height:1.5; }
+article pre code { background:none; padding:0; font-size:13px; }
+article table { width:100%; border-collapse:collapse; margin-bottom:16px; font-size:14px; }
+article th,article td { border:1px solid var(--border); padding:8px 12px; text-align:left; }
+article th { background:var(--bg-code); font-weight:600; }
+article tr:nth-child(even) { background:#f8f9fa; }
+article hr { border:none; border-top:1px solid var(--border); margin:28px 0; }
+article blockquote { border-left:4px solid var(--accent); padding:8px 16px; margin:0 0 16px; color:var(--c2); background:#f8f9fa; border-radius:0 6px 6px 0; }
+article .mermaid { text-align:center; margin:20px 0; }
+footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); color:var(--c2); font-size:13px; }
+@media(max-width:768px) {
+  .sidebar { transform:translateX(-100%); }
+  .sidebar.open { transform:translateX(0); box-shadow:2px 0 8px rgba(0,0,0,.15); }
+  .sidebar-toggle { display:block; }
+  .content { margin-left:0; padding:50px 20px 40px; }
+  .content.shifted { margin-left:var(--sidebar-w); }
+}
+</style>
+</head>
+<body>
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>MiniCPM-o 4.5</h2>
+    <span class="sidebar-subtitle">Documentation</span>
+    <a href="../../zh/api/half-duplex.html" class="lang-switch">中文</a>
+  </div>
+  <ul class="nav-list">
+    <li><a href="../index.html">Home</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">Architecture</span>
+      <ul class="nav-group-children">
+        <li><a href="../architecture/index.html">Overview</a></li>
+        <li><a href="../architecture/chat.html">Chat Mode</a></li>
+        <li><a href="../architecture/half-duplex.html">Half-Duplex Mode</a></li>
+        <li><a href="../architecture/duplex.html">Duplex Mode</a></li>
+        <li><a href="../architecture/internals.html">Internals</a></li>
+      </ul>
+    </li>
+    <li><a href="../model.html">Model</a></li>
+    <li><a href="../compile.html">torch.compile</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">Frontend</span>
+      <ul class="nav-group-children">
+        <li><a href="../frontend/index.html">Overview</a></li>
+        <li><a href="../frontend/pages.html">Pages & Routes</a></li>
+        <li><a href="../frontend/audio.html">Audio</a></li>
+        <li><a href="../frontend/duplex-session.html">Duplex Session</a></li>
+        <li><a href="../frontend/components.html">UI Components</a></li>
+      </ul>
+    </li>
+    <li class="nav-group">
+      <span class="nav-group-header">API Reference</span>
+      <ul class="nav-group-children">
+        <li><a href="../api/chat.html">Chat Mode</a></li>
+        <li><a href="../api/half-duplex.html" class="active">Half-Duplex Mode</a></li>
+        <li><a href="../api/duplex.html">Duplex Mode</a></li>
+        <li><a href="../api.html">Common</a></li>
+      </ul>
+    </li>
+    <li><a href="../deployment.html">Deployment</a></li>
+  </ul>
+</nav>
+<main class="content" id="content">
+  <article><h1 id="half-duplex-mode-vad-based-voice-conversation">Half-Duplex Mode (VAD-based Voice Conversation)</h1>
+<h3 id="overview">Overview</h3>
+<p>Half-Duplex mode implements hands-free voice conversation with automatic turn-taking. The server runs <strong>SileroVAD</strong> (Voice Activity Detection) to detect when the user starts and stops speaking. After the user finishes, the model generates a streaming reply. Once playback completes, the system resumes listening — like a phone call where each side takes turns.</p>
+<p>Unlike Chat mode, Half-Duplex is a <strong>stateful, long-lived session</strong>. The GPU Worker is exclusively occupied for the entire session (default 3-minute timeout). KV Cache persists across turns, so the model accumulates context from the full conversation history without re-encoding previous turns.</p>
+<p><strong>Capabilities</strong>: Voice input → Text + Voice output, streaming output, multi-turn context accumulation, KV Cache persistence, exclusive GPU Worker.</p>
+<h3 id="lifecycle">Lifecycle</h3>
+<pre class="mermaid">
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    C->>S: WS /ws/half_duplex/{session_id}
+    S-->>C: queued (position, ETA)
+    S-->>C: queue_done
+    C->>S: prepare (system_prompt + config)
+    S-->>C: prepared (session_id, timeout_s)
+
+    loop Voice conversation turns
+        C->>S: audio_chunk (continuous, every 0.5s)
+        S-->>C: vad_state: speaking=true
+        Note over C,S: User is speaking...
+        S-->>C: vad_state: speaking=false
+        S-->>C: generating (speech_duration_ms)
+        loop Streaming reply
+            S-->>C: chunk (text_delta + audio_data)
+        end
+        S-->>C: turn_done (turn_index, full text)
+        Note over C,S: Client plays audio, then resumes sending audio_chunk
+    end
+
+    alt Client stops
+        C->>S: stop
+        S-->>C: stopped
+    else Session timeout
+        S-->>C: timeout (elapsed_s)
+    end
+    Note over C,S: GPU released, session recorded
+</pre>
+
+<p><strong>Phase 1 — Connection &amp; Queue</strong>: Client connects to <code>wss://host/ws/half_duplex/{session_id}</code> with a unique session ID. The server places the request in the FIFO queue. The client receives <code>queued</code> with its position and estimated wait time. When a GPU Worker becomes available, the client receives <code>queue_done</code>.</p>
+<p><strong>Phase 2 — Preparation</strong>: Client sends <code>prepare</code> with the system prompt, VAD parameters, generation config, TTS settings, and optionally a reference audio for voice cloning. The server initializes: (1) loads the SileroVAD ONNX model, (2) prefills the system prompt into KV Cache, (3) initializes TTS with the reference audio, (4) starts the session recorder. The client receives <code>prepared</code> with the assigned <code>session_id</code>, <code>timeout_s</code>, and <code>recording_session_id</code>.</p>
+<p><strong>Phase 3 — Listening Loop</strong>: Client begins sending <code>audio_chunk</code> messages continuously (every 0.5 seconds, float32 PCM 16kHz). The server feeds each chunk into StreamingVAD. When speech is detected, the server sends <code>vad_state: {speaking: true}</code>. The client should display a "listening" indicator.</p>
+<p><strong>Cold start guard</strong>: For the first 0.5 seconds after <code>prepared</code>, all VAD results are ignored to filter out microphone initialization noise.</p>
+<p><strong>Phase 4 — Speech End &amp; Generation</strong>: When VAD detects sustained silence (configurable via <code>min_silence_duration_ms</code>, default 800ms), the accumulated speech segment is finalized. The server sends <code>vad_state: {speaking: false}</code> followed immediately by <code>generating</code> with <code>speech_duration_ms</code>. The speech segment is encoded as audio content and prefilled into KV Cache, then streaming generation begins. Each generated token produces a <code>chunk</code> message with <code>text_delta</code> and <code>audio_data</code>.</p>
+<p><strong>Phase 5 — Turn Completion</strong>: When generation finishes, the server sends <code>turn_done</code> with the <code>turn_index</code> (0-based counter) and the full <code>text</code> of this turn. The client should play back all received audio. During playback, the client <strong>must stop sending <code>audio_chunk</code></strong> to prevent echo feedback (the model would otherwise hear its own voice). After playback completes, the client waits an additional ~800ms buffer, then resumes sending <code>audio_chunk</code> to start the next turn.</p>
+<p><strong>Phase 6 — Termination</strong>: The session ends in one of three ways:
+- <strong>Client stop</strong>: Client sends <code>stop</code>. Server sends <code>stopped</code> and releases the GPU.
+- <strong>Timeout</strong>: If no <code>audio_chunk</code> is received for <code>timeout_s</code> seconds (default 180), the server sends <code>timeout</code> with <code>elapsed_s</code> and releases the GPU.
+- <strong>External stop</strong>: An HTTP <code>POST /api/half_duplex/stop</code> with the <code>session_id</code> forces generation to stop mid-turn.</p>
+<p>After termination, the session recording is finalized and available for playback.</p>
+<h3 id="websocket-wsshostwshalf_duplexsession_id">WebSocket — wss://host/ws/half_duplex/{session_id}</h3>
+<h4 id="client-server">Client → Server</h4>
+<table>
+<thead>
+<tr>
+<th>Message Type</th>
+<th>Key Fields</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prepare</code></td>
+<td><code>system_prompt</code>, <code>config</code>, <code>ref_audio_base64</code>, <code>system_content</code></td>
+<td>Initialize session; must be the first message after <code>queue_done</code></td>
+</tr>
+<tr>
+<td><code>audio_chunk</code></td>
+<td><code>audio_base64</code></td>
+<td>Send microphone audio (float32 PCM 16kHz, ~0.5s per chunk). Must be sent continuously during listening phase. Must <strong>stop</strong> during AI audio playback to prevent echo</td>
+</tr>
+<tr>
+<td><code>stop</code></td>
+<td>—</td>
+<td>Gracefully stop the session and release GPU</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>prepare</code> example</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;prepare&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;system_prompt&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;You are a helpful assistant.&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;config&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;vad&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;threshold&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.8</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;min_speech_duration_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">128</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;min_silence_duration_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">800</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;speech_pad_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;generation&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;max_new_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;length_penalty&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.1</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;temperature&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;tts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;session&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;timeout_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">180</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;ref_audio_base64&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 reference audio&gt;&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong><code>config</code> fields</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Field</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vad</code></td>
+<td><code>threshold</code></td>
+<td>0.8</td>
+<td>Speech probability threshold. SileroVAD slides a 1024-sample window and outputs a probability per window. Values &gt;= threshold mark "speech started". Higher values reduce false triggers but may miss soft speech</td>
+</tr>
+<tr>
+<td><code>vad</code></td>
+<td><code>min_speech_duration_ms</code></td>
+<td>128</td>
+<td>Minimum speech duration to be considered valid. Segments shorter than this are discarded as noise</td>
+</tr>
+<tr>
+<td><code>vad</code></td>
+<td><code>min_silence_duration_ms</code></td>
+<td>800</td>
+<td>Sustained silence required to confirm end of speech. Lower values make turn-taking faster but risk cutting off pauses mid-sentence</td>
+</tr>
+<tr>
+<td><code>vad</code></td>
+<td><code>speech_pad_ms</code></td>
+<td>30</td>
+<td>Padding added to each side of the detected speech segment to avoid clipping word boundaries</td>
+</tr>
+<tr>
+<td><code>generation</code></td>
+<td><code>max_new_tokens</code></td>
+<td>256</td>
+<td>Maximum tokens per turn</td>
+</tr>
+<tr>
+<td><code>generation</code></td>
+<td><code>length_penalty</code></td>
+<td>1.1</td>
+<td>Length penalty coefficient (&gt; 1.0 encourages longer responses)</td>
+</tr>
+<tr>
+<td><code>generation</code></td>
+<td><code>temperature</code></td>
+<td>0.7</td>
+<td>Sampling temperature</td>
+</tr>
+<tr>
+<td><code>tts</code></td>
+<td><code>enabled</code></td>
+<td>true</td>
+<td>Enable voice response. When false, only text is generated</td>
+</tr>
+<tr>
+<td><code>session</code></td>
+<td><code>timeout_s</code></td>
+<td>180</td>
+<td>Session timeout in seconds. Timer resets on each <code>audio_chunk</code> received</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>audio_chunk</code> example</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;audio_chunk&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;audio_base64&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;base64 PCM float32, 16kHz, ~0.5s&gt;&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h4 id="server-client">Server → Client</h4>
+<p>Messages follow a strict lifecycle order within each turn:</p>
+<table>
+<thead>
+<tr>
+<th>Message Type</th>
+<th>Key Fields</th>
+<th>Lifecycle Phase</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>queued</code></td>
+<td><code>position</code>, <code>estimated_wait_s</code></td>
+<td>Connection</td>
+<td>Request placed in queue</td>
+</tr>
+<tr>
+<td><code>queue_done</code></td>
+<td>—</td>
+<td>Connection</td>
+<td>Queue exited; GPU Worker assigned. Client should now send <code>prepare</code></td>
+</tr>
+<tr>
+<td><code>prepared</code></td>
+<td><code>session_id</code>, <code>timeout_s</code>, <code>recording_session_id</code></td>
+<td>Preparation</td>
+<td>Session initialized. System prompt prefilled, VAD ready, TTS loaded. Client should begin sending <code>audio_chunk</code></td>
+</tr>
+<tr>
+<td><code>vad_state</code></td>
+<td><code>speaking</code> (bool)</td>
+<td>Listening</td>
+<td>VAD state transition. <code>true</code> = speech detected (user started talking). <code>false</code> = speech ended (user stopped talking)</td>
+</tr>
+<tr>
+<td><code>generating</code></td>
+<td><code>speech_duration_ms</code></td>
+<td>Turn start</td>
+<td>Server is processing the speech segment and starting generation</td>
+</tr>
+<tr>
+<td><code>chunk</code></td>
+<td><code>text_delta</code>, <code>audio_data</code></td>
+<td>Generation</td>
+<td>One streaming chunk. <code>text_delta</code> is incremental text; <code>audio_data</code> is the corresponding audio segment at 24kHz. Client should buffer and play audio in order</td>
+</tr>
+<tr>
+<td><code>turn_done</code></td>
+<td><code>turn_index</code>, <code>text</code></td>
+<td>Turn end</td>
+<td>Turn generation complete. <code>text</code> is the full response text for this turn. Client should finish playing buffered audio, then resume sending <code>audio_chunk</code> after a ~800ms delay</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td><code>elapsed_s</code></td>
+<td>Termination</td>
+<td>Session timed out due to inactivity. Connection will close</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>error</code></td>
+<td>Any</td>
+<td>Error occurred. Connection will close</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>turn_done</code> example</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;turn_done&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;turn_index&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Sure, I can help you with that.&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="rest-post-apihalf_duplexstop">REST — POST /api/half_duplex/stop</h3>
+<p>Force-stop an ongoing half-duplex generation from outside the WebSocket connection. Useful for implementing a "stop" button in the UI that operates independently of the audio stream.</p>
+<p><strong>Request Body</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;stream_abc123&quot;</span><span class="p">}</span>
+</code></pre></div>
+
+<h3 id="example-full-lifecycle">Example: Full Lifecycle</h3>
+<p><strong>JavaScript</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">sessionId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;hdx_&#39;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Math</span><span class="p">.</span><span class="nx">random</span><span class="p">().</span><span class="nx">toString</span><span class="p">(</span><span class="mf">36</span><span class="p">).</span><span class="nx">slice</span><span class="p">(</span><span class="mf">2</span><span class="p">,</span><span class="w"> </span><span class="mf">10</span><span class="p">);</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">ws</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">WebSocket</span><span class="p">(</span><span class="sb">`wss://</span><span class="si">${</span><span class="nx">location</span><span class="p">.</span><span class="nx">host</span><span class="si">}</span><span class="sb">/ws/half_duplex/</span><span class="si">${</span><span class="nx">sessionId</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="kd">let</span><span class="w"> </span><span class="nx">aiSpeaking</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span>
+<span class="kd">let</span><span class="w"> </span><span class="nx">audioContext</span><span class="p">,</span><span class="w"> </span><span class="nx">captureNode</span><span class="p">;</span>
+
+<span class="c1">// -- Reference audio for voice cloning (base64 PCM float32, 16kHz) --</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">getRefAudioBase64</span><span class="p">();</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onopen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s1">&#39;Connected, waiting for queue...&#39;</span><span class="p">);</span>
+
+<span class="nx">ws</span><span class="p">.</span><span class="nx">onmessage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="nx">event</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">event</span><span class="p">.</span><span class="nx">data</span><span class="p">);</span>
+<span class="w">  </span><span class="k">switch</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">type</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;queued&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Queue position: #</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">position</span><span class="si">}</span><span class="sb">, ETA: </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">estimated_wait_s</span><span class="si">}</span><span class="sb">s`</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;queue_done&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// GPU assigned — send prepare with system_content containing ref audio.</span>
+<span class="w">      </span><span class="c1">// system_content follows the model&#39;s best practice: [text, audio, text].</span>
+<span class="w">      </span><span class="c1">// The audio item embeds the reference voice used for both LLM context and TTS cloning.</span>
+<span class="w">      </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span>
+<span class="w">        </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;prepare&#39;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">system_content</span><span class="o">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">          </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;text&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">text</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Mimic the voice from the audio sample.&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">          </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;audio&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">data</span><span class="o">:</span><span class="w"> </span><span class="nx">refAudioBase64</span><span class="w"> </span><span class="p">},</span><span class="w">         </span><span class="c1">// reference voice</span>
+<span class="w">          </span><span class="p">{</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;text&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">text</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;You are a helpful assistant. Reply naturally.&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="p">],</span>
+<span class="w">        </span><span class="nx">config</span><span class="o">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="nx">vad</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">threshold</span><span class="o">:</span><span class="w"> </span><span class="mf">0.8</span><span class="p">,</span><span class="w"> </span><span class="nx">min_silence_duration_ms</span><span class="o">:</span><span class="w"> </span><span class="mf">800</span><span class="w"> </span><span class="p">},</span>
+<span class="w">          </span><span class="nx">generation</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">max_new_tokens</span><span class="o">:</span><span class="w"> </span><span class="mf">256</span><span class="p">,</span><span class="w"> </span><span class="nx">temperature</span><span class="o">:</span><span class="w"> </span><span class="mf">0.7</span><span class="w"> </span><span class="p">},</span>
+<span class="w">          </span><span class="nx">tts</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">enabled</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
+<span class="w">          </span><span class="nx">session</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">timeout_s</span><span class="o">:</span><span class="w"> </span><span class="mf">180</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="p">},</span>
+<span class="w">      </span><span class="p">}));</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;prepared&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Session ready (timeout: </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">timeout_s</span><span class="si">}</span><span class="sb">s)`</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">startMicCapture</span><span class="p">();</span><span class="w">  </span><span class="c1">// begin sending audio_chunk</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;vad_state&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// Server-side VAD detected speech start / end</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">speaking</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="s1">&#39;User speaking...&#39;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;User stopped&#39;</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;generating&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// Server is processing user speech and starting generation.</span>
+<span class="w">      </span><span class="c1">// Stop sending audio to prevent echo feedback.</span>
+<span class="w">      </span><span class="nx">aiSpeaking</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Generating (speech: </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">speech_duration_ms</span><span class="si">}</span><span class="sb">ms)`</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;chunk&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// Streaming token: incremental text and/or audio segment</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">text_delta</span><span class="p">)</span><span class="w"> </span><span class="nx">process</span><span class="p">.</span><span class="nx">stdout</span><span class="p">.</span><span class="nx">write</span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">text_delta</span><span class="p">);</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">audio_data</span><span class="p">)</span><span class="w"> </span><span class="nx">playAudio</span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">audio_data</span><span class="p">);</span><span class="w">  </span><span class="c1">// PCM float32, 24kHz</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;turn_done&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="c1">// Turn complete — resume mic after playback finishes + 800ms buffer</span>
+<span class="w">      </span><span class="c1">// to avoid capturing the AI&#39;s own audio output.</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`\nTurn </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">turn_index</span><span class="si">}</span><span class="sb"> done: </span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">text</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">setTimeout</span><span class="p">(()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">aiSpeaking</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="nx">getPlaybackRemaining</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">800</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;timeout&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Session timed out (</span><span class="si">${</span><span class="nx">msg</span><span class="p">.</span><span class="nx">elapsed_s</span><span class="si">}</span><span class="sb">s)`</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="s1">&#39;error&#39;</span><span class="o">:</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="s1">&#39;Error:&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">msg</span><span class="p">.</span><span class="nx">error</span><span class="p">);</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+
+<span class="k">async</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="nx">startMicCapture</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">stream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">navigator</span><span class="p">.</span><span class="nx">mediaDevices</span><span class="p">.</span><span class="nx">getUserMedia</span><span class="p">({</span><span class="w"> </span><span class="nx">audio</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">sampleRate</span><span class="o">:</span><span class="w"> </span><span class="mf">16000</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="nx">audioContext</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">AudioContext</span><span class="p">({</span><span class="w"> </span><span class="nx">sampleRate</span><span class="o">:</span><span class="w"> </span><span class="mf">16000</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="k">await</span><span class="w"> </span><span class="nx">audioContext</span><span class="p">.</span><span class="nx">audioWorklet</span><span class="p">.</span><span class="nx">addModule</span><span class="p">(</span><span class="s1">&#39;capture-processor.js&#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">audioContext</span><span class="p">.</span><span class="nx">createMediaStreamSource</span><span class="p">(</span><span class="nx">stream</span><span class="p">);</span>
+<span class="w">  </span><span class="nx">captureNode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">AudioWorkletNode</span><span class="p">(</span><span class="nx">audioContext</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;capture-processor&#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="nx">source</span><span class="p">.</span><span class="nx">connect</span><span class="p">(</span><span class="nx">captureNode</span><span class="p">);</span>
+
+<span class="w">  </span><span class="c1">// AudioWorklet is event-driven, NOT timer-based:</span>
+<span class="w">  </span><span class="c1">// The audio rendering thread accumulates mic samples and fires &#39;chunk&#39;</span>
+<span class="w">  </span><span class="c1">// when the buffer reaches ~0.5s. No sleep or polling needed.</span>
+<span class="w">  </span><span class="nx">captureNode</span><span class="p">.</span><span class="nx">port</span><span class="p">.</span><span class="nx">onmessage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="p">.</span><span class="nx">data</span><span class="p">.</span><span class="nx">type</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">&#39;chunk&#39;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="o">!</span><span class="nx">aiSpeaking</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">ws</span><span class="p">.</span><span class="nx">readyState</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="nx">WebSocket</span><span class="p">.</span><span class="nx">OPEN</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span>
+<span class="w">        </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;audio_chunk&#39;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">audio_base64</span><span class="o">:</span><span class="w"> </span><span class="nx">float32ToBase64</span><span class="p">(</span><span class="nx">e</span><span class="p">.</span><span class="nx">data</span><span class="p">.</span><span class="nx">audio</span><span class="p">),</span>
+<span class="w">      </span><span class="p">}));</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">};</span>
+<span class="p">}</span>
+
+<span class="kd">function</span><span class="w"> </span><span class="nx">stopSession</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nx">ws</span><span class="p">.</span><span class="nx">send</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span><span class="w"> </span><span class="nx">type</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;stop&#39;</span><span class="w"> </span><span class="p">}));</span>
+<span class="w">  </span><span class="nx">ws</span><span class="p">.</span><span class="nx">close</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>Python</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">base64</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">websockets</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_ref_audio</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load a WAV file and return base64-encoded PCM float32 at 16kHz.&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
+    <span class="n">audio</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">samplerate</span><span class="o">=</span><span class="mi">16000</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">audio</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">audio_file_to_chunks</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">chunk_duration</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">sr</span><span class="o">=</span><span class="mi">16000</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read a WAV file and yield 0.5s float32 chunks as base64.&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
+    <span class="n">audio</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">samplerate</span><span class="o">=</span><span class="n">sr</span><span class="p">)</span>
+    <span class="n">chunk_size</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">sr</span> <span class="o">*</span> <span class="n">chunk_duration</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">audio</span><span class="p">),</span> <span class="n">chunk_size</span><span class="p">):</span>
+        <span class="k">yield</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">audio</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">chunk_size</span><span class="p">]</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">half_duplex_session</span><span class="p">(</span>
+    <span class="n">audio_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">server</span><span class="o">=</span><span class="s2">&quot;wss://localhost:8006&quot;</span><span class="p">,</span>
+    <span class="n">ref_audio_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="s2">&quot;ref.wav&quot;</span><span class="p">,</span>
+<span class="p">):</span>
+    <span class="n">session_id</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;hdx_</span><span class="si">{</span><span class="nb">id</span><span class="p">(</span><span class="nb">object</span><span class="p">())</span><span class="si">:</span><span class="s2">x</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="n">url</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">server</span><span class="si">}</span><span class="s2">/ws/half_duplex/</span><span class="si">{</span><span class="n">session_id</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">async</span> <span class="k">with</span> <span class="n">websockets</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">as</span> <span class="n">ws</span><span class="p">:</span>
+        <span class="c1"># 1. Wait for queue assignment</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">recv</span><span class="p">())</span>
+            <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;queue_done&quot;</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Queued at #</span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;position&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># 2. Prepare — system_content embeds reference audio for voice cloning.</span>
+        <span class="c1">#    Format follows model best practice: [text, audio, text].</span>
+        <span class="n">ref_b64</span> <span class="o">=</span> <span class="n">load_ref_audio</span><span class="p">(</span><span class="n">ref_audio_path</span><span class="p">)</span> <span class="k">if</span> <span class="n">ref_audio_path</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">system_content</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;Mimic the voice from the audio sample.&quot;</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;audio&quot;</span><span class="p">,</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="n">ref_b64</span><span class="p">},</span>         <span class="c1"># reference voice</span>
+            <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;You are a helpful assistant. Reply naturally.&quot;</span><span class="p">},</span>
+        <span class="p">]</span> <span class="k">if</span> <span class="n">ref_b64</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="n">prepare_msg</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;prepare&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;config&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;vad&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;threshold&quot;</span><span class="p">:</span> <span class="mf">0.8</span><span class="p">,</span> <span class="s2">&quot;min_silence_duration_ms&quot;</span><span class="p">:</span> <span class="mi">800</span><span class="p">},</span>
+                <span class="s2">&quot;generation&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;max_new_tokens&quot;</span><span class="p">:</span> <span class="mi">256</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">},</span>
+                <span class="s2">&quot;tts&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;enabled&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+                <span class="s2">&quot;session&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;timeout_s&quot;</span><span class="p">:</span> <span class="mi">60</span><span class="p">},</span>
+            <span class="p">},</span>
+        <span class="p">}</span>
+        <span class="k">if</span> <span class="n">system_content</span><span class="p">:</span>
+            <span class="n">prepare_msg</span><span class="p">[</span><span class="s2">&quot;system_content&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">system_content</span>
+        <span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">prepare_msg</span><span class="p">))</span>
+
+        <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">recv</span><span class="p">())</span>
+        <span class="k">assert</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;prepared&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Session ready: </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;session_id&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># 3. Concurrently send audio and receive responses</span>
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">send_audio</span><span class="p">():</span>
+            <span class="k">for</span> <span class="n">chunk_b64</span> <span class="ow">in</span> <span class="n">audio_file_to_chunks</span><span class="p">(</span><span class="n">audio_path</span><span class="p">):</span>
+                <span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+                    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;audio_chunk&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;audio_base64&quot;</span><span class="p">:</span> <span class="n">chunk_b64</span><span class="p">,</span>
+                <span class="p">}))</span>
+                <span class="c1"># Simulate real-time microphone cadence: in a browser, the</span>
+                <span class="c1"># AudioWorklet fires chunk events driven by the audio rendering</span>
+                <span class="c1"># thread — no sleep needed. Here we sleep because we&#39;re reading</span>
+                <span class="c1"># from a file and need to pace the chunks to match real time.</span>
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+            <span class="c1"># Wait for the server to finish generating the final turn</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+            <span class="k">await</span> <span class="n">ws</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;stop&quot;</span><span class="p">}))</span>
+
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">recv_messages</span><span class="p">():</span>
+            <span class="k">async</span> <span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">ws</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;vad_state&quot;</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Speaking...&quot;</span> <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;speaking&quot;</span><span class="p">]</span> <span class="k">else</span> <span class="s2">&quot;Stopped speaking&quot;</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;generating&quot;</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Generating (</span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;speech_duration_ms&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">ms speech)&quot;</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;chunk&quot;</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;text_delta&quot;</span><span class="p">):</span>
+                        <span class="nb">print</span><span class="p">(</span><span class="n">msg</span><span class="p">[</span><span class="s2">&quot;text_delta&quot;</span><span class="p">],</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;turn_done&quot;</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Turn </span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;turn_index&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> done ---&quot;</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;stopped&quot;</span><span class="p">,</span> <span class="s2">&quot;timeout&quot;</span><span class="p">):</span>
+                    <span class="k">break</span>
+
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">send_audio</span><span class="p">(),</span> <span class="n">recv_messages</span><span class="p">())</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">half_duplex_session</span><span class="p">(</span><span class="s2">&quot;test_audio.wav&quot;</span><span class="p">))</span>
+</code></pre></div>
+
+<h3 id="processor-method-chain">Processor Method Chain</h3>
+<p>The internal processing pipeline for a Half-Duplex session:</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Init</td>
+<td><code>UnifiedProcessor.set_half_duplex_mode()</code></td>
+<td>Switch to Half-Duplex mode (&lt; 0.1ms), returns <code>HalfDuplexView</code></td>
+</tr>
+<tr>
+<td>Init</td>
+<td><code>HalfDuplexView.init_ref_audio(path)</code> or <code>init_ref_audio_from_data(ndarray)</code></td>
+<td>Load reference audio for TTS voice cloning</td>
+</tr>
+<tr>
+<td>Prepare</td>
+<td><code>HalfDuplexView.prefill(request)</code></td>
+<td>Prefill system prompt into KV Cache; creates a rollback snapshot</td>
+</tr>
+<tr>
+<td>Each turn</td>
+<td><code>HalfDuplexView.prefill(request)</code></td>
+<td>Prefill user speech segment into KV Cache</td>
+</tr>
+<tr>
+<td>Each turn</td>
+<td><code>HalfDuplexView.generate(session_id, ...)</code></td>
+<td>Streaming generation, yields <code>StreamingChunk</code> with text + audio</td>
+</tr>
+<tr>
+<td>Recovery</td>
+<td><code>HalfDuplexView.can_rollback()</code> → <code>rollback()</code></td>
+<td>Check if rollback is possible, then restore KV Cache to last snapshot (e.g., on generation error)</td>
+</tr>
+<tr>
+<td>Recovery</td>
+<td><code>HalfDuplexView.clear_rollback_point()</code></td>
+<td>Discard the snapshot after a successful turn</td>
+</tr>
+</tbody>
+</table></article>
+  <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; Generated by build_docs.py</p></footer>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({startOnLoad:true,theme:'default',securityLevel:'loose'});
+</script>
+<script>
+hljs.highlightAll();
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('content').classList.toggle('shifted');}
+document.querySelectorAll('.nav-group-header').forEach(function(h){h.addEventListener('click',function(){this.parentElement.classList.toggle('collapsed');});});
+document.addEventListener('click',function(e){var s=document.getElementById('sidebar'),t=document.querySelector('.sidebar-toggle');if(window.innerWidth<=768&&s.classList.contains('open')&&!s.contains(e.target)&&!t.contains(e.target)){s.classList.remove('open');document.getElementById('content').classList.remove('shifted');}});
+</script>
+</body>
+</html>

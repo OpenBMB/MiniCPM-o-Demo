@@ -67,13 +67,134 @@ graph TB
 
 ---
 
-## configuration_minicpmo.py — 模型配置
+## 核心模型结构
+
+`MiniCPMO` 是整个系统的核心类（继承自 `Qwen3PreTrainedModel`），内部组合了 6 个子模块，各负责一个模态或功能：
+
+- **`llm`** — `Qwen3ForCausalLM`，语言模型主干，负责多模态融合后的因果推理与文本生成。
+- **`vpm`** — `SiglipVisionTransformer`，视觉编码器，将图像 patch 编码为视觉特征序列。
+- **`resampler`** — `Resampler`（Perceiver 式交叉注意力），将可变长度的视觉特征压缩为固定数量的查询向量。
+- **`apm`** — `MiniCPMWhisperEncoder`，音频编码器（基于 Whisper），将梅尔频谱编码为音频特征。
+- **`audio_projection_layer`** — `MultiModalProjector`（Linear → ReLU → Linear），将音频特征映射到 LLM 的嵌入空间。
+- **`tts`** — `MiniCPMTTS`，语音合成模块，将 LLM 的隐状态转化为音频 token。
+
+各子模块可通过配置项 `init_vision` / `init_audio` / `init_tts` 独立启用或禁用。
+
+### 统一模型与模式切换
+
+`modeling_minicpmo_unified.py` 中的 `MiniCPMO` 在上述基础上增加了**统一模式管理**，通过 `ProcessorMode` 枚举在三种模式间热切换：
+
+- **`CHAT`** — 标准多模态对话，支持图像/音频/视频输入，文本或语音输出。
+- **`STREAMING`** — 流式对话，支持逐块输入与流式输出。
+- **`DUPLEX`** — 全双工实时对话，同时进行听与说。
+
+切换通过 `set_mode(mode)` 完成，仅重置会话状态（KV Cache、Token2Wav 缓存等），不重新加载模型权重，因此切换开销极低。
+
+---
+
+## 输入编码
+
+### 文本编码
+
+文本输入经 Qwen2 Tokenizer 分词后，通过 `llm.model.embed_tokens` 转换为嵌入向量。嵌入后会乘以可选的 `scale_emb` 缩放因子。
+
+### 视觉编码（图像与视频）
+
+图像处理分三步：
+
+1. **图像切片**（`MiniCPMVImageProcessor`）— 大图按 `MiniCPMVSliceConfig` 配置切分为多个 patch（最多 `max_slice_nums=9` 块，每块 `448×448`），保留一份全局缩略图。这使模型能处理高分辨率图像。
+2. **VPM 编码**（`SiglipVisionTransformer`）— 每个 patch 经 SigLIP ViT 编码。ViT 由 `SiglipVisionEmbeddings`（Conv2d patch embedding + 位置编码）和多层 `SiglipEncoder`（多头自注意力 + FFN）组成，支持 Flash Attention 2 加速。输出为可变长度的 patch 特征序列。
+3. **Resampler 压缩**（`Resampler`）— 使用可学习的查询向量（默认 64 个）对 VPM 输出做交叉注意力，将可变长度的视觉特征压缩为固定长度。位置信息通过 2D sincos 位置编码注入。输出形状为 `(num_queries, embed_dim)`。
+
+**视频**被拆解为帧序列 + 音频段，帧走视觉编码路径，音频段走音频编码路径。
+
+### 音频编码
+
+音频处理分三步：
+
+1. **梅尔频谱提取**（`MiniCPMAAudioProcessor`）— 输入 16kHz 音频，提取 80 维梅尔频谱特征。
+2. **APM 编码**（`MiniCPMWhisperEncoder`）— 基于 Whisper 的编码器，先经两层 1D 卷积（Conv1 stride=1 → GELU → Conv2 stride=2）下采样，再经多层 Transformer 编码器层处理。支持 KV Cache 实现流式音频编码，可通过 `prefix_extra_frames` / `suffix_extra_frames` 添加上下文重叠。
+3. **投影 + 池化** — `MultiModalProjector`（Linear → ReLU → Linear）将音频特征映射到 LLM 嵌入维度，随后 `AvgPool1d`（步长 `audio_pool_step=5`）进一步压缩序列长度。
+
+---
+
+## 多模态嵌入融合
+
+各模态编码完成后，通过两步融合汇入统一的嵌入序列：
+
+1. **视觉融合**（`get_vllm_embedding`）— 文本序列中预留了视觉占位符 token。通过 `image_bound`（记录每个图像占位符的起止位置），将对应位置的文本嵌入**替换**为 Resampler 输出的视觉嵌入（scatter 操作）。
+2. **音频融合**（`get_omni_embedding`）— 在视觉融合后的序列上，通过 `audio_bounds`（记录音频占位符的起止位置），将对应位置的嵌入**替换**为音频编码器输出的音频嵌入。
+
+融合后得到统一的 `inputs_embeds`（包含文本 + 视觉 + 音频），送入 LLM 进行因果推理。
+
+---
+
+## 语言模型推理
+
+融合后的 `inputs_embeds` 送入 `Qwen3ForCausalLM` 进行自回归生成。LLM 不区分输入来自哪个模态——所有模态在融合后共享同一嵌入空间。
+
+文本生成支持两种模式：
+
+- **标准生成** — `_decode` 方法，一次性生成完整输出。
+- **流式生成** — `_decode_stream` 方法，逐 token 返回，支持 `ChunkPrefillChunkGenerate` 分块预填充与分块生成策略。
+
+---
+
+## 输出生成
+
+### 文本输出
+
+LLM 直接输出 token 序列，经 Tokenizer 解码为文本。
+
+### 语音合成（TTS）
+
+当需要语音输出时，LLM 的隐状态经 `MiniCPMTTS` 模块转换为音频 token，再由声码器合成波形。
+
+**MiniCPMTTS 架构**：
+
+- **`emb_text`** — 文本嵌入层，编码输入文本条件。
+- **`emb_code`** — 音频 codebook 嵌入层，编码已生成的音频 token。
+- **`model`** — `LlamaModel` 作为 TTS 的 Transformer 主干。
+- **`head_code`** — 线性预测头，输出下一个音频 token 的概率分布。
+
+输入布局为 `[Text BOS | Speaker Embedding | Text Tokens | Audio BOS | Audio Tokens...]`，模型自回归地预测音频 token 序列。
+
+**四种注意力模式**（通过 `attention_type` 配置）：
+
+- **`full_attention`** — 全注意力，精度最高，内存开销最大。
+- **`sliding_window`** — 滑动窗口，截断超出窗口的 KV Cache，平衡精度与效率。
+- **`sliding_recompute`** — 滑动重计算（默认），每步仅保留窗口内的 KV Cache 并重新计算，在精度与效率间取得较好平衡。
+- **`reindex`** — RoPE 重索引，调整位置编码以适应窗口截断（实验性）。
+
+**Token2Wav 声码器** — 将 TTS 输出的音频 token 转换为 24kHz 波形。支持流式（逐块转换）和非流式（批量转换）两种模式。
+
+---
+
+## 双工能力（DuplexCapability）
+
+`DuplexCapability` 是一个**组合组件**（非继承），通过 `self.model` 引用主模型 `MiniCPMO` 的全部参数，以 `model.duplex` 方式访问。它实现了实时的听-说交互。
+
+### 三步工作流程
+
+1. **`prepare`** — 初始化双工会话。预填充系统提示词到 KV Cache，加载 TTS 参考音频（用于声音克隆），注册特殊 token（`<|listen|>`, `<|speak|>`, `<|tts_bos|>`, `<|tts_eos|>` 等）。
+2. **`streaming_prefill`** — 逐块预填充。每个时间步将音频特征和/或视频帧编码后填入 KV Cache，使模型持续"听到"输入。
+3. **`streaming_generate`** — 逐步生成。每步模型决定继续"听"（输出 listen token）还是开始"说"（输出 speak token 后接文本和音频 token）。生成的音频 token 通过 Token2Wav 实时转换为波形。
+
+### 滑动窗口策略
+
+长时间双工对话中，KV Cache 会持续增长。通过滑动窗口策略控制内存：
+
+- **`basic`** — 基础滑动窗口，仅保留最近 N 个 token 的 KV Cache。
+- **`context`** — 上下文滑动窗口，保留系统提示词 + 最近 N 个 token，确保模型始终记得系统指令。
+
+---
+
+## 配置参考
 
 ### MiniCPMOConfig
 
-继承自 `Qwen3Config`，定义完整的多模态模型配置。
+继承自 `Qwen3Config`，包含四个子配置：
 
-**子配置**：
 - `vision_config: SiglipVisionConfig` — 视觉编码器配置
 - `audio_config: WhisperConfig` — 音频编码器配置
 - `tts_config: MiniCPMTTSConfig` — TTS 模块配置
@@ -81,269 +202,24 @@ graph TB
 
 **关键参数**：
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `query_num` | 64 | Resampler 查询数量 |
-| `image_size` | 448 | 默认图像尺寸 |
-| `drop_vision_last_layer` | True | 丢弃视觉编码器最后一层 |
-| `vision_batch_size` | 16 | 视觉批处理大小 |
-| `audio_pool_step` | 5 | 音频特征池化步长 |
-| `audio_chunk_length` | 1.0 | 音频块长度（秒） |
-| `init_vision` | True | 初始化视觉编码器 |
-| `init_audio` | True | 初始化音频编码器 |
-| `init_tts` | True | 初始化 TTS 模块 |
+- `query_num = 64` — Resampler 查询向量数量
+- `image_size = 448` — 默认图像尺寸
+- `drop_vision_last_layer = True` — 丢弃视觉编码器最后一层
+- `vision_batch_size = 16` — 视觉批处理大小
+- `audio_pool_step = 5` — 音频特征池化步长
+- `audio_chunk_length = 1.0` — 音频块长度（秒）
+- `init_vision = True` — 是否初始化视觉编码器
+- `init_audio = True` — 是否初始化音频编码器
+- `init_tts = True` — 是否初始化 TTS 模块
 
 ### MiniCPMTTSConfig
 
-TTS 模块专用配置。
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `llm_dim` | 2560 | LLM 投影维度 |
-| `hidden_size` | 768 | TTS 隐藏层大小 |
-| `num_hidden_layers` | 20 | TTS 层数 |
-| `num_attention_heads` | 12 | TTS 注意力头数 |
-| `num_audio_tokens` | 4097 | 音频 token 数量 |
-| `num_text_tokens` | 21178 | 文本 token 数量 |
-| `streaming` | True | 流式模式 |
-| `attention_type` | `"sliding_recompute"` | 注意力类型 |
-| `window_size` | 2 | 滑动窗口大小 |
-
----
-
-## modeling_navit_siglip.py — 视觉编码器
-
-### SigLIP Vision Transformer
-
-基于 **SigLIP** 的视觉编码器，处理图像输入。
-
-#### 架构组件
-
-| 组件 | 类 | 说明 |
-|------|-----|------|
-| 嵌入层 | `SiglipVisionEmbeddings` | Patch Embedding (Conv2d) + 位置编码 |
-| 编码器 | `SiglipEncoder` | 多层 Transformer 编码器 |
-| 注意力 | `SiglipAttention` | 多头自注意力（支持 Flash Attention 2） |
-| FFN | `SiglipMLP` | 前馈网络 |
-| 后处理 | `post_layernorm` | 层归一化 |
-
-#### 特性
-
-- 支持 Flash Attention 2 加速
-- 动态 patch attention mask 处理不同尺寸图像
-- 支持 `tgt_sizes` 批量处理多尺寸图像
-
----
-
-## modeling_minicpmo.py — 主模型实现
-
-### MiniCPMO 类
-
-继承自 `MiniCPMOPreTrainedModel`（基于 `Qwen3PreTrainedModel`），实现完整的多模态推理。
-
-#### 模型组件
-
-| 组件 | 类型 | 说明 |
-|------|------|------|
-| `llm` | `Qwen3ForCausalLM` | 语言模型 backbone |
-| `vpm` | `SiglipVisionTransformer` | 视觉编码器 |
-| `resampler` | `Resampler` | 视觉特征重采样（Perceiver 架构） |
-| `apm` | `MiniCPMWhisperEncoder` | 音频编码器（Whisper） |
-| `audio_projection_layer` | `MultiModalProjector` | 音频特征投影 |
-| `tts` | `MiniCPMTTS` | TTS 生成器 |
-
-#### 核心方法
-
-**视觉处理**：
-- `get_vision_embedding(pixel_values, tgt_sizes)` — 图像编码 + Resampler 映射
-
-**音频处理**：
-- `get_audio_embedding(audio_features, audio_feature_lens)` — Whisper 编码 + AvgPool1d + 投影
-
-**推理方法**：
-
-| 方法 | 说明 |
-|------|------|
-| `forward(input_ids, pixel_values, audio_features, ...)` | 前向传播（支持 KV Cache） |
-| `streaming_prefill(session_id, msgs, tokenizer, ...)` | 流式预填充（支持 KV Cache 复用） |
-| `streaming_generate(session_id, tokenizer, ...)` | 流式生成（Generator） |
-
-### MiniCPMODuplex 类
-
-专门的双工推理类，支持边听边说。
-
-#### 关键方法
-
-| 方法 | 说明 |
-|------|------|
-| `streaming_prefill(audio_features, frames, ...)` | 预填充音频块和视频帧 |
-| `streaming_generate(...)` | 生成一步（决定 listen 或 speak） |
-
-#### 滑动窗口策略
-
-| 策略 | 说明 |
-|------|------|
-| `basic` | 基础滑动窗口 — 保留最近 N 个 token |
-| `context` | 上下文滑动窗口 — 保留系统提示词 + 最近 N 个 token |
-
-### MiniCPMTTS 类
-
-TTS 生成器，将 LLM 输出的文本 token 转换为音频 token。
-
-#### 架构
-
-| 组件 | 说明 |
-|------|------|
-| `emb_text` | 文本嵌入层 |
-| `emb_code` | 音频 codebook 嵌入 |
-| `model` | LlamaModel backbone |
-| `head_code` | 音频 token 预测头 |
-
-#### 注意力模式
-
-| 模式 | 说明 |
-|------|------|
-| `full_attention` | 全注意力（精度最高，内存最大） |
-| `sliding_window` | 滑动窗口（平衡方案） |
-| `sliding_recompute` | 滑动重计算（默认，平衡精度与效率） |
-| `reindex` | RoPE 重索引（实验性） |
-
----
-
-## modeling_minicpmo_unified.py — 统一模型
-
-### 设计目标
-
-统一模型将 Streaming、Duplex 两种模式合并到同一个模型实例中，实现毫秒级模式切换（< 0.1ms），避免重复加载模型权重。
-
-### MiniCPMO（统一版）
-
-继承标准 `MiniCPMO`，组合 `DuplexCapability`。
-
-```mermaid
-graph LR
-    UModel["MiniCPMO\n(统一入口)"]
-    StreamMode["Streaming 模式"]
-    DuplexCap["DuplexCapability\n(双工能力)"]
-
-    UModel -->|"set_mode(STREAMING)"| StreamMode
-    UModel -->|"set_mode(DUPLEX)"| DuplexCap
-```
-
-#### 核心方法
-
-| 方法 | 说明 |
-|------|------|
-| `init_unified(preload_both_tts)` | 初始化统一模型，预加载双 TTS |
-| `set_mode(mode)` | 切换模式（自动切换 TTS tokenizer，清理 KV Cache） |
-| `streaming_prefill(...)` / `streaming_generate(...)` | Streaming 推理 |
-| `duplex_prepare(...)` / `duplex_prefill(...)` / `duplex_generate(...)` | 在线双工推理 |
-
-### DuplexCapability
-
-组合模式的双工能力组件，不继承模型，通过引用共享模型参数。
-
-#### 封装逻辑
-- 双工 system prompt 处理
-- 音频/视频预填充
-- Listen/Speak 决策生成
-- 使用 `StreamDecoder` 进行流式解码
-
----
-
-## processing_minicpmo.py — 多模态处理器
-
-### MiniCPMOProcessor
-
-统一的多模态预处理器，组合图像、音频和文本处理。
-
-#### 子处理器
-
-| 组件 | 类 | 说明 |
-|------|-----|------|
-| 图像 | `MiniCPMVImageProcessor` | 图像切片、预处理、padding |
-| 音频 | `MiniCPMAAudioProcessor` | Mel spectrogram 提取 |
-| 文本 | `MiniCPMOTokenizerFast` | 分词 |
-
-#### MiniCPMVImageProcessor
-
-| 方法 | 说明 |
-|------|------|
-| `slice_image(image, max_slice_nums)` | 大图切片（最大 9 片） |
-| `get_sliced_grid(image_size, max_slice_nums)` | 计算最优切片网格 |
-| `preprocess(images, ...)` | 图像预处理（归一化、resize） |
-
-#### MiniCPMAAudioProcessor
-
-继承 `WhisperFeatureExtractor`，提取 Mel spectrogram。
-
-| 方法 | 说明 |
-|------|------|
-| `__call__(audio, sampling_rate, ...)` | 提取音频特征 |
-| `StreamingMelProcessorExact` | 精确流式 Mel 处理器 |
-
-#### 统一入口
-
-| 方法 | 说明 |
-|------|------|
-| `__call__(text, images, audios, ...)` | 统一处理多模态输入 |
-| `process_image(images, ...)` | 图像批处理 |
-| `process_audio(audios, ...)` | 音频批处理 |
-| `process_audio_streaming(audio_chunk, ...)` | 流式音频处理 |
-| `_convert_omni_to_inputs(...)` | Omni 模式输入转换 |
-
----
-
-## tokenization_minicpmo_fast.py — 快速分词器
-
-### MiniCPMOTokenizerFast
-
-继承 `Qwen2TokenizerFast`，扩展多模态特殊 token。
-
-#### 特殊 Token
-
-| 类别 | Token | 说明 |
-|------|-------|------|
-| 图像 | `<image>`, `</image>` | 图像内容边界 |
-| 图像切片 | `<slice>`, `</slice>` | 图像切片边界 |
-| 音频 | `<|audio_start|>`, `<|audio_end|>` | 音频内容边界 |
-| TTS | `<|tts_bos|>`, `<|tts_eos|>` | TTS 生成边界 |
-| 双工 | `<|listen|>`, `<|speak|>` | 双工模式动作标记 |
-
-这些特殊 token 通过属性方法提供对应的 token ID，用于模型推理中的条件判断和生成控制。
-
----
-
-## utils.py — 工具函数
-
-### ChunkPrefillChunkGenerate
-
-分块预填充和生成器，支持：
-- 重复惩罚（repetition penalty）
-- 长度惩罚（length penalty）
-- 禁止 token 过滤
-- 分块 prefill（减少内存峰值）
-
-### StreamDecoder
-
-流式解码器，管理双工模式的 token 流。
-
-| 方法 | 说明 |
-|------|------|
-| `enforce_window(max_len)` | 基础滑动窗口 — 截断超过 max_len 的序列 |
-| `enforce_window_with_context(max_len, context_len)` | 上下文保留滑动窗口 |
-| `register_unit_start()` / `register_unit_end()` | 注册生成单元的边界 |
-
-### TTSStreamingGenerator
-
-流式 TTS 生成器，管理 TTS 模型的流式推理。
-
-支持多种注意力模式：
-- `full_attention` — 全注意力
-- `sliding_window` — 滑动窗口
-- `sliding_recompute` — 滑动重计算（默认）
-- `reindex` — RoPE 重索引
-
-### SpeculativeSnapshot
-
-VAD 抢跑快照工具，用于保存和恢复推理状态（KV Cache、Mel 处理器状态），支持投机性预生成和回滚。
+- `llm_dim = 2560` — LLM 投影维度
+- `hidden_size = 768` — TTS 隐藏层大小
+- `num_hidden_layers = 20` — TTS Transformer 层数
+- `num_attention_heads = 12` — 注意力头数
+- `num_audio_tokens = 4097` — 音频 token 词表大小
+- `num_text_tokens = 21178` — 文本 token 词表大小
+- `streaming = True` — 是否启用流式模式
+- `attention_type = "sliding_recompute"` — 注意力类型
+- `window_size = 2` — 滑动窗口大小

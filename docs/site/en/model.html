@@ -77,7 +77,7 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
     <a href="../zh/model.html" class="lang-switch">中文</a>
   </div>
   <ul class="nav-list">
-    <li><a href="index.html">Overview</a></li>
+    <li><a href="index.html">Home</a></li>
     <li class="nav-group">
       <span class="nav-group-header">Architecture</span>
       <ul class="nav-group-children">
@@ -88,9 +88,6 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="architecture/internals.html">Internals</a></li>
       </ul>
     </li>
-    <li><a href="gateway.html">Gateway</a></li>
-    <li><a href="worker.html">Worker</a></li>
-    <li><a href="schema.html">Schema</a></li>
     <li><a href="model.html" class="active">Model</a></li>
     <li><a href="compile.html">torch.compile</a></li>
     <li class="nav-group">
@@ -103,7 +100,15 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="frontend/components.html">UI Components</a></li>
       </ul>
     </li>
-    <li><a href="api.html">API Reference</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">API Reference</span>
+      <ul class="nav-group-children">
+        <li><a href="api/chat.html">Chat Mode</a></li>
+        <li><a href="api/half-duplex.html">Half-Duplex Mode</a></li>
+        <li><a href="api/duplex.html">Duplex Mode</a></li>
+        <li><a href="api.html">Common</a></li>
+      </ul>
+    </li>
     <li><a href="deployment.html">Deployment</a></li>
   </ul>
 </nav>
@@ -171,586 +176,131 @@ graph TB
 </pre>
 
 <hr />
-<h2 id="configuration_minicpmopy-model-configuration">configuration_minicpmo.py — Model Configuration</h2>
+<h2 id="core-model-structure">Core Model Structure</h2>
+<p><code>MiniCPMO</code> is the central class of the system (inherits from <code>Qwen3PreTrainedModel</code>), composed of 6 sub-modules, each responsible for a specific modality or function:</p>
+<ul>
+<li><strong><code>llm</code></strong> — <code>Qwen3ForCausalLM</code>, the language model backbone that performs causal reasoning and text generation on fused multimodal embeddings.</li>
+<li><strong><code>vpm</code></strong> — <code>SiglipVisionTransformer</code>, the vision encoder that encodes image patches into visual feature sequences.</li>
+<li><strong><code>resampler</code></strong> — <code>Resampler</code> (Perceiver-style cross-attention) that compresses variable-length visual features into a fixed number of query vectors.</li>
+<li><strong><code>apm</code></strong> — <code>MiniCPMWhisperEncoder</code>, the audio encoder (based on Whisper) that encodes mel spectrograms into audio features.</li>
+<li><strong><code>audio_projection_layer</code></strong> — <code>MultiModalProjector</code> (Linear → ReLU → Linear) that maps audio features into the LLM's embedding space.</li>
+<li><strong><code>tts</code></strong> — <code>MiniCPMTTS</code>, the text-to-speech module that converts LLM hidden states into audio tokens.</li>
+</ul>
+<p>Each sub-module can be independently enabled or disabled via the <code>init_vision</code> / <code>init_audio</code> / <code>init_tts</code> configuration flags.</p>
+<h3 id="unified-model-and-mode-switching">Unified Model and Mode Switching</h3>
+<p>The <code>MiniCPMO</code> in <code>modeling_minicpmo_unified.py</code> extends the base model with <strong>unified mode management</strong>, supporting hot-switching between three modes via the <code>ProcessorMode</code> enum:</p>
+<ul>
+<li><strong><code>CHAT</code></strong> — Standard multimodal chat with image/audio/video input and text or speech output.</li>
+<li><strong><code>STREAMING</code></strong> — Streaming chat with chunk-by-chunk input and streaming output.</li>
+<li><strong><code>DUPLEX</code></strong> — Full-duplex real-time conversation with simultaneous listening and speaking.</li>
+</ul>
+<p>Switching is done via <code>set_mode(mode)</code>, which only resets session state (KV Cache, Token2Wav cache, etc.) without reloading model weights, making mode transitions extremely lightweight.</p>
+<hr />
+<h2 id="input-encoding">Input Encoding</h2>
+<h3 id="text-encoding">Text Encoding</h3>
+<p>Text input is tokenized by the Qwen2 Tokenizer, then converted to embedding vectors via <code>llm.model.embed_tokens</code>. An optional <code>scale_emb</code> scaling factor is applied after embedding.</p>
+<h3 id="vision-encoding-image-and-video">Vision Encoding (Image and Video)</h3>
+<p>Image processing follows three steps:</p>
+<ol>
+<li><strong>Image Slicing</strong> (<code>MiniCPMVImageProcessor</code>) — Large images are sliced into multiple patches according to <code>MiniCPMVSliceConfig</code> (up to <code>max_slice_nums=9</code> patches, each <code>448x448</code>), while retaining a global thumbnail. This enables the model to handle high-resolution images.</li>
+<li><strong>VPM Encoding</strong> (<code>SiglipVisionTransformer</code>) — Each patch is encoded by the SigLIP ViT. The ViT consists of <code>SiglipVisionEmbeddings</code> (Conv2d patch embedding + positional encoding) and multi-layer <code>SiglipEncoder</code> (multi-head self-attention + FFN), with Flash Attention 2 support. The output is a variable-length patch feature sequence.</li>
+<li><strong>Resampler Compression</strong> (<code>Resampler</code>) — Learnable query vectors (64 by default) perform cross-attention over the VPM output, compressing variable-length visual features into a fixed length. Positional information is injected via 2D sincos positional encoding. Output shape: <code>(num_queries, embed_dim)</code>.</li>
+</ol>
+<p><strong>Video</strong> is decomposed into a frame sequence + audio segments. Frames follow the vision encoding path; audio segments follow the audio encoding path.</p>
+<h3 id="audio-encoding">Audio Encoding</h3>
+<p>Audio processing follows three steps:</p>
+<ol>
+<li><strong>Mel Spectrogram Extraction</strong> (<code>MiniCPMAAudioProcessor</code>) — 16kHz audio input is converted to 80-dimensional mel spectrogram features.</li>
+<li><strong>APM Encoding</strong> (<code>MiniCPMWhisperEncoder</code>) — A Whisper-based encoder that first downsamples via two 1D convolutions (Conv1 stride=1 → GELU → Conv2 stride=2), then processes through multi-layer Transformer encoder layers. Supports KV Cache for streaming audio encoding, with optional context overlap via <code>prefix_extra_frames</code> / <code>suffix_extra_frames</code>.</li>
+<li><strong>Projection + Pooling</strong> — <code>MultiModalProjector</code> (Linear → ReLU → Linear) maps audio features to the LLM embedding dimension, followed by <code>AvgPool1d</code> (stride <code>audio_pool_step=5</code>) to further compress the sequence length.</li>
+</ol>
+<hr />
+<h2 id="multimodal-embedding-fusion">Multimodal Embedding Fusion</h2>
+<p>After each modality is encoded, they are merged into a unified embedding sequence through two steps:</p>
+<ol>
+<li><strong>Vision Fusion</strong> (<code>get_vllm_embedding</code>) — Vision placeholder tokens are reserved in the text sequence. Using <code>image_bound</code> (which records the start and end positions of each image placeholder), the corresponding text embeddings are <strong>replaced</strong> with the Resampler's visual embeddings via a scatter operation.</li>
+<li><strong>Audio Fusion</strong> (<code>get_omni_embedding</code>) — On the vision-fused sequence, <code>audio_bounds</code> (which records the start and end positions of audio placeholders) is used to <strong>replace</strong> the corresponding embeddings with the audio encoder's output embeddings.</li>
+</ol>
+<p>The result is a unified <code>inputs_embeds</code> (containing text + vision + audio) that is fed into the LLM for causal reasoning.</p>
+<hr />
+<h2 id="language-model-inference">Language Model Inference</h2>
+<p>The fused <code>inputs_embeds</code> is fed into <code>Qwen3ForCausalLM</code> for autoregressive generation. The LLM is modality-agnostic — all modalities share the same embedding space after fusion.</p>
+<p>Text generation supports two modes:</p>
+<ul>
+<li><strong>Standard generation</strong> — The <code>_decode</code> method generates the complete output at once.</li>
+<li><strong>Streaming generation</strong> — The <code>_decode_stream</code> method returns tokens incrementally, supporting <code>ChunkPrefillChunkGenerate</code> for chunked prefill and chunked generation.</li>
+</ul>
+<hr />
+<h2 id="output-generation">Output Generation</h2>
+<h3 id="text-output">Text Output</h3>
+<p>The LLM directly outputs a token sequence, which is decoded into text by the Tokenizer.</p>
+<h3 id="text-to-speech-tts">Text-to-Speech (TTS)</h3>
+<p>When speech output is needed, the LLM's hidden states are converted to audio tokens by the <code>MiniCPMTTS</code> module, then synthesized into waveforms by a vocoder.</p>
+<p><strong>MiniCPMTTS Architecture</strong>:</p>
+<ul>
+<li><strong><code>emb_text</code></strong> — Text embedding layer that encodes the input text condition.</li>
+<li><strong><code>emb_code</code></strong> — Audio codebook embedding layer that encodes previously generated audio tokens.</li>
+<li><strong><code>model</code></strong> — <code>LlamaModel</code> serving as the TTS Transformer backbone.</li>
+<li><strong><code>head_code</code></strong> — Linear prediction head that outputs the probability distribution for the next audio token.</li>
+</ul>
+<p>The input layout is <code>[Text BOS | Speaker Embedding | Text Tokens | Audio BOS | Audio Tokens...]</code>, and the model autoregressively predicts the audio token sequence.</p>
+<p><strong>Four attention modes</strong> (configured via <code>attention_type</code>):</p>
+<ul>
+<li><strong><code>full_attention</code></strong> — Full attention with the highest accuracy but largest memory footprint.</li>
+<li><strong><code>sliding_window</code></strong> — Sliding window that truncates KV Cache beyond the window, balancing accuracy and efficiency.</li>
+<li><strong><code>sliding_recompute</code></strong> — Sliding recompute (default) that retains only the in-window KV Cache and recomputes each step, achieving a good balance between accuracy and efficiency.</li>
+<li><strong><code>reindex</code></strong> — RoPE reindexing that adjusts positional encoding to accommodate window truncation (experimental).</li>
+</ul>
+<p><strong>Token2Wav Vocoder</strong> — Converts the TTS audio tokens into 24kHz waveforms. Supports both streaming (chunk-by-chunk conversion) and non-streaming (batch conversion) modes.</p>
+<hr />
+<h2 id="duplex-capability-duplexcapability">Duplex Capability (DuplexCapability)</h2>
+<p><code>DuplexCapability</code> is a <strong>composition component</strong> (not inherited) that references the main <code>MiniCPMO</code> model's parameters via <code>self.model</code>, accessed as <code>model.duplex</code>. It implements real-time listen-speak interaction.</p>
+<h3 id="three-step-workflow">Three-Step Workflow</h3>
+<ol>
+<li><strong><code>prepare</code></strong> — Initializes the duplex session. Prefills the system prompt into the KV Cache, loads TTS reference audio (for voice cloning), and registers special tokens (<code>&lt;|listen|&gt;</code>, <code>&lt;|speak|&gt;</code>, <code>&lt;|tts_bos|&gt;</code>, <code>&lt;|tts_eos|&gt;</code>, etc.).</li>
+<li><strong><code>streaming_prefill</code></strong> — Chunk-by-chunk prefill. At each time step, audio features and/or video frames are encoded and fed into the KV Cache, keeping the model continuously "listening" to input.</li>
+<li><strong><code>streaming_generate</code></strong> — Step-by-step generation. At each step, the model decides whether to continue "listening" (output listen token) or start "speaking" (output speak token followed by text and audio tokens). Generated audio tokens are converted to waveforms in real-time via Token2Wav.</li>
+</ol>
+<h3 id="sliding-window-strategies">Sliding Window Strategies</h3>
+<p>During long duplex conversations, the KV Cache grows continuously. Sliding window strategies control memory usage:</p>
+<ul>
+<li><strong><code>basic</code></strong> — Basic sliding window that retains only the most recent N tokens in the KV Cache.</li>
+<li><strong><code>context</code></strong> — Context sliding window that retains the system prompt + the most recent N tokens, ensuring the model always remembers the system instructions.</li>
+</ul>
+<hr />
+<h2 id="configuration-reference">Configuration Reference</h2>
 <h3 id="minicpmoconfig">MiniCPMOConfig</h3>
-<p>Inherits from <code>Qwen3Config</code> and defines the complete multimodal model configuration.</p>
-<p><strong>Sub-configurations</strong>:
-- <code>vision_config: SiglipVisionConfig</code> — Vision encoder configuration
-- <code>audio_config: WhisperConfig</code> — Audio encoder configuration
-- <code>tts_config: MiniCPMTTSConfig</code> — TTS module configuration
-- <code>slice_config: MiniCPMVSliceConfig</code> — Image slicing configuration</p>
+<p>Inherits from <code>Qwen3Config</code> and contains four sub-configurations:</p>
+<ul>
+<li><code>vision_config: SiglipVisionConfig</code> — Vision encoder configuration</li>
+<li><code>audio_config: WhisperConfig</code> — Audio encoder configuration</li>
+<li><code>tts_config: MiniCPMTTSConfig</code> — TTS module configuration</li>
+<li><code>slice_config: MiniCPMVSliceConfig</code> — Image slicing configuration</li>
+</ul>
 <p><strong>Key parameters</strong>:</p>
-<table>
-<thead>
-<tr>
-<th>Parameter</th>
-<th>Default</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>query_num</code></td>
-<td>64</td>
-<td>Number of Resampler queries</td>
-</tr>
-<tr>
-<td><code>image_size</code></td>
-<td>448</td>
-<td>Default image size</td>
-</tr>
-<tr>
-<td><code>drop_vision_last_layer</code></td>
-<td>True</td>
-<td>Drop the last layer of the vision encoder</td>
-</tr>
-<tr>
-<td><code>vision_batch_size</code></td>
-<td>16</td>
-<td>Vision batch size</td>
-</tr>
-<tr>
-<td><code>audio_pool_step</code></td>
-<td>5</td>
-<td>Audio feature pooling step</td>
-</tr>
-<tr>
-<td><code>audio_chunk_length</code></td>
-<td>1.0</td>
-<td>Audio chunk length (seconds)</td>
-</tr>
-<tr>
-<td><code>init_vision</code></td>
-<td>True</td>
-<td>Initialize vision encoder</td>
-</tr>
-<tr>
-<td><code>init_audio</code></td>
-<td>True</td>
-<td>Initialize audio encoder</td>
-</tr>
-<tr>
-<td><code>init_tts</code></td>
-<td>True</td>
-<td>Initialize TTS module</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><code>query_num = 64</code> — Number of Resampler query vectors</li>
+<li><code>image_size = 448</code> — Default image size</li>
+<li><code>drop_vision_last_layer = True</code> — Drop the last layer of the vision encoder</li>
+<li><code>vision_batch_size = 16</code> — Vision batch processing size</li>
+<li><code>audio_pool_step = 5</code> — Audio feature pooling step</li>
+<li><code>audio_chunk_length = 1.0</code> — Audio chunk length (seconds)</li>
+<li><code>init_vision = True</code> — Whether to initialize the vision encoder</li>
+<li><code>init_audio = True</code> — Whether to initialize the audio encoder</li>
+<li><code>init_tts = True</code> — Whether to initialize the TTS module</li>
+</ul>
 <h3 id="minicpmttsconfig">MiniCPMTTSConfig</h3>
-<p>TTS module-specific configuration.</p>
-<table>
-<thead>
-<tr>
-<th>Parameter</th>
-<th>Default</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>llm_dim</code></td>
-<td>2560</td>
-<td>LLM projection dimension</td>
-</tr>
-<tr>
-<td><code>hidden_size</code></td>
-<td>768</td>
-<td>TTS hidden layer size</td>
-</tr>
-<tr>
-<td><code>num_hidden_layers</code></td>
-<td>20</td>
-<td>Number of TTS layers</td>
-</tr>
-<tr>
-<td><code>num_attention_heads</code></td>
-<td>12</td>
-<td>Number of TTS attention heads</td>
-</tr>
-<tr>
-<td><code>num_audio_tokens</code></td>
-<td>4097</td>
-<td>Number of audio tokens</td>
-</tr>
-<tr>
-<td><code>num_text_tokens</code></td>
-<td>21178</td>
-<td>Number of text tokens</td>
-</tr>
-<tr>
-<td><code>streaming</code></td>
-<td>True</td>
-<td>Streaming mode</td>
-</tr>
-<tr>
-<td><code>attention_type</code></td>
-<td><code>"sliding_recompute"</code></td>
-<td>Attention type</td>
-</tr>
-<tr>
-<td><code>window_size</code></td>
-<td>2</td>
-<td>Sliding window size</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="modeling_navit_siglippy-vision-encoder">modeling_navit_siglip.py — Vision Encoder</h2>
-<h3 id="siglip-vision-transformer">SigLIP Vision Transformer</h3>
-<p>A <strong>SigLIP</strong>-based vision encoder for processing image input.</p>
-<h4 id="architecture-components">Architecture Components</h4>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>Class</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Embedding layer</td>
-<td><code>SiglipVisionEmbeddings</code></td>
-<td>Patch Embedding (Conv2d) + positional encoding</td>
-</tr>
-<tr>
-<td>Encoder</td>
-<td><code>SiglipEncoder</code></td>
-<td>Multi-layer Transformer encoder</td>
-</tr>
-<tr>
-<td>Attention</td>
-<td><code>SiglipAttention</code></td>
-<td>Multi-head self-attention (supports Flash Attention 2)</td>
-</tr>
-<tr>
-<td>FFN</td>
-<td><code>SiglipMLP</code></td>
-<td>Feed-forward network</td>
-</tr>
-<tr>
-<td>Post-processing</td>
-<td><code>post_layernorm</code></td>
-<td>Layer normalization</td>
-</tr>
-</tbody>
-</table>
-<h4 id="features">Features</h4>
 <ul>
-<li>Flash Attention 2 acceleration support</li>
-<li>Dynamic patch attention mask for handling different image sizes</li>
-<li>Batch processing of multi-size images via <code>tgt_sizes</code></li>
-</ul>
-<hr />
-<h2 id="modeling_minicpmopy-main-model-implementation">modeling_minicpmo.py — Main Model Implementation</h2>
-<h3 id="minicpmo-class">MiniCPMO Class</h3>
-<p>Inherits from <code>MiniCPMOPreTrainedModel</code> (based on <code>Qwen3PreTrainedModel</code>) and implements complete multimodal inference.</p>
-<h4 id="model-components">Model Components</h4>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>Type</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>llm</code></td>
-<td><code>Qwen3ForCausalLM</code></td>
-<td>Language model backbone</td>
-</tr>
-<tr>
-<td><code>vpm</code></td>
-<td><code>SiglipVisionTransformer</code></td>
-<td>Vision encoder</td>
-</tr>
-<tr>
-<td><code>resampler</code></td>
-<td><code>Resampler</code></td>
-<td>Vision feature resampling (Perceiver architecture)</td>
-</tr>
-<tr>
-<td><code>apm</code></td>
-<td><code>MiniCPMWhisperEncoder</code></td>
-<td>Audio encoder (Whisper)</td>
-</tr>
-<tr>
-<td><code>audio_projection_layer</code></td>
-<td><code>MultiModalProjector</code></td>
-<td>Audio feature projection</td>
-</tr>
-<tr>
-<td><code>tts</code></td>
-<td><code>MiniCPMTTS</code></td>
-<td>TTS generator</td>
-</tr>
-</tbody>
-</table>
-<h4 id="core-methods">Core Methods</h4>
-<p><strong>Vision processing</strong>:
-- <code>get_vision_embedding(pixel_values, tgt_sizes)</code> — Image encoding + Resampler mapping</p>
-<p><strong>Audio processing</strong>:
-- <code>get_audio_embedding(audio_features, audio_feature_lens)</code> — Whisper encoding + AvgPool1d + projection</p>
-<p><strong>Inference methods</strong>:</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>forward(input_ids, pixel_values, audio_features, ...)</code></td>
-<td>Forward pass (supports KV Cache)</td>
-</tr>
-<tr>
-<td><code>streaming_prefill(session_id, msgs, tokenizer, ...)</code></td>
-<td>Streaming prefill (supports KV Cache reuse)</td>
-</tr>
-<tr>
-<td><code>streaming_generate(session_id, tokenizer, ...)</code></td>
-<td>Streaming generation (Generator)</td>
-</tr>
-</tbody>
-</table>
-<h3 id="minicpmoduplex-class">MiniCPMODuplex Class</h3>
-<p>A specialized duplex inference class that supports simultaneous listening and speaking.</p>
-<h4 id="key-methods">Key Methods</h4>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>streaming_prefill(audio_features, frames, ...)</code></td>
-<td>Prefill audio chunks and video frames</td>
-</tr>
-<tr>
-<td><code>streaming_generate(...)</code></td>
-<td>Generate one step (decide listen or speak)</td>
-</tr>
-</tbody>
-</table>
-<h4 id="sliding-window-strategies">Sliding Window Strategies</h4>
-<table>
-<thead>
-<tr>
-<th>Strategy</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>basic</code></td>
-<td>Basic sliding window — retains the most recent N tokens</td>
-</tr>
-<tr>
-<td><code>context</code></td>
-<td>Context sliding window — retains system prompt + most recent N tokens</td>
-</tr>
-</tbody>
-</table>
-<h3 id="minicpmtts-class">MiniCPMTTS Class</h3>
-<p>A TTS generator that converts LLM output text tokens into audio tokens.</p>
-<h4 id="architecture">Architecture</h4>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>emb_text</code></td>
-<td>Text embedding layer</td>
-</tr>
-<tr>
-<td><code>emb_code</code></td>
-<td>Audio codebook embedding</td>
-</tr>
-<tr>
-<td><code>model</code></td>
-<td>LlamaModel backbone</td>
-</tr>
-<tr>
-<td><code>head_code</code></td>
-<td>Audio token prediction head</td>
-</tr>
-</tbody>
-</table>
-<h4 id="attention-modes">Attention Modes</h4>
-<table>
-<thead>
-<tr>
-<th>Mode</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>full_attention</code></td>
-<td>Full attention (highest accuracy, highest memory)</td>
-</tr>
-<tr>
-<td><code>sliding_window</code></td>
-<td>Sliding window (balanced approach)</td>
-</tr>
-<tr>
-<td><code>sliding_recompute</code></td>
-<td>Sliding recompute (default, balances accuracy and efficiency)</td>
-</tr>
-<tr>
-<td><code>reindex</code></td>
-<td>RoPE reindexing (experimental)</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="modeling_minicpmo_unifiedpy-unified-model">modeling_minicpmo_unified.py — Unified Model</h2>
-<h3 id="design-goals">Design Goals</h3>
-<p>The unified model merges Streaming and Duplex modes into a single model instance, enabling millisecond-level mode switching (&lt; 0.1ms) and avoiding redundant model weight loading.</p>
-<h3 id="minicpmo-unified-version">MiniCPMO (Unified Version)</h3>
-<p>Inherits from the standard <code>MiniCPMO</code> and composes <code>DuplexCapability</code>.</p>
-<pre class="mermaid">
-graph LR
-    UModel["MiniCPMO\n(Unified Entry)"]
-    StreamMode["Streaming Mode"]
-    DuplexCap["DuplexCapability\n(Duplex Capability)"]
-
-    UModel -->|"set_mode(STREAMING)"| StreamMode
-    UModel -->|"set_mode(DUPLEX)"| DuplexCap
-</pre>
-
-<h4 id="core-methods_1">Core Methods</h4>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>init_unified(preload_both_tts)</code></td>
-<td>Initialize unified model, preload dual TTS</td>
-</tr>
-<tr>
-<td><code>set_mode(mode)</code></td>
-<td>Switch mode (auto-switches TTS tokenizer, clears KV Cache)</td>
-</tr>
-<tr>
-<td><code>streaming_prefill(...)</code> / <code>streaming_generate(...)</code></td>
-<td>Streaming inference</td>
-</tr>
-<tr>
-<td><code>duplex_prepare(...)</code> / <code>duplex_prefill(...)</code> / <code>duplex_generate(...)</code></td>
-<td>Online duplex inference</td>
-</tr>
-</tbody>
-</table>
-<h3 id="duplexcapability">DuplexCapability</h3>
-<p>A composition-based duplex capability component that does not inherit from the model but shares model parameters via reference.</p>
-<h4 id="encapsulated-logic">Encapsulated Logic</h4>
-<ul>
-<li>Duplex system prompt handling</li>
-<li>Audio/video prefill</li>
-<li>Listen/Speak decision generation</li>
-<li>Streaming decoding via <code>StreamDecoder</code></li>
-</ul>
-<hr />
-<h2 id="processing_minicpmopy-multimodal-processor">processing_minicpmo.py — Multimodal Processor</h2>
-<h3 id="minicpmoprocessor">MiniCPMOProcessor</h3>
-<p>A unified multimodal preprocessor that combines image, audio, and text processing.</p>
-<h4 id="sub-processors">Sub-processors</h4>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>Class</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Image</td>
-<td><code>MiniCPMVImageProcessor</code></td>
-<td>Image slicing, preprocessing, padding</td>
-</tr>
-<tr>
-<td>Audio</td>
-<td><code>MiniCPMAAudioProcessor</code></td>
-<td>Mel spectrogram extraction</td>
-</tr>
-<tr>
-<td>Text</td>
-<td><code>MiniCPMOTokenizerFast</code></td>
-<td>Tokenization</td>
-</tr>
-</tbody>
-</table>
-<h4 id="minicpmvimageprocessor">MiniCPMVImageProcessor</h4>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>slice_image(image, max_slice_nums)</code></td>
-<td>Large image slicing (max 9 slices)</td>
-</tr>
-<tr>
-<td><code>get_sliced_grid(image_size, max_slice_nums)</code></td>
-<td>Compute optimal slicing grid</td>
-</tr>
-<tr>
-<td><code>preprocess(images, ...)</code></td>
-<td>Image preprocessing (normalization, resize)</td>
-</tr>
-</tbody>
-</table>
-<h4 id="minicpmaaudioprocessor">MiniCPMAAudioProcessor</h4>
-<p>Inherits from <code>WhisperFeatureExtractor</code> and extracts Mel spectrograms.</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>__call__(audio, sampling_rate, ...)</code></td>
-<td>Extract audio features</td>
-</tr>
-<tr>
-<td><code>StreamingMelProcessorExact</code></td>
-<td>Exact streaming Mel processor</td>
-</tr>
-</tbody>
-</table>
-<h4 id="unified-entry-point">Unified Entry Point</h4>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>__call__(text, images, audios, ...)</code></td>
-<td>Unified multimodal input processing</td>
-</tr>
-<tr>
-<td><code>process_image(images, ...)</code></td>
-<td>Image batch processing</td>
-</tr>
-<tr>
-<td><code>process_audio(audios, ...)</code></td>
-<td>Audio batch processing</td>
-</tr>
-<tr>
-<td><code>process_audio_streaming(audio_chunk, ...)</code></td>
-<td>Streaming audio processing</td>
-</tr>
-<tr>
-<td><code>_convert_omni_to_inputs(...)</code></td>
-<td>Omni mode input conversion</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="tokenization_minicpmo_fastpy-fast-tokenizer">tokenization_minicpmo_fast.py — Fast Tokenizer</h2>
-<h3 id="minicpmotokenizerfast">MiniCPMOTokenizerFast</h3>
-<p>Inherits from <code>Qwen2TokenizerFast</code> with extended multimodal special tokens.</p>
-<h4 id="special-tokens">Special Tokens</h4>
-<table>
-<thead>
-<tr>
-<th>Category</th>
-<th>Token</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Image</td>
-<td><code>&lt;image&gt;</code>, <code>&lt;/image&gt;</code></td>
-<td>Image content boundaries</td>
-</tr>
-<tr>
-<td>Image slice</td>
-<td><code>&lt;slice&gt;</code>, <code>&lt;/slice&gt;</code></td>
-<td>Image slice boundaries</td>
-</tr>
-<tr>
-<td>Audio</td>
-<td><code>&lt;|audio_start|&gt;</code>, <code>&lt;|audio_end|&gt;</code></td>
-<td>Audio content boundaries</td>
-</tr>
-<tr>
-<td>TTS</td>
-<td><code>&lt;|tts_bos|&gt;</code>, <code>&lt;|tts_eos|&gt;</code></td>
-<td>TTS generation boundaries</td>
-</tr>
-<tr>
-<td>Duplex</td>
-<td><code>&lt;|listen|&gt;</code>, <code>&lt;|speak|&gt;</code></td>
-<td>Duplex mode action markers</td>
-</tr>
-</tbody>
-</table>
-<p>These special tokens provide corresponding token IDs through property methods, used for conditional logic and generation control during model inference.</p>
-<hr />
-<h2 id="utilspy-utility-functions">utils.py — Utility Functions</h2>
-<h3 id="chunkprefillchunkgenerate">ChunkPrefillChunkGenerate</h3>
-<p>Chunked prefill and generator with support for:
-- Repetition penalty
-- Length penalty
-- Forbidden token filtering
-- Chunked prefill (reduces memory peaks)</p>
-<h3 id="streamdecoder">StreamDecoder</h3>
-<p>A streaming decoder that manages the token stream in duplex mode.</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>enforce_window(max_len)</code></td>
-<td>Basic sliding window — truncates sequences exceeding max_len</td>
-</tr>
-<tr>
-<td><code>enforce_window_with_context(max_len, context_len)</code></td>
-<td>Context-preserving sliding window</td>
-</tr>
-<tr>
-<td><code>register_unit_start()</code> / <code>register_unit_end()</code></td>
-<td>Register generation unit boundaries</td>
-</tr>
-</tbody>
-</table>
-<h3 id="ttsstreaminggenerator">TTSStreamingGenerator</h3>
-<p>A streaming TTS generator that manages streaming inference for the TTS model.</p>
-<p>Supports multiple attention modes:
-- <code>full_attention</code> — Full attention
-- <code>sliding_window</code> — Sliding window
-- <code>sliding_recompute</code> — Sliding recompute (default)
-- <code>reindex</code> — RoPE reindexing</p>
-<h3 id="speculativesnapshot">SpeculativeSnapshot</h3>
-<p>A VAD speculative snapshot tool for saving and restoring inference state (KV Cache, Mel processor state), supporting speculative pre-generation and rollback.</p></article>
+<li><code>llm_dim = 2560</code> — LLM projection dimension</li>
+<li><code>hidden_size = 768</code> — TTS hidden layer size</li>
+<li><code>num_hidden_layers = 20</code> — Number of TTS Transformer layers</li>
+<li><code>num_attention_heads = 12</code> — Number of attention heads</li>
+<li><code>num_audio_tokens = 4097</code> — Audio token vocabulary size</li>
+<li><code>num_text_tokens = 21178</code> — Text token vocabulary size</li>
+<li><code>streaming = True</code> — Whether to enable streaming mode</li>
+<li><code>attention_type = "sliding_recompute"</code> — Attention type</li>
+<li><code>window_size = 2</code> — Sliding window size</li>
+</ul></article>
   <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; Generated by build_docs.py</p></footer>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>

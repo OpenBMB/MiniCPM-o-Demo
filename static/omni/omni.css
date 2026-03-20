@@ -394,6 +394,36 @@ body.video-fullscreen .fullscreen-controls { display: flex; }
     min-width: 28px;
 }
 
+/* ========== Length Penalty Presets ========== */
+.lp-presets {
+    display: flex;
+    gap: 6px;
+}
+.lp-preset-btn {
+    font-size: 11px;
+    font-family: inherit;
+    font-weight: 500;
+    padding: 3px 12px;
+    border: 1px solid #ddd;
+    border-radius: 14px;
+    background: #fafaf7;
+    color: #999;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+.lp-preset-btn:hover {
+    background: #f0ede8;
+    color: #555;
+    border-color: #ccc;
+}
+.lp-preset-btn.active {
+    background: #2d2d2d;
+    color: #fff;
+    border-color: #2d2d2d;
+}
+
 /* ========== Mic Waveform Bar ========== */
 .omni-waveform-bar {
     flex: none;
@@ -417,6 +447,66 @@ body.video-fullscreen .fullscreen-controls { display: flex; }
     justify-content: center;
     color: #666;
     font-size: 12px;
+}
+
+/* ========== Always allow body to scroll when content overflows ========== */
+html {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+body {
+    height: auto !important;
+    min-height: 100vh;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ========== Tablet & Phone: fixed bottom controls + scrollable layout ========== */
+@media (max-width: 1024px) {
+    .main {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        padding-bottom: 72px;
+    }
+
+    .col-left, .col-right {
+        overflow: visible;
+    }
+
+    .panel-controls {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 50;
+        border-radius: 10px 10px 0 0;
+        box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
+    }
+}
+
+/* Touch devices that happen to have wide screens (e.g. iPad landscape) */
+@media (hover: none) and (pointer: coarse) {
+    .main {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        padding-bottom: 72px;
+    }
+
+    .col-left, .col-right {
+        overflow: visible;
+    }
+
+    .panel-controls {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 50;
+        border-radius: 10px 10px 0 0;
+        box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
+    }
 }
 
 /* ========== Fullscreen Mobile Responsive ========== */
@@ -469,6 +559,12 @@ body.video-fullscreen .fullscreen-controls { display: flex; }
 }
 
 @media (max-width: 480px) {
+    .main {
+        padding-bottom: 64px;
+    }
+    .panel-controls {
+        padding: 10px 8px;
+    }
     body.video-fullscreen .panel-media {
         bottom: 44px;
     }

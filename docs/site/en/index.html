@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Overview - MiniCPM-o 4.5 Docs</title>
+<title>Home - MiniCPM-o 4.5 Docs</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -77,7 +77,7 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
     <a href="../zh/index.html" class="lang-switch">中文</a>
   </div>
   <ul class="nav-list">
-    <li><a href="index.html" class="active">Overview</a></li>
+    <li><a href="index.html" class="active">Home</a></li>
     <li class="nav-group">
       <span class="nav-group-header">Architecture</span>
       <ul class="nav-group-children">
@@ -88,9 +88,6 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="architecture/internals.html">Internals</a></li>
       </ul>
     </li>
-    <li><a href="gateway.html">Gateway</a></li>
-    <li><a href="worker.html">Worker</a></li>
-    <li><a href="schema.html">Schema</a></li>
     <li><a href="model.html">Model</a></li>
     <li><a href="compile.html">torch.compile</a></li>
     <li class="nav-group">
@@ -103,190 +100,29 @@ footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); 
         <li><a href="frontend/components.html">UI Components</a></li>
       </ul>
     </li>
-    <li><a href="api.html">API Reference</a></li>
+    <li class="nav-group">
+      <span class="nav-group-header">API Reference</span>
+      <ul class="nav-group-children">
+        <li><a href="api/chat.html">Chat Mode</a></li>
+        <li><a href="api/half-duplex.html">Half-Duplex Mode</a></li>
+        <li><a href="api/duplex.html">Duplex Mode</a></li>
+        <li><a href="api.html">Common</a></li>
+      </ul>
+    </li>
     <li><a href="deployment.html">Deployment</a></li>
   </ul>
 </nav>
 <main class="content" id="content">
-  <article><h1 id="minicpm-o-45-pytorch-simple-demo-system-project-documentation">MiniCPM-o 4.5 PyTorch Simple Demo System — Project Documentation</h1>
-<h2 id="project-overview">Project Overview</h2>
-<p>The MiniCPM-o 4.5 PyTorch Simple Demo System is an official demo system provided by the MiniCPM-o 4.5 model training team. It uses a <strong>PyTorch + CUDA</strong> inference backend, combined with a streamlined frontend and backend design, to comprehensively demonstrate MiniCPM-o 4.5's audio-visual omnimodal full-duplex capabilities in a transparent, concise, and lossless manner.</p>
-<h2 id="interaction-modes">Interaction Modes</h2>
-<p>The system supports three interaction modes, sharing a single model instance with millisecond-level hot-switching (&lt; 0.1ms):</p>
-<table>
-<thead>
-<tr>
-<th>Mode</th>
-<th>Features</th>
-<th>Input/Output Modalities</th>
-<th>Paradigm</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Turn-based Chat</strong></td>
-<td>Low-latency streaming interaction, reply triggered by button or VAD, strong baseline capabilities</td>
-<td>Audio + text + video input, audio + text output</td>
-<td>Turn-based dialogue</td>
-</tr>
-<tr>
-<td><strong>Omnimodal Full-Duplex</strong></td>
-<td>Omnimodal full-duplex with simultaneous vision + voice input and voice output</td>
-<td>Vision + voice input, text + voice output</td>
-<td>Full-duplex</td>
-</tr>
-<tr>
-<td><strong>Audio Full-Duplex</strong></td>
-<td>Voice full-duplex with simultaneous voice input and output</td>
-<td>Voice input, text + voice output</td>
-<td>Full-duplex</td>
-</tr>
-</tbody>
-</table>
-<h2 id="additional-features">Additional Features</h2>
-<ul>
-<li>Customizable system prompts</li>
-<li>Customizable reference audio (TTS voice cloning)</li>
-<li>Clean, readable code for easy secondary development</li>
-<li>Can serve as an API backend for third-party applications</li>
-<li>Session recording and playback support</li>
-</ul>
-<h2 id="documentation-navigation">Documentation Navigation</h2>
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="architecture.md">System Architecture</a></td>
-<td>Overall architecture topology, request flow, module dependencies</td>
-</tr>
-<tr>
-<td><a href="gateway.md">Gateway Module</a></td>
-<td>Request routing, WebSocket proxy, queue scheduling, LRU cache</td>
-</tr>
-<tr>
-<td><a href="worker.md">Worker Module</a></td>
-<td>Model inference service, state machine, session recording and cleanup</td>
-</tr>
-<tr>
-<td><a href="core.md">Core Module</a></td>
-<td>Schema definitions, processor architecture, capability declaration system</td>
-</tr>
-<tr>
-<td><a href="model.md">Model Module</a></td>
-<td>Detailed MiniCPMO45 multimodal model architecture</td>
-</tr>
-<tr>
-<td><a href="compile.md">torch.compile</a></td>
-<td>Compilation acceleration, target submodules, warm-up mechanism</td>
-</tr>
-<tr>
-<td><strong>Frontend Modules</strong></td>
-<td></td>
-</tr>
-<tr>
-<td><a href="frontend/index.md">Frontend Overview</a></td>
-<td>Module structure, tech stack, navigation index</td>
-</tr>
-<tr>
-<td><a href="frontend/pages.md">Pages &amp; Routing</a></td>
-<td>Page details, Turn-based Chat state management</td>
-</tr>
-<tr>
-<td><a href="frontend/audio.md">Audio Processing</a></td>
-<td>AudioWorklet capture, player, LUFS measurement</td>
-</tr>
-<tr>
-<td><a href="frontend/duplex-session.md">Duplex Session</a></td>
-<td>DuplexSession class, state machine, recording system</td>
-</tr>
-<tr>
-<td><a href="frontend/components.md">UI Components</a></td>
-<td>Shared components, content editor, metrics panel</td>
-</tr>
-<tr>
-<td><a href="api.md">API Reference</a></td>
-<td>HTTP REST API, WebSocket protocol message format</td>
-</tr>
-<tr>
-<td><a href="deployment.md">Configuration &amp; Deployment</a></td>
-<td>System requirements, configuration guide, startup deployment, testing</td>
-</tr>
-</tbody>
-</table>
-<h2 id="project-code-structure-overview">Project Code Structure Overview</h2>
-<div class="codehilite"><pre><span></span><code><span class="n">minicpm</span><span class="o">-</span><span class="n">o</span><span class="o">-</span><span class="mi">4</span><span class="n">_5</span><span class="o">-</span><span class="n">pytorch</span><span class="o">-</span><span class="n">simple</span><span class="o">-</span><span class="n">demo</span><span class="o">/</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">config</span><span class="o">.</span><span class="n">json</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">config</span><span class="o">.</span><span class="n">example</span><span class="o">.</span><span class="n">json</span><span class="w">  </span><span class="c1"># Service configuration</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">config</span><span class="o">.</span><span class="n">py</span><span class="w">                          </span><span class="c1"># Configuration loading (Pydantic)</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">requirements</span><span class="o">.</span><span class="n">txt</span><span class="w">                   </span><span class="c1"># Python dependencies</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">install</span><span class="o">.</span><span class="n">sh</span><span class="w">                         </span><span class="c1"># One-click install script</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">start_all</span><span class="o">.</span><span class="n">sh</span><span class="w">                       </span><span class="c1"># One-click start script</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">gateway</span><span class="o">.</span><span class="n">py</span><span class="w">                         </span><span class="c1"># Gateway service entry point</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">gateway_modules</span><span class="o">/</span><span class="w">                   </span><span class="c1"># Gateway business modules</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">worker_pool</span><span class="o">.</span><span class="n">py</span><span class="w">                 </span><span class="c1">#   Worker pool scheduler</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">app_registry</span><span class="o">.</span><span class="n">py</span><span class="w">                </span><span class="c1">#   Application registry</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">models</span><span class="o">.</span><span class="n">py</span><span class="w">                      </span><span class="c1">#   Data models</span>
-<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">ref_audio_registry</span><span class="o">.</span><span class="n">py</span><span class="w">          </span><span class="c1">#   Reference audio registry</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">worker</span><span class="o">.</span><span class="n">py</span><span class="w">                          </span><span class="c1"># Worker inference service entry point</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">session_recorder</span><span class="o">.</span><span class="n">py</span><span class="w">                </span><span class="c1"># Session recorder</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">session_cleanup</span><span class="o">.</span><span class="n">py</span><span class="w">                 </span><span class="c1"># Session cleanup</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">core</span><span class="o">/</span><span class="w">                              </span><span class="c1"># Core abstraction layer</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">schemas</span><span class="o">/</span><span class="w">                       </span><span class="c1">#   Pydantic Schemas</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">common</span><span class="o">.</span><span class="n">py</span><span class="w">                  </span><span class="c1">#     Common types (Role, Message, Config)</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">chat</span><span class="o">.</span><span class="n">py</span><span class="w">                    </span><span class="c1">#     Chat request/response</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">streaming</span><span class="o">.</span><span class="n">py</span><span class="w">               </span><span class="c1">#     Streaming request/response</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">duplex</span><span class="o">.</span><span class="n">py</span><span class="w">                  </span><span class="c1">#     Duplex request/response</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">processors</span><span class="o">/</span><span class="w">                    </span><span class="c1">#   Inference processors</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">base</span><span class="o">.</span><span class="n">py</span><span class="w">                    </span><span class="c1">#     Base class &amp; Mixin</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">unified</span><span class="o">.</span><span class="n">py</span><span class="w">                 </span><span class="c1">#     Unified processor (three Views)</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">capabilities</span><span class="o">.</span><span class="n">py</span><span class="w">                </span><span class="c1">#   Capability declarations</span>
-<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">factory</span><span class="o">.</span><span class="n">py</span><span class="w">                     </span><span class="c1">#   Factory pattern</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">MiniCPMO45</span><span class="o">/</span><span class="w">                        </span><span class="c1"># Model core inference code</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">configuration_minicpmo</span><span class="o">.</span><span class="n">py</span><span class="w">      </span><span class="c1">#   Model configuration</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">modeling_minicpmo</span><span class="o">.</span><span class="n">py</span><span class="w">           </span><span class="c1">#   Main model implementation</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">modeling_minicpmo_unified</span><span class="o">.</span><span class="n">py</span><span class="w">   </span><span class="c1">#   Unified model (hot-switching)</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">modeling_navit_siglip</span><span class="o">.</span><span class="n">py</span><span class="w">       </span><span class="c1">#   SigLIP vision encoder</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">processing_minicpmo</span><span class="o">.</span><span class="n">py</span><span class="w">         </span><span class="c1">#   Multimodal processor</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">tokenization_minicpmo_fast</span><span class="o">.</span><span class="n">py</span><span class="w">  </span><span class="c1">#   Fast tokenizer</span>
-<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">utils</span><span class="o">.</span><span class="n">py</span><span class="w">                       </span><span class="c1">#   Utility functions</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="k">static</span><span class="o">/</span><span class="w">                            </span><span class="c1"># Frontend pages</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">index</span><span class="o">.</span><span class="n">html</span><span class="w">                     </span><span class="c1">#   Home page</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">turnbased</span><span class="o">.</span><span class="n">html</span><span class="w">                 </span><span class="c1">#   Turn-based chat page</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">admin</span><span class="o">.</span><span class="n">html</span><span class="w">                     </span><span class="c1">#   Admin panel</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">session</span><span class="o">-</span><span class="n">viewer</span><span class="o">.</span><span class="n">html</span><span class="w">            </span><span class="c1">#   Session playback</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">omni</span><span class="o">/</span><span class="w">                          </span><span class="c1">#   Omni full-duplex page</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">audio</span><span class="o">-</span><span class="n">duplex</span><span class="o">/</span><span class="w">                  </span><span class="c1">#   Audio full-duplex page</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">duplex</span><span class="o">/</span><span class="w">                        </span><span class="c1">#   Duplex shared library</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">lib</span><span class="o">/</span><span class="w">                       </span><span class="c1">#     Core library (audio/video/session)</span>
-<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">ui</span><span class="o">/</span><span class="w">                        </span><span class="c1">#     UI components</span>
-<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">shared</span><span class="o">/</span><span class="w">                        </span><span class="c1">#   Cross-page shared components</span>
-<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">lib</span><span class="o">/</span><span class="w">                           </span><span class="c1">#   Common utility library</span>
-<span class="err">│</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">resources</span><span class="o">/</span><span class="w">                         </span><span class="c1"># Resource files (reference audio, etc.)</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">tests</span><span class="o">/</span><span class="w">                             </span><span class="c1"># Test suite</span>
-<span class="err">├──</span><span class="w"> </span><span class="n">docs</span><span class="o">/</span><span class="w">                              </span><span class="c1"># Project documentation</span>
-<span class="err">└──</span><span class="w"> </span><span class="n">tmp</span><span class="o">/</span><span class="w">                               </span><span class="c1"># Runtime logs and PID files</span>
-</code></pre></div>
-
+  <article><h1 id="minicpm-o-45-documentation">MiniCPM-o 4.5 Documentation</h1>
+<p>MiniCPM-o 4.5 PyTorch Simple Demo is an official inference and demonstration system provided by the model training team. It uses a PyTorch + CUDA inference backend to showcase the full audio-video omnimodal full-duplex capabilities of MiniCPM-o 4.5 in a transparent and concise manner.</p>
+<p>The system supports four interaction modes (Turn-based Chat, Half-Duplex, Omnimodal Full-Duplex, Audio Full-Duplex), sharing a single model instance with millisecond-level hot-switching.</p>
 <h2 id="quick-start">Quick Start</h2>
-<ol>
-<li>Ensure you have an NVIDIA GPU (VRAM &gt; 28GB) and a Linux system</li>
-<li>Install FFmpeg</li>
-<li>Run <code>bash install.sh</code> to install dependencies</li>
-<li>Copy configuration: <code>cp config.example.json config.json</code></li>
-<li>Run <code>CUDA_VISIBLE_DEVICES=0 bash start_all.sh</code> to start the service</li>
-<li>Visit <code>https://localhost:8006</code></li>
-</ol>
-<p>For detailed deployment instructions, see <a href="deployment.md">Configuration &amp; Deployment</a>.</p></article>
+<ul>
+<li><a href="architecture/index.md">Architecture</a> — System architecture, mode topology, and request flow</li>
+<li><a href="model.md">Model</a> — Multimodal model internals and data flow</li>
+<li><a href="api.md">API Reference</a> — Interface definitions and usage</li>
+<li><a href="deployment.md">Deployment</a> — Requirements, configuration, and deployment steps</li>
+</ul></article>
   <footer><p>MiniCPM-o 4.5 PyTorch Simple Demo &mdash; Generated by build_docs.py</p></footer>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>

@@ -17,13 +17,20 @@
         }
         [data-tooltip]:hover::after { opacity: 1; transition-delay: 0.2s; }
 
+        html {
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
             background: #f5f5f0;
             color: #2d2d2d;
-            height: 100vh;
+            min-height: 100vh;
+            min-height: 100dvh;
             display: flex;
             flex-direction: column;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
         /* 顶部导航 */
@@ -63,6 +70,8 @@
             justify-content: center;
             padding: 40px 20px;
             gap: 32px;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
         }
         .initial-view.hidden { display: none; }
 
@@ -190,6 +199,7 @@
             margin: 0 auto;
             padding: 0 16px;
             overflow: hidden;
+            min-height: 0;
         }
         .chat-view.hidden { display: none; }
 

@@ -138,7 +138,8 @@ function _omniStopWaveform() {
 // ============================================================================
 // Init: Status panel + health check + defaults + settings persistence
 // ============================================================================
-document.getElementById('panelStatus').innerHTML = getStatusPanelHTML();
+document.getElementById('panelStatus').innerHTML =
+    `<details class="config-group"><summary>Metrics</summary><div class="cg-body">${getStatusPanelHTML()}</div></details>`;
 document.getElementById('mixerPanel').innerHTML = getMixerPanelHTML();
 initHealthCheck('serviceStatus');
 initDataTipTooltips();
@@ -1733,6 +1734,34 @@ document.getElementById('filePlaybackVol').addEventListener('input', function() 
     if (media instanceof FileMediaProvider && !videoEl.muted) {
         videoEl.volume = pct / 100;
     }
+});
+
+// Length Penalty preset buttons + active highlight sync
+function syncLpPresetHighlight() {
+    const val = parseFloat(document.getElementById('omniLengthPenalty')?.value);
+    document.querySelectorAll('.lp-preset-btn').forEach(btn => {
+        btn.classList.toggle('active', parseFloat(btn.dataset.lp) === val);
+    });
+}
+
+document.querySelectorAll('.lp-preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const val = parseFloat(btn.dataset.lp);
+        const input = document.getElementById('omniLengthPenalty');
+        if (input && !isNaN(val)) {
+            input.value = val;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        syncLpPresetHighlight();
+    });
+});
+
+document.getElementById('omniLengthPenalty')?.addEventListener('input', syncLpPresetHighlight);
+document.getElementById('omniLengthPenalty')?.addEventListener('change', syncLpPresetHighlight);
+
+// MaxKV hard cap at 8192
+document.getElementById('maxKvTokens')?.addEventListener('change', function () {
+    if (parseInt(this.value, 10) > 8192) this.value = 8192;
 });
 
 // Control buttons (mic calibration is handled by MixerController)

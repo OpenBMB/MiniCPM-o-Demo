@@ -1,10 +1,39 @@
 # MiniCPM-o 4.5 PyTorch Simple Demo System
 
-[中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/minicpm-o-4_5-pytorch-simple-demo/site/en/index.html)
+[中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/MiniCPM-o-Demo/site/en/index.html)
 
-[Ready-to-use Demo Website](https://35.226.63.1:8008/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
+[Ready-to-use Demo Website](https://openbmb.github.io/MiniCPM-o-Demo/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
 
 This demo system is officially provided by the `MiniCPM-o 4.5` model training team. It uses a PyTorch + CUDA inference backend, combined with a lightweight frontend-backend design, aiming to demonstrate the full audio-video omnimodal full-duplex capabilities of MiniCPM-o 4.5 in a transparent, concise, and lossless manner.
+
+## About MiniCPM-o 4.5
+
+MiniCPM-o 4.5 is the latest and most capable model in the MiniCPM-o series. The model is built in an end-to-end fashion based on SigLip2, Whisper-medium, CosyVoice2, and Qwen3-8B with a total of 9B parameters. It exhibits a significant performance improvement, and introduces new features for full-duplex multimodal live streaming. Notable features of MiniCPM-o 4.5 include:
+
+- 🔥 **Leading Visual Capability.** MiniCPM-o 4.5 achieves an average score of 77.6 on OpenCompass, a comprehensive evaluation of 8 popular benchmarks. With only 9B parameters, it surpasses widely used proprietary models like GPT-4o, Gemini 2.0 Pro, and approaches Gemini 2.5 Flash for vision-language capabilities. It supports instruct and thinking modes in a single model, better covering efficiency and performance trade-offs in different user scenarios.
+
+- 🎙 **Strong Speech Capability.** MiniCPM-o 4.5 supports bilingual real-time speech conversation with configurable voices in English and Chinese. It features more natural, expressive and stable speech conversation. The model also allows for fun features such as voice cloning and role play via a simple reference audio clip, where the cloning performance surpasses strong TTS tools such as CosyVoice2.
+
+- 🎬 **New Full-Duplex and Proactive Multimodal Live Streaming Capability.** As a new feature, MiniCPM-o 4.5 can process real-time, continuous video and audio input streams simultaneously while generating concurrent text and speech output streams in an end-to-end fashion, without mutual blocking. This allows MiniCPM-o 4.5 to see, listen, and speak simultaneously, creating a fluid, real-time omnimodal conversation experience. Beyond reactive responses, the model can also perform proactive interaction, such as initiating reminders or comments based on its continuous understanding of the live scene.
+
+- 💪 **Strong OCR Capability, Efficiency and Others.** Advancing popular visual capabilities from MiniCPM-V series, MiniCPM-o 4.5 can process high-resolution images (up to 1.8 million pixels) and high-FPS videos (up to 10fps) in any aspect ratio efficiently. It achieves state-of-the-art performance for end-to-end English document parsing on OmniDocBench, outperforming proprietary models such as Gemini-3 Flash and GPT-5, and specialized tools such as DeepSeek-OCR 2. It also features trustworthy behaviors, matching Gemini 2.5 Flash on MMHal-Bench, and supports multilingual capabilities on more than 30 languages.
+
+- 💫 **Easy Usage.** MiniCPM-o 4.5 can be easily used in various ways: Basic usage, recommended for 100% precision: PyTorch inference with Nvidia GPU. Other end-side adaptation includes (1) llama.cpp and Ollama support for efficient CPU inference on local devices, (2) int4 and GGUF format quantized models in 16 sizes, (3) vLLM and SGLang support for high-throughput and memory-efficient inference, (4) FlagOS support for the unified multi-chip backend plugin. We also open-sourced web demos which enable the full-duplex multimodal live streaming experience on local devices such as GPUs, PCs (e.g., on a MacBook).
+
+<details>
+<summary><b>Model Architecture</b></summary>
+
+- **End-to-end Omni-modal Architecture.** The modality encoders/decoders and LLM are densely connected via hidden states in an end-to-end fashion. This enables better information flow and control, and also facilitates full exploitation of rich multimodal knowledge during training.
+
+- **Full-Duplex Omni-modal Live Streaming Mechanism.** (1) We turn the offline modality encoder/decoders into online and full-duplex ones for streaming inputs/outputs. The speech token decoder models text and speech tokens in an interleaved fashion to support full-duplex speech generation (i.e., sync timely with new input). This also facilitates more stable long speech generation (e.g., > 1min). (2) We sync all the input and output streams on timeline in milliseconds, which are jointly modeled by a time-division multiplexing (TDM) mechanism for omni-modality streaming processing in the LLM backbone. It divides parallel omni-modality streams into sequential info groups within small periodic time slices.
+
+- **Proactive Interaction Mechanism.** The LLM continuously monitors the input video and audio streams, and decides at a frequency of 1Hz to speak or not. This high decision-making frequency together with full-duplex nature are crucial to enable the proactive interaction capability.
+
+- **Configurable Speech Modeling Design.** We inherit the multimodal system prompt design of MiniCPM-o 2.6, which includes a traditional text system prompt, and a new audio system prompt to determine the assistant voice. This enables cloning new voices and role play in inference time for speech conversation.
+
+</details>
+
+---
 
 | Mode | Features | I/O Modalities | Paradigm
 |------|----------|------|------
@@ -228,6 +257,71 @@ PYTHONPATH=. .venv/base/bin/python gateway.py --port 10024 --workers localhost:2
 ```bash
 pkill -f "gateway.py|worker.py"
 ```
+
+<br/>
+
+### Docker Deployment
+
+You can also run the service inside Docker. This approach packages all dependencies into a single image — just mount one workspace directory and you're good to go.
+
+**Prerequisites:**
+- Docker Engine 19.03+
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (`nvidia-docker`)
+- NVIDIA GPU with > 28 GB VRAM
+
+**1. Build the image:**
+
+```bash
+docker build -t minicpm-o-demo .
+```
+
+**2. Prepare the workspace directory:**
+
+Create a single workspace directory with your model weights and optional config:
+
+```bash
+mkdir -p my-workspace/models
+
+# Copy or symlink model weights
+ln -s /path/to/MiniCPM-o-4_5 my-workspace/models/MiniCPM-o-4_5
+
+# (Optional) Custom config — model_path should point to /workspace/models/MiniCPM-o-4_5
+cp config.example.json my-workspace/config.json
+```
+
+The workspace directory layout:
+```
+my-workspace/
+├── models/MiniCPM-o-4_5/   # Model weights (required)
+├── config.json              # Custom config (optional, fallback to defaults)
+├── certs/                   # TLS certs (optional, for HTTPS)
+├── data/                    # Auto-created: persistent session data
+└── torch_compile_cache/     # Auto-created: compilation cache
+```
+
+**3. Run with `docker run`:**
+
+```bash
+docker run --gpus all -p 8006:8006 \
+    -v $(pwd)/my-workspace:/workspace \
+    minicpm-o-demo
+```
+
+**3 (alternative). Run with Docker Compose:**
+
+Edit `docker-compose.yml` to set the workspace volume path, then:
+
+```bash
+docker compose up -d
+```
+
+**Environment variables supported by the container:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GATEWAY_PROTO` | `http` | `http` or `https` |
+| `GATEWAY_PORT` | from config (8006) | Gateway listen port |
+| `CUDA_VISIBLE_DEVICES` | all GPUs | Comma-separated GPU indices |
 
 <br/>
 <br/>

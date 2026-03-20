@@ -1,0 +1,20 @@
+services:
+  minicpm-o:
+    build: .
+    image: minicpm-o-demo:latest
+    container_name: minicpm-o-demo
+    ports:
+      - "8006:8006"
+    volumes:
+      - ./workspace:/workspace
+    environment:
+      - GATEWAY_PROTO=http
+      # - CUDA_VISIBLE_DEVICES=0,1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

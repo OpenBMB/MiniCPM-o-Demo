@@ -127,6 +127,65 @@
 }
 
 
+/* ========== Always allow body to scroll when content overflows ========== */
+html {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+body {
+    height: auto !important;
+    min-height: 100vh;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ========== Tablet & Phone: fixed bottom controls + scrollable layout ========== */
+@media (max-width: 1024px) {
+    .main {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        padding-bottom: 72px;
+    }
+
+    .col-left, .col-right {
+        overflow: visible;
+    }
+
+    .panel-controls {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 50;
+        border-radius: 10px 10px 0 0;
+        box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
+    }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .main {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        padding-bottom: 72px;
+    }
+
+    .col-left, .col-right {
+        overflow: visible;
+    }
+
+    .panel-controls {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 50;
+        border-radius: 10px 10px 0 0;
+        box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
+    }
+}
+
 /* ========== Mobile responsive ========== */
 @media (max-width: 768px) {
     .col-left .row-top,
@@ -136,5 +195,14 @@
     .status-lamp {
         font-size: 11px;
         padding: 4px 10px;
+    }
+}
+
+@media (max-width: 480px) {
+    .main {
+        padding-bottom: 64px;
+    }
+    .panel-controls {
+        padding: 10px 8px;
     }
 }

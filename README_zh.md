@@ -1,11 +1,39 @@
 # MiniCPM-o 4.5 PyTorch 简易演示系统
 
-[English Documentation](README.md) | [详细文档](https://openbmb.github.io/minicpm-o-4_5-pytorch-simple-demo/site/zh/index.html)
+[English Documentation](README.md) | [详细文档](https://openbmb.github.io/MiniCPM-o-Demo/site/zh/index.html)
 
-[可直接使用的在线演示系统](https://35.226.63.1:8008/) | [Discord](https://discord.gg/UTbTeCQe) | [飞书群](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
+[可直接使用的在线演示系统](https://openbmb.github.io/MiniCPM-o-Demo/) | [Discord](https://discord.gg/UTbTeCQe) | [飞书群](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
 
 本演示系统为 `MiniCPM-o 4.5` 模型训练团队官方提供的演示系统。本演示系统使用 PyTorch + CUDA 推理后端，结合简易的前后端设计，旨在以透明、简洁、无性能损失的方式，全面地演示 MiniCPM-o 4.5 的音视频全模态全双工能力。
 
+## 关于 MiniCPM-o 4.5
+
+MiniCPM-o 4.5 是 MiniCPM-o 系列中最新、能力最强的模型。该模型基于 SigLip2、Whisper-medium、CosyVoice2 和 Qwen3-8B，以端到端方式构建，总参数量为 9B。它在性能上取得了显著提升，并引入了全双工多模态实时流式交互的新特性。MiniCPM-o 4.5 的主要亮点包括：
+
+- 🔥 **领先的视觉能力。** MiniCPM-o 4.5 在 OpenCompass 上取得了 77.6 的平均分，该评测涵盖 8 个主流基准测试。仅凭 9B 参数，它超越了 GPT-4o、Gemini 2.0 Pro 等广泛使用的商业模型，并接近 Gemini 2.5 Flash 的视觉语言能力。它在单一模型中同时支持 instruct 和 thinking 模式，更好地覆盖了不同用户场景下的效率与性能权衡。
+
+- 🎙 **强大的语音能力。** MiniCPM-o 4.5 支持中英双语实时语音对话，并可配置不同的音色。它具有更自然、更富表现力且更稳定的语音对话效果。模型还支持通过简单的参考音频片段实现声音克隆和角色扮演等趣味功能，克隆性能超越了 CosyVoice2 等强大的 TTS 工具。
+
+- 🎬 **全新的全双工主动式多模态实时流式交互能力。** 作为新特性，MiniCPM-o 4.5 可以同时处理实时、连续的视频和音频输入流，同时以端到端方式生成并发的文本和语音输出流，互不阻塞。这使得 MiniCPM-o 4.5 能够同时看、听、说，创造流畅的实时全模态对话体验。除了被动响应外，模型还能进行主动交互，例如基于对实时场景的持续理解主动发起提醒或评论。
+
+- 💪 **强大的 OCR 能力、高效率及其他。** 延续 MiniCPM-V 系列的优势视觉能力，MiniCPM-o 4.5 可以高效处理高分辨率图像（最高 180 万像素）和高帧率视频（最高 10fps），支持任意宽高比。它在 OmniDocBench 端到端英文文档解析中达到了最先进的性能，超越了 Gemini-3 Flash 和 GPT-5 等商业模型，以及 DeepSeek-OCR 2 等专业工具。它还具有可信赖的行为，在 MMHal-Bench 上匹配 Gemini 2.5 Flash，并支持超过 30 种语言的多语言能力。
+
+- 💫 **易于使用。** MiniCPM-o 4.5 可以通过多种方式轻松使用：基本用法推荐以 100% 精度使用 PyTorch + Nvidia GPU 推理。其他端侧适配包括：(1) llama.cpp 和 Ollama 支持在本地设备上进行高效 CPU 推理；(2) 提供 16 种尺寸的 int4 和 GGUF 格式量化模型；(3) vLLM 和 SGLang 支持高吞吐和内存高效推理；(4) FlagOS 支持统一多芯片后端插件。我们还开源了 Web 演示系统，可在 GPU、PC（如 MacBook）等本地设备上体验全双工多模态实时流式交互。
+
+<details>
+<summary><b>模型架构</b></summary>
+
+- **端到端全模态架构。** 模态编码器/解码器与 LLM 通过隐藏状态以端到端方式密集连接。这实现了更好的信息流动和控制，也有助于在训练过程中充分利用丰富的多模态知识。
+
+- **全双工全模态实时流式机制。** (1) 我们将离线的模态编码器/解码器转变为在线和全双工模式，用于流式输入/输出。语音 token 解码器以交错方式建模文本和语音 token，以支持全双工语音生成（即与新输入及时同步）。这也有助于更稳定的长语音生成（例如 > 1 分钟）。(2) 我们以毫秒为单位在时间线上同步所有输入和输出流，通过时分复用（TDM）机制在 LLM 骨干网络中进行全模态流式处理。它将并行的全模态流在小的周期性时间片内划分为顺序信息组。
+
+- **主动交互机制。** LLM 持续监控输入的视频和音频流，并以 1Hz 的频率决定是否说话。这种高频率的决策机制结合全双工特性，是实现主动交互能力的关键。
+
+- **可配置的语音建模设计。** 我们继承了 MiniCPM-o 2.6 的多模态系统提示词设计，包括传统的文本系统提示词和新的音频系统提示词来确定助手音色。这使得在推理时可以克隆新音色并进行语音对话中的角色扮演。
+
+</details>
+
+---
 
 | 模式 | 特点 | 输入输出模态 | 范式
 |------|------|------|------
@@ -232,6 +260,71 @@ PYTHONPATH=. .venv/base/bin/python gateway.py --port 10024 --workers localhost:2
 ```bash
 pkill -f "gateway.py|worker.py"
 ```
+
+<br/>
+
+### Docker 部署
+
+你也可以通过 Docker 运行本服务。这种方式将所有依赖打包在一个镜像中，只需挂载一个工作目录即可启动。
+
+**前置条件：**
+- Docker Engine 19.03+
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)（`nvidia-docker`）
+- 显存大于 28 GB 的 NVIDIA GPU
+
+**1. 构建镜像：**
+
+```bash
+docker build -t minicpm-o-demo .
+```
+
+**2. 准备工作目录：**
+
+创建一个工作目录，放入模型权重和可选的配置文件：
+
+```bash
+mkdir -p my-workspace/models
+
+# 复制或软链接模型权重
+ln -s /path/to/MiniCPM-o-4_5 my-workspace/models/MiniCPM-o-4_5
+
+# （可选）自定义配置 —— model_path 应指向 /workspace/models/MiniCPM-o-4_5
+cp config.example.json my-workspace/config.json
+```
+
+工作目录结构：
+```
+my-workspace/
+├── models/MiniCPM-o-4_5/   # 模型权重（必需）
+├── config.json              # 自定义配置（可选，不提供则使用默认值）
+├── certs/                   # TLS 证书（可选，用于 HTTPS）
+├── data/                    # 自动创建：持久化会话数据
+└── torch_compile_cache/     # 自动创建：编译缓存
+```
+
+**3. 使用 `docker run` 运行：**
+
+```bash
+docker run --gpus all -p 8006:8006 \
+    -v $(pwd)/my-workspace:/workspace \
+    minicpm-o-demo
+```
+
+**3（替代方案）. 使用 Docker Compose 运行：**
+
+编辑 `docker-compose.yml` 设置工作目录路径，然后：
+
+```bash
+docker compose up -d
+```
+
+**容器支持的环境变量：**
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `GATEWAY_PROTO` | `http` | `http` 或 `https` |
+| `GATEWAY_PORT` | 来自 config（8006） | Gateway 监听端口 |
+| `CUDA_VISIBLE_DEVICES` | 所有 GPU | 逗号分隔的 GPU 索引 |
 
 <br/>
 <br/>

@@ -38,7 +38,7 @@ import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
 const SAMPLE_RATE_IN = 16000;
 const SAMPLE_RATE_OUT = 24000;
 const CHUNK_MS = 1000;
-const FILE_MAX_DURATION = 120; // 2 minutes
+const FILE_MAX_DURATION = 300; // 5 minutes
 
 let currentMode = 'live';
 let session = null;
