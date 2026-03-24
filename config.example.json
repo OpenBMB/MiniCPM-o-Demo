@@ -1,0 +1,45 @@
+{
+    "backend": "pytorch",
+
+    "model": {
+        "model_path": "openbmb/MiniCPM-o-4_5",
+        "pt_path": null,
+        "attn_implementation": "auto"
+    },
+    "audio": {
+        "ref_audio_path": "assets/ref_audio/ref_minicpm_signature.wav",
+        "playback_delay_ms": 200,
+        "chat_vocoder": "token2wav"
+    },
+    "service": {
+        "gateway_port": 8006,
+        "worker_base_port": 22400,
+        "_comment_num_workers": "仅在不传 gateway --workers/--num-workers 时使用；start_all.sh 会显式传 --workers",
+        "num_workers": 1,
+        "max_queue_size": 1000,
+        "request_timeout": 300.0,
+        "compile": false,
+        "data_dir": "data",
+        "eta_chat_s": 15.0,
+        "eta_streaming_s": 20.0,
+        "eta_half_duplex_s": 180.0,
+        "eta_audio_duplex_s": 120.0,
+        "eta_omni_duplex_s": 90.0,
+        "eta_duplex_s": 90.0,
+        "eta_ema_alpha": 0.3,
+        "eta_ema_min_samples": 3
+    },
+    "duplex": {
+        "pause_timeout": 60.0
+    },
+
+    "cpp_backend": {
+        "_comment": "backend='cpp' 时生效，使用 C++ llama.cpp-omni 推理",
+        "llamacpp_root": "/cache/caitianchi/code/llama.cpp-omni",
+        "model_dir": "/cache/caitianchi/model/MiniCPM-o-4_5-gguf",
+        "llm_model": "MiniCPM-o-4_5-Q8_0.gguf",
+        "cpp_server_port": null,
+        "ctx_size": 8192,
+        "n_gpu_layers": 99
+    }
+}
