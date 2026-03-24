@@ -285,6 +285,18 @@ class CppBackendWorker:
             logger.warning(f"duplex_cleanup session reset failed: {e}")
         gc.collect()
 
+    def is_cpp_healthy(self) -> bool:
+        """检查底层 C++ llama-server 是否活着（进程 + HTTP /health）"""
+        proc = self._cpp_process
+        if proc is None or proc.poll() is not None:
+            return False
+        try:
+            import requests as _req
+            r = _req.get(f"{self._cpp_server_url}/health", timeout=3)
+            return r.status_code == 200
+        except Exception:
+            return False
+
     def _stop_cpp_server(self) -> None:
         if self._cpp_process is not None:
             proc = self._cpp_process

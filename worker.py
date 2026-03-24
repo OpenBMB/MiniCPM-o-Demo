@@ -666,12 +666,22 @@ async def health():
         kv_len = worker.processor.kv_cache_length
         model_loaded = True
     elif hasattr(worker, '_http_client') and worker._http_client is not None:
-        model_loaded = True
+        # C++ 后端：必须实际探测 llama-server 存活状态
+        if hasattr(worker, 'is_cpp_healthy') and not worker.is_cpp_healthy():
+            model_loaded = False
+            logger.warning("health check: C++ llama-server is not responding")
+        else:
+            model_loaded = True
         kv_len = getattr(worker, 'kv_cache_length', 0)
 
+    status = "healthy" if model_loaded else "error"
+    worker_status = worker.state.status
+    if not model_loaded and worker_status == WorkerStatus.IDLE:
+        worker_status = WorkerStatus.ERROR
+
     return WorkerHealthResponse(
-        status="healthy" if model_loaded else "error",
-        worker_status=worker.state.status,
+        status=status,
+        worker_status=worker_status,
         gpu_id=worker.gpu_id,
         model_loaded=model_loaded,
         current_session_id=worker.state.current_session_id,
