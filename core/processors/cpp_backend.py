@@ -839,27 +839,21 @@ class CppBackendWorker:
         voice_audio: str = "",
         lang: Optional[str] = None,
     ) -> None:
-        mode_changed = (
+        duplex_mode_changed = (
             self._last_duplex_mode is not None and
             self._last_duplex_mode != duplex_mode
         )
-        media_type_changed = (self._last_media_type != media_type)
 
-        if mode_changed or media_type_changed:
-            # Full re-init when switching duplex_mode or media_type.
-            # This restarts all TTS/T2W threads with the correct function,
-            # avoiding subtle state corruption from mode switches.
+        if duplex_mode_changed:
+            # duplex ↔ simplex 切换需要 omni_init（TTS 线程函数不同）
+            # media_type 变化不需要重建——vision context 常驻，按需使用即可
             logger.info(
-                "session mode changed "
-                f"(duplex: {self._last_duplex_mode} -> {duplex_mode}, "
-                f"media_type: {self._last_media_type} -> {media_type}), "
+                f"duplex mode changed ({self._last_duplex_mode} -> {duplex_mode}), "
                 "calling omni_init for clean restart"
             )
             self._call_omni_init(media_type=media_type, duplex_mode=duplex_mode, lang=lang)
             self._last_duplex_mode = duplex_mode
             self._last_media_type = media_type
-            # omni_init already prefills voice_audio if set in ref_audio_path
-            # return
 
         self._last_duplex_mode = duplex_mode
         self._last_media_type = media_type

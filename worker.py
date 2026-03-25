@@ -1934,7 +1934,7 @@ async def duplex_ws(ws: WebSocket):
 
                 try:
                     duplex_type = "omni_duplex" if client_session_id.startswith("omni") else "audio_duplex"
-                    duplex_media_type = 2 if duplex_type == "omni_duplex" else 1
+                    duplex_media_type = 2
 
                     prompt = await asyncio.to_thread(
                         worker.duplex_prepare,
