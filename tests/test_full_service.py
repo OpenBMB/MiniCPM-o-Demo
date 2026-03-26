@@ -21,7 +21,6 @@ import io
 import json
 import logging
 import os
-import struct
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -127,10 +126,34 @@ def _wait_worker_idle(timeout: float = 30.0) -> bool:
 # Audio / image helpers
 # ---------------------------------------------------------------------------
 
-def _make_silence_pcm_b64(duration_s: float = 1.0) -> str:
+def _make_silence_f32_b64(duration_s: float = 1.0) -> str:
     n_samples = int(16000 * duration_s)
-    pcm = struct.pack(f"<{n_samples}h", *([0] * n_samples))
-    return base64.b64encode(pcm).decode()
+    pcm = np.zeros(n_samples, dtype=np.float32)
+    return base64.b64encode(pcm.tobytes()).decode()
+
+
+def _load_user_audio_f32_b64(duration_s: float = 2.0) -> str:
+    """Generate a speech-like sine-wave signal as float32 base64.
+
+    A 440 Hz tone at amplitude 0.3 is enough to trigger Silero VAD.
+    Falls back to loading REF_AUDIO_WAV if available.
+    """
+    if REF_AUDIO_WAV.exists():
+        try:
+            import soundfile as sf
+            audio, sr = sf.read(str(REF_AUDIO_WAV), dtype="float32")
+            target_len = int(sr * duration_s)
+            if len(audio) > target_len:
+                audio = audio[:target_len]
+            elif len(audio) < target_len:
+                audio = np.tile(audio, (target_len // len(audio)) + 1)[:target_len]
+            return base64.b64encode(audio.astype(np.float32).tobytes()).decode()
+        except Exception:
+            pass
+    n_samples = int(16000 * duration_s)
+    t = np.linspace(0, duration_s, n_samples, dtype=np.float32)
+    tone = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    return base64.b64encode(tone.tobytes()).decode()
 
 
 def _load_ref_audio_f32_b64() -> Optional[str]:
@@ -430,7 +453,7 @@ class TestHalfDuplex:
         import websockets
 
         sid = f"test_hd_{int(time.time())}"
-        audio_b64 = _make_silence_pcm_b64(2.0)
+        audio_b64 = _load_user_audio_f32_b64(2.0)
 
         async with websockets.connect(
             f"{GATEWAY_WS}/ws/half_duplex/{sid}", max_size=50_000_000, open_timeout=60,
@@ -516,7 +539,7 @@ class TestOmniDuplex:
     ) -> List[Dict[str, Any]]:
         import websockets
 
-        audio_b64 = _make_silence_pcm_b64(1.0)
+        audio_b64 = _make_silence_f32_b64(1.0)
         frame_b64 = _make_test_image_b64() if send_frame else None
         ws_msgs: List[Dict[str, Any]] = []
 
@@ -659,7 +682,7 @@ class TestOmniDuplex:
         import websockets
 
         sid = f"test_omni_pr_{int(time.time())}"
-        audio_b64 = _make_silence_pcm_b64(1.0)
+        audio_b64 = _make_silence_f32_b64(1.0)
 
         async with websockets.connect(
             f"{GATEWAY_WS}/ws/duplex/{sid}", max_size=50_000_000, open_timeout=60,
@@ -733,7 +756,7 @@ class TestAudioDuplex:
         import websockets
 
         sid = f"adx_test_{int(time.time())}"
-        audio_b64 = _make_silence_pcm_b64(1.0)
+        audio_b64 = _make_silence_f32_b64(1.0)
 
         async with websockets.connect(
             f"{GATEWAY_WS}/ws/duplex/{sid}", max_size=50_000_000, open_timeout=60,
@@ -930,3 +953,345 @@ class TestHealthDuringInference:
                     break
 
         logger.info("Health during inference OK")
+
+
+# ============================================================================
+# Part 11: Half-Duplex Deep Tests (VAD trigger + multi-turn)
+# ============================================================================
+
+class TestHalfDuplexDeep:
+    """Deeper half-duplex tests that verify VAD triggering and multi-turn stability."""
+
+    @requires_gateway
+    @requires_worker
+    @slow
+    @pytest.mark.asyncio
+    async def test_hd_generates_audio(self):
+        """Half-duplex should produce text and/or audio when given real speech."""
+        assert _wait_worker_idle(timeout=60), "Worker not idle"
+        import websockets
+
+        sid = f"test_hd_deep_{int(time.time())}"
+        audio_b64 = _load_user_audio_f32_b64(2.0)
+
+        async with websockets.connect(
+            f"{GATEWAY_WS}/ws/half_duplex/{sid}", max_size=50_000_000, open_timeout=60,
+            ssl=_ws_ssl_context(GATEWAY_WS),
+        ) as ws:
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=DUPLEX_TIMEOUT)
+                msg = json.loads(raw)
+                if msg.get("type") in ("queue_done", "error"):
+                    break
+            if msg.get("type") == "error":
+                pytest.skip(f"Queue error: {msg}")
+
+            prepare_msg: Dict[str, Any] = {
+                "type": "prepare",
+                "system_content": [{"type": "text", "text": "You are a helpful assistant."}],
+                "config": {
+                    "generation": {"max_new_tokens": 128},
+                    "tts": {"enabled": True},
+                },
+            }
+            ref_b64 = _load_ref_audio_f32_b64()
+            if ref_b64:
+                prepare_msg["config"]["tts"]["ref_audio_data"] = ref_b64
+            await ws.send(json.dumps(prepare_msg))
+
+            for _ in range(30):
+                await ws.send(json.dumps({
+                    "type": "audio_chunk",
+                    "audio_base64": audio_b64,
+                }))
+                await asyncio.sleep(0.1)
+
+            all_msgs: List[Dict[str, Any]] = []
+            text_parts: List[str] = []
+            has_audio = False
+            deadline = time.time() + STREAMING_TIMEOUT
+            while time.time() < deadline:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=15)
+                    m = json.loads(raw)
+                    all_msgs.append(m)
+                    if m.get("text_delta"):
+                        text_parts.append(m["text_delta"])
+                    if m.get("text"):
+                        text_parts.append(m["text"])
+                    if m.get("audio_base64") or m.get("audio_data"):
+                        has_audio = True
+                    if m.get("type") in ("turn_done", "timeout"):
+                        break
+                except asyncio.TimeoutError:
+                    break
+
+        text = "".join(text_parts)
+        msg_types = [m.get("type") for m in all_msgs]
+        logger.info(f"[HD deep] msg_types={msg_types}, text='{text[:80]}', has_audio={has_audio}")
+        assert len(text) > 0 or has_audio, (
+            f"Half-duplex produced no output. msg_types={msg_types}"
+        )
+
+    @requires_gateway
+    @requires_worker
+    @slow
+    @pytest.mark.asyncio
+    async def test_hd_multi_turn_not_stuck(self):
+        """Two consecutive half-duplex turns should both produce output (not stuck at thinking)."""
+        assert _wait_worker_idle(timeout=60), "Worker not idle"
+        import websockets
+
+        sid = f"test_hd_mt_{int(time.time())}"
+        audio_b64 = _load_user_audio_f32_b64(2.0)
+
+        async with websockets.connect(
+            f"{GATEWAY_WS}/ws/half_duplex/{sid}", max_size=50_000_000, open_timeout=60,
+            ssl=_ws_ssl_context(GATEWAY_WS),
+        ) as ws:
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=DUPLEX_TIMEOUT)
+                msg = json.loads(raw)
+                if msg.get("type") in ("queue_done", "error"):
+                    break
+            if msg.get("type") == "error":
+                pytest.skip(f"Queue error: {msg}")
+
+            await ws.send(json.dumps({
+                "type": "prepare",
+                "system_content": [{"type": "text", "text": "You are a helpful assistant."}],
+                "config": {
+                    "generation": {"max_new_tokens": 64},
+                    "tts": {"enabled": True},
+                },
+            }))
+
+            for turn in range(2):
+                logger.info(f"[HD multi-turn] Starting turn {turn + 1}")
+                for _ in range(25):
+                    await ws.send(json.dumps({
+                        "type": "audio_chunk",
+                        "audio_base64": audio_b64,
+                    }))
+                    await asyncio.sleep(0.1)
+
+                got_output = False
+                deadline = time.time() + STREAMING_TIMEOUT
+                while time.time() < deadline:
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=15)
+                        m = json.loads(raw)
+                        if m.get("text_delta") or m.get("text") or m.get("audio_base64"):
+                            got_output = True
+                        if m.get("type") in ("turn_done", "timeout"):
+                            break
+                    except asyncio.TimeoutError:
+                        break
+
+                logger.info(f"[HD multi-turn] Turn {turn + 1}: got_output={got_output}")
+                assert got_output, f"Turn {turn + 1} stuck: no output received"
+                await asyncio.sleep(1.0)
+
+
+# ============================================================================
+# Part 12: Mixed Mode Tests
+# ============================================================================
+
+class TestMixedModes:
+    """Test that all four modes can be used interchangeably without state residue."""
+
+    @staticmethod
+    async def _do_chat_turn(with_tts: bool = False) -> Dict[str, Any]:
+        """Execute one turn-based chat and return result info."""
+        _wait_worker_idle(timeout=30)
+        tts_cfg: Optional[Dict[str, Any]] = None
+        if with_tts:
+            tts_cfg = {"enabled": True}
+            ref_b64 = _load_ref_audio_f32_b64()
+            if ref_b64:
+                tts_cfg["ref_audio_data"] = ref_b64
+        payload: Dict[str, Any] = {
+            "messages": [{"role": "user", "content": "Say hello in one short sentence."}],
+            "generation": {"max_new_tokens": 32, "do_sample": False},
+        }
+        if tts_cfg:
+            payload["tts"] = tts_cfg
+        r = _post(f"{GATEWAY_URL}/api/chat", json=payload, timeout=CHAT_TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        has_audio = bool(d.get("audio_base64") or d.get("audio_data"))
+        return {"ok": r.status_code == 200, "text": d.get("text", ""), "has_audio": has_audio}
+
+    @staticmethod
+    async def _do_streaming_turn() -> Dict[str, Any]:
+        """Execute one streaming chat and return result info."""
+        _wait_worker_idle(timeout=30)
+        import websockets
+        chunks: List[Dict[str, Any]] = []
+        done_msg = None
+        try:
+            async with websockets.connect(
+                f"{GATEWAY_WS}/ws/chat", max_size=50_000_000, open_timeout=30,
+                ssl=_ws_ssl_context(GATEWAY_WS),
+            ) as ws:
+                await ws.send(json.dumps({
+                    "messages": [{"role": "user", "content": "Count 1 to 3."}],
+                    "generation": {"max_new_tokens": 32, "do_sample": False},
+                }))
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=STREAMING_TIMEOUT)
+                    msg = json.loads(raw)
+                    if msg.get("type") == "done":
+                        done_msg = msg
+                        break
+                    if msg.get("type") in ("prefill_done", "heartbeat"):
+                        continue
+                    chunks.append(msg)
+        except Exception as e:
+            return {"ok": False, "text": "", "has_audio": False, "error": str(e)}
+
+        text = "".join(c.get("text_delta", "") or c.get("text", "") for c in chunks)
+        if not text and done_msg:
+            text = done_msg.get("text", "")
+        return {"ok": done_msg is not None, "text": text, "has_audio": False}
+
+    @staticmethod
+    async def _do_half_duplex_turn() -> Dict[str, Any]:
+        """Execute one half-duplex turn with real f32 audio and return result info."""
+        _wait_worker_idle(timeout=60)
+        import websockets
+
+        sid = f"mix_hd_{int(time.time())}_{id(asyncio.get_event_loop()) % 10000}"
+        audio_b64 = _load_user_audio_f32_b64(2.0)
+        text_parts: List[str] = []
+        has_audio = False
+
+        try:
+            async with websockets.connect(
+                f"{GATEWAY_WS}/ws/half_duplex/{sid}", max_size=50_000_000, open_timeout=60,
+                ssl=_ws_ssl_context(GATEWAY_WS),
+            ) as ws:
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=DUPLEX_TIMEOUT)
+                    msg = json.loads(raw)
+                    if msg.get("type") in ("queue_done", "error"):
+                        break
+                if msg.get("type") == "error":
+                    return {"ok": False, "text": "", "has_audio": False, "error": f"queue: {msg}"}
+
+                await ws.send(json.dumps({
+                    "type": "prepare",
+                    "system_content": [{"type": "text", "text": "You are a helpful assistant."}],
+                    "config": {
+                        "generation": {"max_new_tokens": 64},
+                        "tts": {"enabled": True},
+                    },
+                }))
+
+                for _ in range(25):
+                    await ws.send(json.dumps({
+                        "type": "audio_chunk",
+                        "audio_base64": audio_b64,
+                    }))
+                    await asyncio.sleep(0.1)
+
+                deadline = time.time() + STREAMING_TIMEOUT
+                while time.time() < deadline:
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=15)
+                        m = json.loads(raw)
+                        if m.get("text_delta"):
+                            text_parts.append(m["text_delta"])
+                        if m.get("text"):
+                            text_parts.append(m["text"])
+                        if m.get("audio_base64") or m.get("audio_data"):
+                            has_audio = True
+                        if m.get("type") in ("turn_done", "timeout"):
+                            break
+                    except asyncio.TimeoutError:
+                        break
+        except Exception as e:
+            return {"ok": False, "text": "", "has_audio": False, "error": str(e)}
+
+        text = "".join(text_parts)
+        return {"ok": len(text) > 0 or has_audio, "text": text, "has_audio": has_audio}
+
+    @staticmethod
+    async def _do_omni_duplex_turn() -> Dict[str, Any]:
+        """Execute one omni-duplex turn and return result info."""
+        _wait_worker_idle(timeout=60)
+        sid = f"mix_omni_{int(time.time())}_{id(asyncio.get_event_loop()) % 10000}"
+        msgs = await TestOmniDuplex._run_duplex(
+            GATEWAY_WS, sid, num_audio_chunks=5, send_frame=False, force_listen_first_n=3,
+        )
+        types = [m.get("type") for m in msgs]
+        result_msgs = [m for m in msgs if m.get("type") == "result"]
+        has_error = any(m.get("type") == "error" for m in msgs)
+        return {
+            "ok": "prepared" in types and len(result_msgs) >= 1,
+            "text": "",
+            "has_audio": False,
+            "n_results": len(result_msgs),
+            "has_error": has_error,
+        }
+
+    @requires_gateway
+    @requires_worker
+    @slow
+    @pytest.mark.asyncio
+    async def test_sequential_mode_switching(self):
+        """Cycle through chat → streaming → omni_duplex → half_duplex in sequence."""
+        steps = [
+            ("chat+tts", self._do_chat_turn, {"with_tts": True}),
+            ("streaming", self._do_streaming_turn, {}),
+            ("omni_duplex", self._do_omni_duplex_turn, {}),
+            ("half_duplex", self._do_half_duplex_turn, {}),
+        ]
+        results = []
+        for name, fn, kwargs in steps:
+            logger.info(f"[MixedModes] Step: {name}")
+            res = await fn(**kwargs)
+            logger.info(f"  [{('OK' if res['ok'] else 'FAIL')}] text='{res.get('text', '')[:40]}' audio={res.get('has_audio')}")
+            results.append((name, res))
+            await asyncio.sleep(2.0)
+
+        failures = [(name, r) for name, r in results if not r["ok"]]
+        if failures:
+            fail_detail = "; ".join(f"{n}: {r}" for n, r in failures)
+            pytest.fail(f"Mode switching failures: {fail_detail}")
+
+    @requires_gateway
+    @requires_worker
+    @slow
+    @pytest.mark.asyncio
+    async def test_parallel_different_modes(self):
+        """Run chat and streaming concurrently (different mode, same gateway)."""
+        chat_task = asyncio.create_task(self._do_chat_turn(with_tts=False))
+        stream_task = asyncio.create_task(self._do_streaming_turn())
+        chat_res, stream_res = await asyncio.gather(chat_task, stream_task)
+        logger.info(f"[Parallel] chat={chat_res['ok']}, stream={stream_res['ok']}")
+        assert chat_res["ok"], f"Parallel chat failed: {chat_res}"
+        assert stream_res["ok"], f"Parallel stream failed: {stream_res}"
+
+    @requires_gateway
+    @requires_worker
+    @slow
+    @pytest.mark.asyncio
+    async def test_duplex_chat_duplex_sandwich(self):
+        """omni_duplex → chat → half_duplex: the 'sandwich' pattern."""
+        steps = [
+            ("omni_duplex_1", self._do_omni_duplex_turn, {}),
+            ("chat", self._do_chat_turn, {"with_tts": True}),
+            ("half_duplex", self._do_half_duplex_turn, {}),
+        ]
+        results = []
+        for name, fn, kwargs in steps:
+            logger.info(f"[Sandwich] Step: {name}")
+            res = await fn(**kwargs)
+            logger.info(f"  [{('OK' if res['ok'] else 'FAIL')}] text='{res.get('text', '')[:40]}' audio={res.get('has_audio')}")
+            results.append((name, res))
+            await asyncio.sleep(2.0)
+
+        failures = [(name, r) for name, r in results if not r["ok"]]
+        if failures:
+            fail_detail = "; ".join(f"{n}: {r}" for n, r in failures)
+            pytest.fail(f"Sandwich test failures: {fail_detail}")

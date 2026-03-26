@@ -363,6 +363,8 @@ class CppBackendWorker:
             logger.info("full_reinit: restarting llama-server...")
             self._start_cpp_server()
             self._call_omni_init(media_type=2, duplex_mode=True)
+            self._last_duplex_mode = True
+            self._last_media_type = 2
             logger.info("full_reinit: omni context re-initialized successfully")
         except Exception as e:
             logger.error(f"full_reinit failed: {e}", exc_info=True)
@@ -582,7 +584,7 @@ class CppBackendWorker:
         """重置 Half-Duplex 会话"""
         voice_audio = ref_audio_path or self.ref_audio_path or ""
         self._call_update_session_config(
-            media_type=1,
+            media_type=2,
             duplex_mode=False,
             voice_audio=voice_audio,
             lang=lang,
@@ -643,7 +645,7 @@ class CppBackendWorker:
                      ref_audio_path: Optional[str] = None,
                      reset_context: bool = True) -> str:
         """Chat prefill — reset_context=True 时重置会话上下文"""
-        media_type = 2 if omni_mode else 1
+        media_type = 2
         if reset_context:
             self._call_update_session_config(
                 media_type=media_type,
@@ -1284,6 +1286,7 @@ class CppBackendWorker:
                 except Exception:
                     pass
         os.makedirs(self._output_dir, exist_ok=True)
+        os.makedirs(os.path.join(self._output_dir, "round_000", "tts_wav"), exist_ok=True)
 
     # ================================================================
     # Internal: auto detect LLM model
