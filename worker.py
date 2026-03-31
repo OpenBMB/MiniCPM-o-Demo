@@ -484,6 +484,34 @@ class MiniCPMOWorker:
         half_duplex_view._model.reset_session(reset_token2wav_cache=False)
         logger.info(f"[GPU {self.gpu_id}] Half-Duplex model session reset (KV cache cleared)")
 
+    # ========== Half-Duplex Omni ==========
+
+    def half_duplex_omni_prefill(
+        self,
+        speech_segment: np.ndarray,
+        frame_list: Optional[list] = None,
+        max_slice_nums: int = 1,
+    ) -> None:
+        """半双工 Omni prefill：完整语音段 + 采样视频帧送入 C++"""
+        half_duplex_view = self.processor.set_half_duplex_mode()
+        model = getattr(half_duplex_view, "_model", None)
+        if model is not None and hasattr(model, "half_duplex_omni_prefill"):
+            model.half_duplex_omni_prefill(
+                audio_waveform=speech_segment,
+                frame_list=frame_list,
+                max_slice_nums=max_slice_nums,
+            )
+        else:
+            audio_b64 = base64.b64encode(speech_segment.tobytes()).decode("utf-8")
+            user_msg = Message(role=Role.USER, content=[AudioContent(data=audio_b64)])
+            request = StreamingRequest(
+                session_id="hdomni",
+                messages=[user_msg],
+                is_last_chunk=True,
+                use_tts_template=True,
+            )
+            half_duplex_view.prefill(request)
+
     # ========== Duplex ==========
 
     def duplex_prepare(
@@ -633,8 +661,60 @@ async def lifespan(app: FastAPI):
     # 模型加载是同步操作（~15s for pytorch, ~2-3min for cpp），在线程中执行避免阻塞
     await asyncio.to_thread(worker.load_model)
 
+    # C++ 后端看门狗：定期检测 llama-server 是否存活，崩溃时自动重启
+    cpp_watchdog_task = None
+    if backend == "cpp" and hasattr(worker, "is_cpp_healthy"):
+        async def _cpp_watchdog():
+            check_interval = 15
+            consecutive_failures = 0
+            max_failures = 3
+            while True:
+                await asyncio.sleep(check_interval)
+                try:
+                    if worker.state.status not in (WorkerStatus.IDLE, WorkerStatus.ERROR):
+                        consecutive_failures = 0
+                        continue
+
+                    healthy = await asyncio.to_thread(worker.is_cpp_healthy)
+                    if healthy:
+                        consecutive_failures = 0
+                        continue
+
+                    consecutive_failures += 1
+                    logger.warning(
+                        f"[CppWatchdog] C++ llama-server not healthy "
+                        f"({consecutive_failures}/{max_failures})"
+                    )
+
+                    if consecutive_failures >= max_failures:
+                        logger.error(
+                            "[CppWatchdog] C++ server crashed — auto-restarting..."
+                        )
+                        worker.state.status = WorkerStatus.LOADING
+                        try:
+                            await asyncio.to_thread(worker.full_reinit)
+                            worker.state.status = WorkerStatus.IDLE
+                            logger.info("[CppWatchdog] C++ server recovered successfully")
+                        except Exception as e:
+                            logger.error(f"[CppWatchdog] recovery failed: {e}", exc_info=True)
+                            worker.state.status = WorkerStatus.ERROR
+                        consecutive_failures = 0
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f"[CppWatchdog] unexpected error: {e}", exc_info=True)
+
+        cpp_watchdog_task = asyncio.create_task(_cpp_watchdog())
+        logger.info("[CppWatchdog] started (check every 15s, restart after 3 consecutive failures)")
+
     yield
 
+    if cpp_watchdog_task:
+        cpp_watchdog_task.cancel()
+        try:
+            await cpp_watchdog_task
+        except asyncio.CancelledError:
+            pass
     if backend == "cpp" and hasattr(worker, "shutdown"):
         worker.shutdown()
     logger.info("Worker shutting down")
@@ -1594,6 +1674,284 @@ async def half_duplex_ws(ws: WebSocket):
                 worker.state.status = WorkerStatus.ERROR
             worker.state.current_session_id = None
             logger.info(f"Half-Duplex session ended (conn={conn_id}, turns={turn_index})")
+
+
+# ========== Half-Duplex Omni WebSocket ==========
+
+@app.websocket("/ws/half_duplex_omni")
+async def half_duplex_omni_ws(ws: WebSocket):
+    """Half-Duplex Omni WebSocket — 音频+视频帧输入，VAD 触发后一次性 prefill + decode
+
+    协议（与 half_duplex_ws 相同，audio_chunk 增加可选 frame_base64_list）：
+    1. Client → {"type": "prepare", "system_content": [...], "config": {...}}
+    2. Client → {"type": "audio_chunk", "audio_base64": "...", "frame_base64_list": ["..."]}
+    3. Server → {"type": "vad_state", "speaking": true/false}
+    4. Server → {"type": "generating", ...}
+    5. Server → {"type": "chunk", ...}
+    6. Server → {"type": "turn_done", ...}
+    7. Client → {"type": "stop"}
+    """
+    if not _worker_ready():
+        await ws.close(code=1013, reason="Worker not ready")
+        return
+
+    await ws.accept()
+    conn_id = uuid.uuid4().hex[:8]
+    session_id = ws.query_params.get("session_id", f"hdomni_{conn_id}")
+    logger.info(f"Half-Duplex-Omni WS connected (conn={conn_id}, session={session_id})")
+
+    worker.state.status = WorkerStatus.BUSY_HALF_DUPLEX
+    worker.state.current_session_id = session_id
+
+    from vad import StreamingVAD, VadOptions
+
+    vad: Optional[StreamingVAD] = None
+    turn_index = 0
+    session_start = time.perf_counter()
+    timeout_s = 300
+    generate_audio = True
+    max_new_tokens = 256
+    length_penalty = 1.1
+    temperature = 0.7
+    is_generating = False
+    stop_event = threading.Event()
+
+    vad_armed_at: float = 0.0
+    INITIAL_GUARD_S = 0.5
+    _half_duplex_stop_events[conn_id] = stop_event
+
+    frame_buffer: list = []
+    last_frame_time: float = 0.0
+    frame_interval_s: float = 1.0
+    max_slice_nums: int = 1
+
+    try:
+        while True:
+            elapsed_s = time.perf_counter() - session_start
+            if elapsed_s > timeout_s:
+                await ws.send_json({"type": "timeout", "elapsed_s": round(elapsed_s, 1)})
+                logger.info(f"Half-Duplex-Omni session timeout after {elapsed_s:.0f}s")
+                break
+
+            remaining = timeout_s - elapsed_s
+            try:
+                raw = await asyncio.wait_for(ws.receive_text(), timeout=min(remaining, 5.0))
+            except asyncio.TimeoutError:
+                continue
+
+            msg = json.loads(raw)
+            msg_type = msg.get("type", "")
+
+            if msg_type == "prepare":
+                config = msg.get("config", {})
+
+                vad_cfg = config.get("vad", {})
+                vad_options = VadOptions(
+                    threshold=vad_cfg.get("threshold", 0.7),
+                    min_speech_duration_ms=vad_cfg.get("min_speech_duration_ms", 128),
+                    min_silence_duration_ms=vad_cfg.get("min_silence_duration_ms", 500),
+                    speech_pad_ms=vad_cfg.get("speech_pad_ms", 30),
+                )
+                vad = StreamingVAD(options=vad_options)
+
+                gen_cfg = config.get("generation", {})
+                max_new_tokens = gen_cfg.get("max_new_tokens", 256)
+                length_penalty = gen_cfg.get("length_penalty", 1.1)
+                temperature = gen_cfg.get("temperature", 0.7)
+
+                tts_cfg = config.get("tts", {})
+                generate_audio = tts_cfg.get("enabled", True)
+
+                session_cfg = config.get("session", {})
+                timeout_s = session_cfg.get("timeout_s", 300)
+                session_start = time.perf_counter()
+
+                vision_cfg = config.get("vision", {})
+                frame_interval_s = vision_cfg.get("frame_interval_s", 1.0)
+                max_slice_nums = vision_cfg.get("max_slice_nums", 1)
+
+                system_content_items = msg.get("system_content", [])
+                session_lang = _infer_lang_from_system_content(system_content_items)
+                session_ref_audio_path = _ref_audio_path_for_lang(session_lang)
+                logger.info(f"[HalfDuplexOmni] lang={session_lang} ref_audio_path={session_ref_audio_path}")
+                worker.reset_half_duplex_session(lang=session_lang, ref_audio_path=session_ref_audio_path)
+
+                content_items: List[ContentItem] = []
+                for item in system_content_items:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") == "text" and item.get("text"):
+                        content_items.append(TextContent(text=item["text"]))
+                    elif item.get("type") == "audio" and item.get("data"):
+                        content_items.append(AudioContent(data=item["data"]))
+
+                vad_armed_at = time.perf_counter()
+                frame_buffer = []
+                last_frame_time = 0.0
+
+                await ws.send_json({
+                    "type": "prepared",
+                    "session_id": session_id,
+                    "timeout_s": timeout_s,
+                    "frame_interval_s": frame_interval_s,
+                })
+                logger.info(
+                    f"[HalfDuplexOmni] prepared: timeout={timeout_s}s, "
+                    f"vad_threshold={vad_options.threshold}, frame_interval={frame_interval_s}s"
+                )
+
+            elif msg_type == "audio_chunk":
+                if vad is None:
+                    await ws.send_json({"type": "error", "error": "Not prepared yet"})
+                    continue
+                if is_generating:
+                    continue
+
+                if time.perf_counter() - vad_armed_at < INITIAL_GUARD_S:
+                    continue
+
+                audio_b64 = msg.get("audio_base64", "")
+                if not audio_b64:
+                    continue
+
+                audio_bytes = base64.b64decode(audio_b64)
+                audio_chunk = np.frombuffer(audio_bytes, dtype=np.float32)
+
+                # 视频帧采样
+                frame_b64_list = msg.get("frame_base64_list")
+                if frame_b64_list:
+                    now = time.perf_counter()
+                    if now - last_frame_time >= frame_interval_s:
+                        from PIL import Image
+                        import io
+                        for fb64 in frame_b64_list:
+                            try:
+                                frame_bytes = base64.b64decode(fb64)
+                                frame_buffer.append(Image.open(io.BytesIO(frame_bytes)))
+                            except Exception:
+                                pass
+                        last_frame_time = now
+
+                was_speaking = vad.is_speaking
+                speech_segment = vad.feed(audio_chunk)
+
+                if vad.is_speaking and not was_speaking:
+                    await ws.send_json({"type": "vad_state", "speaking": True})
+                elif not vad.is_speaking and was_speaking and speech_segment is None:
+                    await ws.send_json({"type": "vad_state", "speaking": False})
+
+                if speech_segment is not None:
+                    await ws.send_json({"type": "vad_state", "speaking": False})
+                    await ws.send_json({
+                        "type": "generating",
+                        "speech_duration_ms": round(len(speech_segment) / 16000 * 1000),
+                        "video_frames": len(frame_buffer),
+                    })
+                    is_generating = True
+
+                    try:
+                        captured_frames = frame_buffer[:] if frame_buffer else None
+                        frame_buffer.clear()
+
+                        await asyncio.to_thread(
+                            worker.half_duplex_omni_prefill,
+                            speech_segment,
+                            captured_frames,
+                            max_slice_nums,
+                        )
+
+                        chunk_queue: asyncio.Queue = asyncio.Queue()
+                        loop = asyncio.get_event_loop()
+                        stop_event.clear()
+                        gen_start = time.perf_counter()
+
+                        def _run_generate():
+                            try:
+                                for chunk in worker.half_duplex_generate(
+                                    session_id=session_id,
+                                    generate_audio=generate_audio,
+                                    max_new_tokens=max_new_tokens,
+                                    length_penalty=length_penalty,
+                                ):
+                                    loop.call_soon_threadsafe(chunk_queue.put_nowait, ("chunk", chunk))
+                                    if stop_event.is_set():
+                                        break
+                                loop.call_soon_threadsafe(chunk_queue.put_nowait, ("done", None))
+                            except Exception as e:
+                                loop.call_soon_threadsafe(chunk_queue.put_nowait, ("error", e))
+
+                        gen_task = loop.run_in_executor(None, _run_generate)
+
+                        full_text = ""
+                        while True:
+                            try:
+                                item_type, payload = await asyncio.wait_for(
+                                    chunk_queue.get(), timeout=2.0
+                                )
+                            except asyncio.TimeoutError:
+                                try:
+                                    await ws.send_json({"type": "heartbeat"})
+                                except Exception:
+                                    break
+                                continue
+                            if item_type == "chunk":
+                                await ws.send_json({"type": "chunk", **payload.model_dump()})
+                                if payload.text_delta:
+                                    full_text += payload.text_delta
+                            elif item_type == "done":
+                                break
+                            elif item_type == "error":
+                                raise payload
+
+                        await gen_task
+
+                        gen_elapsed_ms = (time.perf_counter() - gen_start) * 1000
+
+                        turn_index += 1
+                        await ws.send_json({
+                            "type": "turn_done",
+                            "turn_index": turn_index,
+                            "text": full_text,
+                        })
+
+                        vad.reset()
+                        logger.info(
+                            f"[HalfDuplexOmni] turn {turn_index} done "
+                            f"({gen_elapsed_ms:.0f}ms, {len(captured_frames or [])} frames)"
+                        )
+
+                    except Exception as e:
+                        logger.error(f"[HalfDuplexOmni] generate failed: {e}", exc_info=True)
+                        await ws.send_json({"type": "error", "error": str(e)})
+                    finally:
+                        is_generating = False
+
+            elif msg_type == "stop":
+                stop_event.set()
+                logger.info(f"Half-Duplex-Omni stop requested (conn={conn_id})")
+                break
+
+            else:
+                await ws.send_json({"type": "error", "error": f"Unknown type: {msg_type}"})
+
+    except WebSocketDisconnect:
+        logger.info(f"Half-Duplex-Omni WS disconnected (conn={conn_id})")
+    except Exception as e:
+        logger.error(f"Half-Duplex-Omni WS error (conn={conn_id}): {e}", exc_info=True)
+    finally:
+        stop_event.set()
+        _half_duplex_stop_events.pop(conn_id, None)
+        if worker.state.status == WorkerStatus.BUSY_HALF_DUPLEX:
+            worker.state.status = WorkerStatus.LOADING
+            try:
+                if hasattr(worker, 'full_reinit'):
+                    await asyncio.to_thread(worker.full_reinit)
+                worker.state.status = WorkerStatus.IDLE
+            except Exception as e:
+                logger.error(f"Half-Duplex-Omni reinit failed: {e}", exc_info=True)
+                worker.state.status = WorkerStatus.ERROR
+            worker.state.current_session_id = None
+            logger.info(f"Half-Duplex-Omni session ended (conn={conn_id}, turns={turn_index})")
 
 
 # ========== Duplex WebSocket ==========

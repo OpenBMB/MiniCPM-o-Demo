@@ -593,6 +593,35 @@ class CppBackendWorker:
         self._round_number = 0
         self._reset_output_dir()
 
+    def half_duplex_omni_prefill(
+        self,
+        audio_waveform: np.ndarray,
+        frame_list: Optional[list] = None,
+        max_slice_nums: int = 1,
+    ) -> Dict[str, Any]:
+        """半双工 Omni 预填充：完整音频 + 采样帧 → _call_prefill"""
+        cnt = self._duplex_chunk_counter
+        self._duplex_chunk_counter += 1
+
+        temp_audio = self._save_audio_to_temp(audio_waveform, f"hdomni_{cnt}")
+
+        temp_image = ""
+        n_vision_images = 0
+        if frame_list:
+            temp_image = self._save_pil_image_to_temp(frame_list[0], f"hdomni_{cnt}")
+            n_vision_images = 1
+
+        self._call_prefill(temp_audio, temp_image, cnt, max_slice_nums)
+
+        if frame_list and len(frame_list) > 1:
+            for i, frame in enumerate(frame_list[1:], 1):
+                extra_img = self._save_pil_image_to_temp(frame, f"hdomni_{cnt}_f{i}")
+                self._call_prefill("", extra_img, cnt + i, max_slice_nums)
+                n_vision_images += 1
+
+        self._cleanup_temp_files(temp_audio, temp_image)
+        return {"n_vision_images": n_vision_images}
+
     # ================================================================
     # Chat
     # ================================================================
@@ -1052,15 +1081,21 @@ class CppBackendWorker:
         """
         import soundfile as sf
 
-        round_dir = self._find_latest_round_dir()
-        if not round_dir:
-            direct_tts = os.path.join(self._output_dir, "tts_wav")
-            if os.path.isdir(direct_tts):
-                round_dir = self._output_dir
-        if not round_dir:
-            return None, sse_text
-
-        tts_wav_dir = os.path.join(round_dir, "tts_wav")
+        # 双工模式下 C++ 把 WAV 写到根级 tts_wav/，优先检查
+        direct_tts = os.path.join(self._output_dir, "tts_wav")
+        if os.path.isdir(direct_tts) and any(
+            f.startswith("wav_") and f.endswith(".wav") for f in os.listdir(direct_tts)
+        ):
+            tts_wav_dir = direct_tts
+        else:
+            round_dir = self._find_latest_round_dir()
+            if not round_dir:
+                if os.path.isdir(direct_tts):
+                    tts_wav_dir = direct_tts
+                else:
+                    return None, sse_text
+            else:
+                tts_wav_dir = os.path.join(round_dir, "tts_wav")
         if not os.path.exists(tts_wav_dir):
             return None, sse_text
 

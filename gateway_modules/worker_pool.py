@@ -221,7 +221,7 @@ class EtaTracker:
             return self.config.eta_streaming_s
         elif request_type == "duplex":
             return self.config.eta_duplex_s
-        elif request_type == "half_duplex_audio":
+        elif request_type in ("half_duplex_audio", "half_duplex_omni"):
             return self.config.eta_half_duplex_s
         elif request_type == "audio_duplex":
             return self.config.eta_audio_duplex_s

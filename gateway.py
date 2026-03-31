@@ -512,6 +512,143 @@ async def half_duplex_ws(ws: WebSocket, session_id: str):
             logger.info(f"Half-Duplex WS ended: session={session_id}, Worker released ({duration:.1f}s)")
 
 
+# ============ Half-Duplex Omni WebSocket（音频+视频，独占 Worker，FIFO 排队 + 代理） ============
+
+@app.websocket("/ws/half_duplex_omni/{session_id}")
+async def half_duplex_omni_ws(ws: WebSocket, session_id: str):
+    """Half-Duplex Omni WebSocket 代理
+
+    与 half_duplex_ws 相同的排队+代理模式，目标 Worker 端点为 /ws/half_duplex_omni。
+    """
+    if not app_registry.is_enabled("half_duplex_omni"):
+        await ws.close(code=1008, reason="Half-Duplex Omni is currently disabled")
+        return
+    if worker_pool is None:
+        await ws.close(code=1013, reason="Service not ready")
+        return
+
+    session_id = _sanitize_session_id(session_id)
+    await ws.accept()
+
+    try:
+        ticket, future = worker_pool.enqueue("half_duplex_omni", session_id=session_id)
+    except WorkerPool.QueueFullError:
+        await ws.send_json({
+            "type": "error",
+            "error": f"Queue full ({worker_pool.max_queue_size} requests)",
+        })
+        await ws.close(code=1013, reason="Queue full")
+        return
+
+    worker: Optional[WorkerConnection] = None
+    if future.done():
+        worker = future.result()
+    else:
+        try:
+            await ws.send_json({
+                "type": "queued",
+                "position": ticket.position,
+                "estimated_wait_s": ticket.estimated_wait_s,
+                "ticket_id": ticket.ticket_id,
+                "queue_length": worker_pool.queue_length,
+            })
+            while not future.done():
+                try:
+                    worker = await asyncio.wait_for(
+                        asyncio.shield(future), timeout=3.0
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    updated = worker_pool.get_ticket(ticket.ticket_id)
+                    if updated:
+                        await ws.send_json({
+                            "type": "queue_update",
+                            "position": updated.position,
+                            "estimated_wait_s": updated.estimated_wait_s,
+                            "queue_length": worker_pool.queue_length,
+                        })
+                except asyncio.CancelledError:
+                    worker_pool.cancel(ticket.ticket_id)
+                    return
+        except (WebSocketDisconnect, Exception) as e:
+            logger.info(f"Half-Duplex-Omni WS disconnected during queue: session={session_id} ({e})")
+            worker_pool.cancel(ticket.ticket_id)
+            return
+        if worker is None and future.done():
+            worker = future.result()
+
+    if worker is None:
+        await ws.send_json({"type": "error", "error": "No worker available"})
+        await ws.close(code=1013, reason="No worker available")
+        return
+
+    await ws.send_json({"type": "queue_done"})
+    logger.info(f"Half-Duplex-Omni WS connected: session={session_id} → {worker.worker_id}")
+
+    worker.mark_busy(GatewayWorkerStatus.BUSY_HALF_DUPLEX, "half_duplex_omni", session_id=session_id)
+    task_start = datetime.now()
+
+    worker_ws = None
+
+    try:
+        import websockets
+        ws_url = f"ws://{worker.host}:{worker.port}/ws/half_duplex_omni?session_id={session_id}"
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                worker_ws = await websockets.connect(ws_url, open_timeout=5)
+                break
+            except Exception as conn_err:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Half-Duplex-Omni WS connect to {worker.worker_id} failed (attempt {attempt + 1}): "
+                        f"{conn_err}, retrying in 1s..."
+                    )
+                    await asyncio.sleep(1.0)
+                else:
+                    raise
+
+        async def client_to_worker():
+            try:
+                async for raw in ws.iter_text():
+                    await worker_ws.send(raw)
+            except WebSocketDisconnect:
+                pass
+
+        async def worker_to_client():
+            try:
+                async for raw in worker_ws:
+                    await ws.send_text(raw)
+            except Exception:
+                pass
+
+        done, pending = await asyncio.wait(
+            [
+                asyncio.create_task(client_to_worker()),
+                asyncio.create_task(worker_to_client()),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+
+    except Exception as e:
+        logger.error(f"Half-Duplex-Omni WS error: {e}", exc_info=True)
+    finally:
+        if worker_ws:
+            try:
+                await worker_ws.close()
+            except Exception:
+                pass
+
+        if worker:
+            duration = (datetime.now() - task_start).total_seconds() if task_start else 0
+            worker_pool.release_worker(worker, request_type="half_duplex_omni", duration_s=duration)
+            logger.info(f"Half-Duplex-Omni WS ended: session={session_id}, Worker released ({duration:.1f}s)")
+
+
 # ============ 前端诊断日志写入 ============
 
 async def _write_diagnostic(path: str, msg: dict) -> None:
@@ -1329,6 +1466,17 @@ async def half_duplex():
     if os.path.exists(page_path):
         return FileResponse(page_path)
     return HTMLResponse("<h1>Half-Duplex Audio</h1><p>Page not found</p>")
+
+
+@app.get("/half_duplex_omni", response_class=HTMLResponse)
+async def half_duplex_omni():
+    """Half-Duplex Omni Demo 页面（音频+视频）"""
+    if not app_registry.is_enabled("half_duplex_omni"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "half-duplex-omni", "half_duplex_omni.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Half-Duplex Omni</h1><p>Page not found</p>")
 
 
 @app.get("/audio_duplex", response_class=HTMLResponse)

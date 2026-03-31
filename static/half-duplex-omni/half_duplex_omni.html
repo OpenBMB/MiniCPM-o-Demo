@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiniCPMO45 Half-Duplex Omni</title>
+    <link rel="stylesheet" href="/static/duplex/duplex-shared.css">
+    <link rel="stylesheet" href="/static/omni/omni.css">
+    <style>
+        /* row-top: video 占满，右侧不需要 panel-mode */
+        .col-left .row-top .panel-media { flex: 1; }
+        /* 隐藏 omni 的 panel-mode 占位（半双工 omni 不需要 Live/File 切换） */
+        .col-left .row-top .panel-mode { display: none; }
+    </style>
+</head>
+<body>
+
+<!-- ========== Header ========== -->
+<div class="header">
+    <div class="header-left">
+        <h1>MiniCPM-o 4.5</h1>
+        <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/half_duplex_omni" class="active">Half-Duplex Omni</a>
+        </div>
+    </div>
+    <div class="header-right">
+        <button class="header-reset-btn" id="btnResetSettings" data-tip="Clear all saved settings and restore defaults">Reset Settings</button>
+        <span class="status-badge" id="serviceStatus">Connecting...</span>
+    </div>
+</div>
+
+<!-- ========== Two-Column Layout ========== -->
+<div class="main">
+
+    <!-- ===== Left Column ===== -->
+    <div class="col-left">
+
+    <div class="row-top">
+    <!-- Video (复用 omni 的 video-container 结构) -->
+    <div class="panel-media">
+        <div class="video-container" id="videoContainer">
+            <video id="cameraPreview" autoplay muted playsinline></video>
+            <div class="video-placeholder" id="videoPlaceholder">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5">
+                    <path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+                </svg>
+                <span>Camera loading...</span>
+            </div>
+            <button class="cam-flip-btn" id="camFlipBtn" title="Flip camera">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/><path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/>
+                    <circle cx="12" cy="12" r="3"/><path d="m18 22-3-3 3-3"/><path d="m6 2 3 3-3 3"/>
+                </svg>
+            </button>
+            <button class="mirror-btn" id="mirrorBtn" title="Mirror flip">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="3" x2="12" y2="21" stroke-dasharray="2 2"/>
+                    <polygon points="5,6 5,18 1,12" fill="currentColor" stroke="none"/>
+                    <polygon points="19,6 19,18 23,12" fill="currentColor" stroke="none"/>
+                    <path d="M8 6h-1a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h1"/>
+                    <path d="M16 6h1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1"/>
+                </svg>
+            </button>
+            <div class="status-lamp" id="statusLamp">
+                <span class="dot"></span><span class="label">LIVE</span><span class="timer" id="lampTimer"></span>
+            </div>
+            <button class="fullscreen-btn" id="fullscreenBtn" title="Fullscreen">
+                <svg id="fullscreenIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+                    <path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+                </svg>
+            </button>
+            <div class="video-border-overlay" id="videoBorderOverlay"></div>
+        </div>
+    </div>
+    </div><!-- /row-top -->
+
+    <!-- Mic Waveform -->
+    <div class="omni-waveform-bar" id="omniWaveformBar">
+        <canvas id="waveformCanvas"></canvas>
+        <div class="omni-waveform-placeholder" id="waveformPlaceholder">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4;vertical-align:-2px;margin-right:4px;">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            </svg>
+            <span>Mic waveform</span>
+        </div>
+        <div class="waveform-overlay" id="waveformOverlay" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);color:#fff;font-size:12px;gap:6px;border-radius:8px;">
+            <div class="waveform-dot" style="width:8px;height:8px;border-radius:50%;background:#4ade80;animation:pulse-dot 1.5s ease-in-out infinite;"></div>
+            <span>Listening...</span>
+        </div>
+    </div>
+
+    <div class="row-bottom">
+    <!-- Config -->
+    <div class="panel-config">
+        <details class="config-group" open>
+            <summary>VAD</summary>
+            <div class="cg-body">
+                <div class="cg-row inline" data-tip="VAD sensitivity. Higher value means less likely to trigger on noise.">
+                    <span class="cg-label" style="flex:none;">Threshold</span>
+                    <input type="range" id="vadThreshold" min="0.1" max="0.95" step="0.05" value="0.8" style="flex:1;">
+                    <span class="cg-val" id="vadThresholdVal" style="font-size:11px;color:#888;width:28px;text-align:right;">0.8</span>
+                </div>
+                <div class="cg-row inline" data-tip="How many milliseconds of silence before the system considers you finished speaking.">
+                    <span class="cg-label" style="flex:none;">Min Silence</span>
+                    <input type="number" class="cg-input-sm" id="vadMinSilence" value="800" min="100" max="3000" step="50">
+                    <span style="font-size:10px;color:#888;">ms</span>
+                </div>
+                <input type="hidden" id="vadMinSpeech" value="128">
+                <input type="hidden" id="vadSpeechPad" value="30">
+            </div>
+        </details>
+        <details class="config-group" open>
+            <summary>Generation</summary>
+            <div class="cg-body">
+                <div class="cg-row inline" data-tip="Maximum tokens the model can generate per turn">
+                    <span class="cg-label" style="flex:none;">Max Tokens</span>
+                    <input type="number" class="cg-input-sm" id="genMaxTokens" value="256" min="32" max="2048" step="32">
+                    <span style="font-size:10px;color:#888;">tok</span>
+                </div>
+                <div class="cg-row inline" data-tip="Length penalty for generation. Larger value produces longer responses.">
+                    <span class="cg-label" style="flex:none;">Length Penalty</span>
+                    <input type="number" class="cg-input-sm" id="genLengthPenalty" value="1.1" min="0.5" max="2.0" step="0.05">
+                </div>
+                <div class="cg-row inline" data-tip="Sampling temperature, higher = more creative">
+                    <span class="cg-label" style="flex:none;">Temperature</span>
+                    <input type="number" class="cg-input-sm" id="genTemperature" value="0.7" min="0.1" max="2.0" step="0.1">
+                </div>
+            </div>
+        </details>
+        <details class="config-group" open>
+            <summary>Vision</summary>
+            <div class="cg-body">
+                <div class="cg-row inline" data-tip="How often to sample a video frame (seconds). Lower = more frames but slower.">
+                    <span class="cg-label" style="flex:none;">Frame Interval</span>
+                    <input type="number" class="cg-input-sm" id="visionFrameInterval" value="1.0" min="0.5" max="5.0" step="0.5">
+                    <span style="font-size:10px;color:#888;">sec</span>
+                </div>
+                <div class="cg-row inline" data-tip="Max image slices for higher-resolution processing (1=fast, 3=detailed)">
+                    <span class="cg-label" style="flex:none;">Max Slices</span>
+                    <input type="number" class="cg-input-sm" id="visionMaxSlices" value="1" min="1" max="9" step="1">
+                </div>
+            </div>
+        </details>
+        <details class="config-group">
+            <summary>Audio Devices</summary>
+            <div class="cg-body">
+                <div class="cg-row" data-tip="Microphone input device">
+                    <span class="cg-label">Mic</span>
+                    <select class="cg-select" id="micDevice"></select>
+                </div>
+                <div class="cg-row" data-tip="Speaker / headphone output device">
+                    <span class="cg-label">Speaker</span>
+                    <select class="cg-select" id="speakerDevice"></select>
+                </div>
+                <div class="cg-row" data-tip="Camera input device">
+                    <span class="cg-label">Camera</span>
+                    <select class="cg-select" id="cameraDevice"></select>
+                </div>
+                <button class="device-refresh-btn" id="btnRefreshDevices" data-tip="Refresh device list">Refresh</button>
+            </div>
+        </details>
+        <details class="config-group">
+            <summary>Session</summary>
+            <div class="cg-body">
+                <div class="cg-row inline" data-tip="Session timeout in seconds (worker exclusive lock)">
+                    <span class="cg-label" style="flex:none;">Timeout</span>
+                    <input type="number" class="cg-input-sm" id="sessionTimeout" value="300" min="30" max="600" step="30">
+                    <span style="font-size:10px;color:#888;">sec</span>
+                </div>
+                <div class="cg-row inline" data-tip="Enable voice audio response (TTS)">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;">
+                        <input type="checkbox" id="ttsEnabled" checked style="accent-color:#2d2d2d;">
+                        Voice Response
+                    </label>
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- Status -->
+    <div class="panel-status" id="panelStatus">
+        <div class="status-grid">
+            <div class="status-row"><span>State</span><span class="status-value" id="stateValue">Idle</span></div>
+            <div class="status-row"><span>Turn</span><span class="status-value" id="turnValue">0</span></div>
+            <div class="status-row"><span>Remaining</span><span class="status-value" id="remainingValue">—</span></div>
+            <div class="status-row"><span>Queue</span><span class="status-value" id="queueValue">—</span></div>
+        </div>
+    </div>
+    </div><!-- /row-bottom -->
+
+    </div><!-- /col-left -->
+
+    <!-- ===== Right Column ===== -->
+    <div class="col-right">
+
+    <!-- Preset + System Prompt -->
+    <div class="panel-sysconfig">
+        <div style="padding:6px 0 8px 0;">
+            <div id="presetSelectorHdx"></div>
+        </div>
+        <details class="config-group" id="hdxSysPromptDetails">
+            <summary style="display:none;">System Prompt Details</summary>
+            <div class="cg-body">
+                <div class="cg-row">
+                    <div id="sysContentEditorHdx"></div>
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- Dialog -->
+    <div class="panel-dialog">
+        <div class="conv-header">
+            <span>Conversation</span>
+            <span id="chatSessionInfo" style="font-size:11px;color:#999;font-weight:400;">—</span>
+        </div>
+        <div class="conv-log" id="chatLog">
+            <div class="conv-empty" id="chatEmpty">Start a session to begin half-duplex omni conversation (audio + video)</div>
+        </div>
+    </div>
+
+    </div><!-- /col-right -->
+
+    <!-- Controls (spans full width) -->
+    <div class="panel-controls">
+        <button class="ctrl-btn danger" id="btnStop" disabled data-tip="Stop the session and disconnect">Stop</button>
+        <button class="ctrl-btn primary" id="btnStart" data-tip="Start a new half-duplex omni session (audio + camera)">Start</button>
+        <span class="ctrl-divider"></span>
+        <label class="rec-label" data-tip="Record session as stereo WAV (L=user mic, R=AI response)"><input type="checkbox" id="recCheckbox" checked> Rec</label>
+        <button class="ctrl-btn" id="btnDownloadRec" style="display:none;" disabled data-tip="Download session recording">Download Rec</button>
+    </div>
+
+</div>
+
+<!-- Save & Share -->
+<div id="save-share-container" style="position:fixed;bottom:16px;right:16px;z-index:100;max-width:300px;"></div>
+
+<script src="/static/ref-audio-player.js"></script>
+<script src="/static/system-content-editor.js"></script>
+<script src="/static/shared/preset-selector.js"></script>
+<script src="/static/shared/save-share.js"></script>
+<script src="/static/shared/app-nav.js"></script>
+<script type="module" src="/static/half-duplex-omni/half-duplex-omni-app.js"></script>
+<script type="module">
+import { initNav } from '/static/shared/app-nav.js';
+initNav('half_duplex_omni');
+</script>
+<script type="module">
+import { initFaqSidebar } from '/static/shared/faq-sidebar.js';
+initFaqSidebar('half-duplex');
+</script>
+</body>
+</html>
