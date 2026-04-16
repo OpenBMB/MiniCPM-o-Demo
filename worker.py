@@ -465,20 +465,31 @@ class MiniCPMOWorker:
             length_penalty=length_penalty,
         )
 
-    def reset_half_duplex_session(self, lang: Optional[str] = None, ref_audio_path: Optional[str] = None) -> None:
+    def reset_half_duplex_session(
+        self,
+        lang: Optional[str] = None,
+        ref_audio_path: Optional[str] = None,
+        system_content: Any = None,
+    ) -> None:
         """重置 Half-Duplex 模型 session（清除 KV cache）"""
         half_duplex_view = self.processor.set_half_duplex_mode()
         model = getattr(half_duplex_view, "_model", None)
         if model is not None and hasattr(model, "reset_half_duplex_session"):
+            # 尝试新签名（带 system_content），fallback 到旧签名
             try:
-                model.reset_half_duplex_session(lang=lang, ref_audio_path=ref_audio_path)
-                logger.info(f"[GPU {self.gpu_id}] Half-Duplex session reset via backend (lang={lang or 'zh'})")
+                model.reset_half_duplex_session(
+                    lang=lang, ref_audio_path=ref_audio_path, system_content=system_content
+                )
+                logger.info(f"[GPU {self.gpu_id}] Half-Duplex session reset via backend (lang={lang or 'zh'}, custom_prompt={bool(system_content)})")
                 return
             except TypeError:
                 try:
-                    model.reset_half_duplex_session(lang=lang)
+                    model.reset_half_duplex_session(lang=lang, ref_audio_path=ref_audio_path)
                 except TypeError:
-                    model.reset_half_duplex_session()
+                    try:
+                        model.reset_half_duplex_session(lang=lang)
+                    except TypeError:
+                        model.reset_half_duplex_session()
                 logger.info(f"[GPU {self.gpu_id}] Half-Duplex session reset via backend")
                 return
         half_duplex_view._model.reset_session(reset_token2wav_cache=False)
@@ -521,11 +532,13 @@ class MiniCPMOWorker:
         prompt_wav_path: Optional[str] = None,
         media_type: int = 2,
         lang: Optional[str] = None,
+        system_content: Any = None,
     ) -> str:
         """Duplex 准备
 
         Args:
-            system_prompt_text: 系统提示文本
+            system_prompt_text: 系统提示文本（向后兼容）
+            system_content: 前端传入的 system_content 列表（优先使用），用于定制 C++ prompt
             ref_audio_path: LLM 参考音频路径（嵌入 system prompt）
             prompt_wav_path: TTS 参考音频路径（初始化 vocoder）。
                 若不提供则 fallback 到 ref_audio_path。
@@ -536,14 +549,19 @@ class MiniCPMOWorker:
             "ref_audio_path": ref_audio_path or self.ref_audio_path,
             "prompt_wav_path": prompt_wav_path,
         }
-        # C++ backend supports media_type (1=audio, 2=audio+vision); pytorch backend may not.
+        # C++ backend supports media_type/lang/system_content, pytorch backend 不一定支持，逐级 fallback
         try:
-            return duplex_view.prepare(media_type=media_type, lang=lang, **kwargs)
+            return duplex_view.prepare(
+                media_type=media_type, lang=lang, system_content=system_content, **kwargs
+            )
         except TypeError:
             try:
-                return duplex_view.prepare(media_type=media_type, **kwargs)
+                return duplex_view.prepare(media_type=media_type, lang=lang, **kwargs)
             except TypeError:
-                return duplex_view.prepare(**kwargs)
+                try:
+                    return duplex_view.prepare(media_type=media_type, **kwargs)
+                except TypeError:
+                    return duplex_view.prepare(**kwargs)
 
     def duplex_prefill(
         self,
@@ -1443,7 +1461,11 @@ async def half_duplex_ws(ws: WebSocket):
                 session_lang = _infer_lang_from_system_content(system_content_items)
                 session_ref_audio_path = _ref_audio_path_for_lang(session_lang)
                 logger.info(f"[HalfDuplex] lang={session_lang} ref_audio_path={session_ref_audio_path}")
-                worker.reset_half_duplex_session(lang=session_lang, ref_audio_path=session_ref_audio_path)
+                worker.reset_half_duplex_session(
+                    lang=session_lang,
+                    ref_audio_path=session_ref_audio_path,
+                    system_content=system_content_items,
+                )
                 content_items: List[ContentItem] = []
                 for item in system_content_items:
                     if not isinstance(item, dict):
@@ -1774,7 +1796,11 @@ async def half_duplex_omni_ws(ws: WebSocket):
                 session_lang = _infer_lang_from_system_content(system_content_items)
                 session_ref_audio_path = _ref_audio_path_for_lang(session_lang)
                 logger.info(f"[HalfDuplexOmni] lang={session_lang} ref_audio_path={session_ref_audio_path}")
-                worker.reset_half_duplex_session(lang=session_lang, ref_audio_path=session_ref_audio_path)
+                worker.reset_half_duplex_session(
+                    lang=session_lang,
+                    ref_audio_path=session_ref_audio_path,
+                    system_content=system_content_items,
+                )
 
                 content_items: List[ContentItem] = []
                 for item in system_content_items:
@@ -2294,6 +2320,8 @@ async def duplex_ws(ws: WebSocket):
                     duplex_type = "omni_duplex" if client_session_id.startswith("omni") else "audio_duplex"
                     duplex_media_type = 2
 
+                    # 双工目前前端只传 system_prompt 字符串，直接作为 system_content 下发
+                    duplex_system_content = msg.get("system_content") or system_prompt
                     prompt = await asyncio.to_thread(
                         worker.duplex_prepare,
                         system_prompt_text=system_prompt,
@@ -2301,6 +2329,7 @@ async def duplex_ws(ws: WebSocket):
                         prompt_wav_path=actual_tts_audio_path,
                         media_type=duplex_media_type,
                         lang=_infer_lang_from_texts([system_prompt]),
+                        system_content=duplex_system_content,
                     )
                     logger.info(f"Duplex prepared ({duplex_type}, media_type={duplex_media_type}, deferred_finalize={use_deferred_finalize})")
                     from config import get_config

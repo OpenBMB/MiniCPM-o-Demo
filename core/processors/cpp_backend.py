@@ -73,6 +73,73 @@ def _get_system_prompts(duplex: bool, lang: str = "zh") -> Dict[str, str]:
     return _SYSTEM_PROMPTS.get((duplex, lang), _SYSTEM_PROMPTS[(duplex, "zh")])
 
 
+def _build_prompts_from_content(
+    system_content: Any,
+    duplex: bool,
+    lang: str = "zh",
+) -> Dict[str, str]:
+    """根据前端传入的 system_content 动态构造 C++ 需要的两段式 prompt。
+
+    输入支持：
+      - list: [{type:"text", text:...}, {type:"audio", data:...}, {type:"text", text:...}]
+      - str: 纯文本 system prompt
+      - None / 空: 返回硬编码默认模板
+
+    输出结构：
+      - voice_clone_prompt: "<|im_start|>system\\n{before}\\n<|audio_start|>"
+      - assistant_prompt:  "<|audio_end|>{after}<|im_end|>\\n" (duplex)
+                          "<|audio_end|>{after}<|im_end|>\\n<|im_start|>user\\n" (非 duplex)
+
+    其中 before = audio 前所有 text 段拼接，after = audio 后所有 text 段拼接。
+    若没有 audio 段，全部 text 归入 before。
+    """
+    # 字符串直接走单 text 分支
+    if isinstance(system_content, str):
+        system_content = [{"type": "text", "text": system_content}] if system_content.strip() else []
+
+    if not system_content or not isinstance(system_content, list):
+        return _get_system_prompts(duplex, lang)
+
+    def _get(obj, key):
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
+    before_parts: List[str] = []
+    after_parts: List[str] = []
+    seen_audio = False
+    for item in system_content:
+        t = _get(item, "type")
+        # pydantic 枚举可能是 ContentType.TEXT 形式
+        t_str = getattr(t, "value", t)
+        if t_str == "audio":
+            seen_audio = True
+        elif t_str == "text":
+            text = (_get(item, "text") or "").strip()
+            if not text:
+                continue
+            (after_parts if seen_audio else before_parts).append(text)
+
+    before = "\n".join(before_parts).strip()
+    after = "\n".join(after_parts).strip()
+
+    if not before and not after:
+        return _get_system_prompts(duplex, lang)
+
+    # 没有任何 text → 回退默认
+    voice_clone_prompt = f"<|im_start|>system\n{before}\n<|audio_start|>"
+    if duplex:
+        assistant_prompt = f"<|audio_end|>{after}<|im_end|>\n" if after else "<|audio_end|><|im_end|>\n"
+    else:
+        tail = f"{after}<|im_end|>\n<|im_start|>user\n" if after else "<|im_end|>\n<|im_start|>user\n"
+        assistant_prompt = f"<|audio_end|>{tail}"
+
+    return {
+        "voice_clone_prompt": voice_clone_prompt,
+        "assistant_prompt": assistant_prompt,
+    }
+
+
 class CppBackendWorker:
     """C++ llama-server 推理后端
 
@@ -155,6 +222,7 @@ class CppBackendWorker:
         prompt_wav_path: Optional[str] = None,
         media_type: int = 2,
         lang: Optional[str] = None,
+        system_content: Any = None,
     ) -> str:
         """Duplex 准备 → update_session_config"""
         self._reset_output_dir()
@@ -162,11 +230,14 @@ class CppBackendWorker:
         self._round_number = 0
         self._sent_wav_files = set()
         voice_audio = ref_audio_path or self.ref_audio_path or ""
+        # 前端未提供 system_content 时，回退到 system_prompt_text
+        effective_system_content = system_content if system_content else system_prompt_text
         self._call_update_session_config(
             media_type=media_type,
             duplex_mode=True,
             voice_audio=voice_audio,
             lang=lang,
+            system_content=effective_system_content,
         )
         os.makedirs(os.path.join(self._output_dir, "tts_wav"), exist_ok=True)
         os.makedirs(os.path.join(self._output_dir, "tts_txt"), exist_ok=True)
@@ -580,7 +651,12 @@ class CppBackendWorker:
         else:
             yield StreamingChunk(chunk_index=chunk_idx, is_final=True)
 
-    def reset_half_duplex_session(self, lang: Optional[str] = None, ref_audio_path: Optional[str] = None) -> None:
+    def reset_half_duplex_session(
+        self,
+        lang: Optional[str] = None,
+        ref_audio_path: Optional[str] = None,
+        system_content: Any = None,
+    ) -> None:
         """重置 Half-Duplex 会话"""
         voice_audio = ref_audio_path or self.ref_audio_path or ""
         self._call_update_session_config(
@@ -588,6 +664,7 @@ class CppBackendWorker:
             duplex_mode=False,
             voice_audio=voice_audio,
             lang=lang,
+            system_content=system_content,
         )
         self._duplex_chunk_counter = 0
         self._round_number = 0
@@ -672,15 +749,31 @@ class CppBackendWorker:
     def chat_prefill(self, session_id, msgs, omni_mode=False, max_slice_nums=None,
                      use_tts_template=False, enable_thinking=False, lang: Optional[str] = None,
                      ref_audio_path: Optional[str] = None,
-                     reset_context: bool = True) -> str:
-        """Chat prefill — reset_context=True 时重置会话上下文"""
+                     reset_context: bool = True,
+                     system_content: Any = None) -> str:
+        """Chat prefill — reset_context=True 时重置会话上下文
+
+        system_content: 如未提供，自动从 msgs 中的 system role 提取 content
+        """
         media_type = 2
+        # 自动从 msgs 抽取 system content 作为 prompt 构造依据
+        effective_system_content = system_content
+        if effective_system_content is None and msgs:
+            for m in msgs:
+                role = getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else None)
+                role_str = role.value if hasattr(role, "value") else role
+                if role_str == "system":
+                    content = getattr(m, "content", None) or (m.get("content") if isinstance(m, dict) else None)
+                    if content is not None:
+                        effective_system_content = content
+                    break
         if reset_context:
             self._call_update_session_config(
                 media_type=media_type,
                 duplex_mode=False,
                 voice_audio=ref_audio_path or self.ref_audio_path or "",
                 lang=lang,
+                system_content=effective_system_content,
             )
         logger.info(
             f"[ChatPrefill] session={session_id} omni_mode={omni_mode} media_type={media_type} "
@@ -825,6 +918,7 @@ class CppBackendWorker:
         media_type: int = 2,
         duplex_mode: bool = True,
         lang: Optional[str] = None,
+        system_content: Any = None,
     ) -> None:
         tts_bin_dir = os.path.join(self.model_dir, "tts")
         os.makedirs(self._output_dir, exist_ok=True)
@@ -844,16 +938,24 @@ class CppBackendWorker:
             req_body["voice_audio"] = self.ref_audio_path
 
         effective_lang = lang or self._last_lang
-        prompts = _get_system_prompts(duplex_mode, effective_lang)
+        prompts = _build_prompts_from_content(system_content, duplex_mode, effective_lang)
         req_body["voice_clone_prompt"] = prompts["voice_clone_prompt"]
         req_body["assistant_prompt"] = prompts["assistant_prompt"]
         if lang:
             self._last_lang = lang
 
+        _is_custom = bool(system_content) and prompts != _get_system_prompts(duplex_mode, effective_lang)
         logger.info(
             f"Calling omni_init: media_type={media_type}, duplex={duplex_mode}, "
-            f"lang={effective_lang}"
+            f"lang={effective_lang}, custom_prompt={_is_custom}"
         )
+        if _is_custom:
+            logger.info(
+                f"  voice_clone_prompt={prompts['voice_clone_prompt'][:100]!r}..."
+            )
+            logger.info(
+                f"  assistant_prompt={prompts['assistant_prompt'][:100]!r}..."
+            )
         resp = self._http_client.post(
             f"{self._cpp_server_url}/v1/stream/omni_init",
             json=req_body,
@@ -869,6 +971,7 @@ class CppBackendWorker:
         duplex_mode: bool = True,
         voice_audio: str = "",
         lang: Optional[str] = None,
+        system_content: Any = None,
     ) -> None:
         duplex_mode_changed = (
             self._last_duplex_mode is not None and
@@ -882,7 +985,12 @@ class CppBackendWorker:
                 f"duplex mode changed ({self._last_duplex_mode} -> {duplex_mode}), "
                 "calling omni_init for clean restart"
             )
-            self._call_omni_init(media_type=media_type, duplex_mode=duplex_mode, lang=lang)
+            self._call_omni_init(
+                media_type=media_type,
+                duplex_mode=duplex_mode,
+                lang=lang,
+                system_content=system_content,
+            )
             self._last_duplex_mode = duplex_mode
             self._last_media_type = media_type
 
@@ -901,7 +1009,13 @@ class CppBackendWorker:
             pass
 
         effective_lang = lang or self._last_lang
-        prompts = _get_system_prompts(duplex_mode, effective_lang)
+        prompts = _build_prompts_from_content(system_content, duplex_mode, effective_lang)
+
+        _is_custom = bool(system_content) and prompts != _get_system_prompts(duplex_mode, effective_lang)
+        if _is_custom:
+            logger.info(
+                f"update_session_config: custom voice_clone_prompt={prompts['voice_clone_prompt'][:100]!r}..."
+            )
 
         req_body: Dict[str, Any] = {
             "media_type": media_type,
