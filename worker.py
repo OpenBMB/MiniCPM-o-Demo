@@ -972,6 +972,49 @@ def _ref_audio_path_for_lang(lang: Optional[str]) -> str:
     return _LANG_REF_AUDIO_PATHS["zh"]
 
 
+def _extract_ref_audio_from_content(
+    system_content_items: List[dict],
+    fallback_path: str,
+    prefix: str = "ref_audio",
+) -> str:
+    """从 system_content 中提取 audio 项，解码写临时文件并返回路径。
+
+    前端 system_content 格式：[{type:"text",...}, {type:"audio",data:"<base64 float32>"}, ...]
+    若找到 audio 项，解码 base64 float32 PCM (16kHz) 写临时 WAV 并返回路径；
+    若无 audio 项或解码失败，返回 fallback_path（按语言选的本地默认）。
+    """
+    if not system_content_items:
+        return fallback_path
+    for item in system_content_items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "audio":
+            continue
+        data_b64 = item.get("data")
+        if not data_b64:
+            continue
+        try:
+            import tempfile
+            import soundfile as sf
+            audio_bytes = base64.b64decode(data_b64)
+            audio_ndarray = np.frombuffer(audio_bytes, dtype=np.float32)
+            if len(audio_ndarray) == 0:
+                continue
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".wav", delete=False, prefix=f"{prefix}_"
+            )
+            sf.write(tmp.name, audio_ndarray, 16000)
+            logger.info(
+                f"[RefAudio] using custom from system_content: "
+                f"{len(audio_ndarray)} samples → {tmp.name}"
+            )
+            return tmp.name
+        except Exception as e:
+            logger.warning(f"[RefAudio] failed to extract from system_content: {e}")
+            continue
+    return fallback_path
+
+
 @app.websocket("/ws/chat")
 async def chat_ws(ws: WebSocket):
     """Chat WebSocket — 统一流式/非流式
@@ -1029,7 +1072,18 @@ async def chat_ws(ws: WebSocket):
             # 1. 解析消息和参数
             raw_messages = msg.get("messages", [])
             session_lang = _infer_lang_from_raw_messages(raw_messages)
-            session_ref_audio_path = _ref_audio_path_for_lang(session_lang)
+            default_ref_audio = _ref_audio_path_for_lang(session_lang)
+            # 从 system 消息的 content 里提取自定义 ref audio
+            _sys_content_items = []
+            for m in raw_messages:
+                if isinstance(m, dict) and m.get("role") == "system":
+                    c = m.get("content")
+                    if isinstance(c, list):
+                        _sys_content_items = c
+                    break
+            session_ref_audio_path = _extract_ref_audio_from_content(
+                _sys_content_items, default_ref_audio, prefix="chat_ref"
+            )
             has_assistant_msg = any(
                 isinstance(m, dict) and m.get("role") == "assistant"
                 for m in raw_messages
@@ -1459,7 +1513,10 @@ async def half_duplex_ws(ws: WebSocket):
                 ref_audio_ndarray: Optional[np.ndarray] = None
                 system_content_items = msg.get("system_content", [])
                 session_lang = _infer_lang_from_system_content(system_content_items)
-                session_ref_audio_path = _ref_audio_path_for_lang(session_lang)
+                default_ref_audio = _ref_audio_path_for_lang(session_lang)
+                session_ref_audio_path = _extract_ref_audio_from_content(
+                    system_content_items, default_ref_audio, prefix="hdx_ref"
+                )
                 logger.info(f"[HalfDuplex] lang={session_lang} ref_audio_path={session_ref_audio_path}")
                 worker.reset_half_duplex_session(
                     lang=session_lang,
@@ -1794,7 +1851,10 @@ async def half_duplex_omni_ws(ws: WebSocket):
 
                 system_content_items = msg.get("system_content", [])
                 session_lang = _infer_lang_from_system_content(system_content_items)
-                session_ref_audio_path = _ref_audio_path_for_lang(session_lang)
+                default_ref_audio = _ref_audio_path_for_lang(session_lang)
+                session_ref_audio_path = _extract_ref_audio_from_content(
+                    system_content_items, default_ref_audio, prefix="hdomni_ref"
+                )
                 logger.info(f"[HalfDuplexOmni] lang={session_lang} ref_audio_path={session_ref_audio_path}")
                 worker.reset_half_duplex_session(
                     lang=session_lang,
@@ -2300,12 +2360,14 @@ async def duplex_ws(ws: WebSocket):
                     _LANG_REF_AUDIO_PATHS.get(_duplex_inferred_lang) or _LANG_REF_AUDIO_PATHS["zh"]
                 )
                 logger.info(
-                    "[Duplex RefAudio/lang] 依据文本=%r inferred_lang=%s ref_wav=%s",
+                    "[Duplex RefAudio/lang] 依据文本=%r inferred_lang=%s ref_wav_default=%s",
                     _duplex_lang_basis,
                     _duplex_inferred_lang,
                     _duplex_ref_by_lang,
                 )
-                if os.path.isfile(_duplex_ref_by_lang):
+                # 前端未提供 ref audio 时才 fallback 到语言默认
+                _client_ref_provided = bool(ref_audio_b64 or ref_audio_path)
+                if not _client_ref_provided and os.path.isfile(_duplex_ref_by_lang):
                     actual_ref_audio_path = _duplex_ref_by_lang
                     actual_tts_audio_path = _duplex_ref_by_lang
 
