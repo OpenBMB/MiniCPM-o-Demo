@@ -460,25 +460,31 @@ export class DuplexSession {
                 this._lastTTFS = 0;
             }
 
-            // Speak text accumulation
-            if (result.is_listen) {
-                if (this._speakHandle) { this._speakHandle = null; this.currentSpeakText = ''; }
-                this.onListenResult(result);
-            } else {
-                if (result.text) {
-                    this.currentSpeakText += result.text;
-                    if (!this._speakHandle) {
-                        this._speakHandle = this.onSpeakStart(this.currentSpeakText);
-                    } else {
-                        this.onSpeakUpdate(this._speakHandle, this.currentSpeakText);
-                    }
+            // Text accumulation — 与 is_listen 解耦：
+            // C++ 双工可能在同一个 decode 里先推 SPEAK 文本再推 __IS_LISTEN__
+            // 以前看到 is_listen=true 就丢弃 currentSpeakText，导致气泡不连续
+            if (result.text) {
+                this.currentSpeakText += result.text;
+                if (!this._speakHandle) {
+                    this._speakHandle = this.onSpeakStart(this.currentSpeakText);
+                } else {
+                    this.onSpeakUpdate(this._speakHandle, this.currentSpeakText);
                 }
-                if (result.end_of_turn) {
+            }
+
+            if (result.is_listen) {
+                // 切到 listen：先 finalize 当前 speak bubble（如果有），再通知 listen
+                if (this._speakHandle) {
                     this.onSpeakEnd();
                     this._speakHandle = null;
                     this.currentSpeakText = '';
-                    this.onSystemLog('— end of turn —');
                 }
+                this.onListenResult(result);
+            } else if (result.end_of_turn) {
+                this.onSpeakEnd();
+                this._speakHandle = null;
+                this.currentSpeakText = '';
+                this.onSystemLog('— end of turn —');
             }
 
             // Page-specific extensions
