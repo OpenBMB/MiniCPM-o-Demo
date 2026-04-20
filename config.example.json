@@ -39,7 +39,7 @@
         "model_dir": "/cache/caitianchi/model/MiniCPM-o-4_5-gguf",
         "llm_model": "MiniCPM-o-4_5-Q8_0.gguf",
         "cpp_server_port": null,
-        "ctx_size": 8192,
+        "ctx_size": 32768,
         "n_gpu_layers": 99
     }
 }

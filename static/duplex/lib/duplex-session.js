@@ -407,14 +407,18 @@ export class DuplexSession {
             }
         }
 
-        // Audio player management
+        // Audio player management — 与 end_of_turn 解耦：
+        // C++ 双工每个 SPEAK chunk 都带 end_of_turn=true（它其实是 "decode 结束" 信号），
+        // 若每次都 endTurn()，下一个 chunk 到达会触发 beginTurn()→_stopAllSources()
+        // 强行打断上一段还在排队播放的音频，导致 chunk 之间尾音被截断（尤其是
+        // LISTEN→SPEAK flush 出的 320ms 尾音 wav 紧跟 1000ms 主体时最明显）。
+        // 真正的 turn 结束信号只有 is_listen=true（__IS_LISTEN__）。
         if (!result.is_listen) {
             if (result.audio_data) {
                 if (!this.audioPlayer.turnActive) this.audioPlayer.beginTurn();
                 this.audioPlayer.playChunk(result.audio_data, recvTime);
             }
-            if (result.end_of_turn && this.audioPlayer.turnActive) this.audioPlayer.endTurn();
-        } else if (result.end_of_turn) {
+        } else {
             if (this.audioPlayer.turnActive) this.audioPlayer.endTurn();
         }
 

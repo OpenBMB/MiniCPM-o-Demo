@@ -328,6 +328,10 @@ class DuplexSessionRecorder(SessionRecorder):
         self._chunks: List[Dict[str, Any]] = []
         self._turn_index: int = 0
         self._speak_chunk_in_turn: int = 0
+        # AI 音频独立时间轴：duplex 下 C++ 产出的 wav 通过 _wav_poll_loop 异步到达，
+        # 与用户 audio_chunk 并不是 1:1，所以单独按接收时间戳记录，stitch 时再对齐右声道。
+        self._ai_audio_timeline: List[Dict[str, Any]] = []
+        self._ai_audio_seq: int = 0
 
     def record_chunk(
         self,
@@ -396,6 +400,32 @@ class DuplexSessionRecorder(SessionRecorder):
             self._turn_index += 1
             self._speak_chunk_in_turn = 0
 
+    def record_ai_audio_chunk(
+        self,
+        receive_ts_ms: float,
+        pcm_float32: np.ndarray,
+    ) -> Optional[str]:
+        """记录一段 AI 产出的音频（来自 C++ _wav_poll_loop 或其他异步来源）
+
+        以接收时间戳为锚点写入独立 timeline，供 _stitch_merged_replay 按时间对齐到右声道。
+        """
+        if pcm_float32 is None or len(pcm_float32) == 0:
+            return None
+        seq = self._ai_audio_seq
+        self._ai_audio_seq += 1
+        rel = f"ai_audio/turn_{self._turn_index}_stream_{seq:03d}.wav"
+        path = os.path.join(self.session_dir, rel)
+        self._pending_io.append(_io_pool.submit(_write_wav, path, pcm_float32, 24000))
+        self._ai_audio_timeline.append({
+            "seq": seq,
+            "turn_index": self._turn_index,
+            "receive_ts_ms": round(float(receive_ts_ms), 1),
+            "rel": rel,
+            "n_samples": int(len(pcm_float32)),
+            "duration_ms": round(len(pcm_float32) / 24000 * 1000, 1),
+        })
+        return rel
+
     @property
     def turn_index(self) -> int:
         return self._turn_index
@@ -411,7 +441,7 @@ class DuplexSessionRecorder(SessionRecorder):
         return idx
 
     def _build_recording_json(self) -> Dict[str, Any]:
-        return {
+        recording: Dict[str, Any] = {
             "session_id": self.session_id,
             "mode": "duplex",
             "worker_id": self.worker_id,
@@ -419,6 +449,9 @@ class DuplexSessionRecorder(SessionRecorder):
             "config": self.config_snapshot,
             "chunks": self._chunks,
         }
+        if self._ai_audio_timeline:
+            recording["ai_audio_timeline"] = self._ai_audio_timeline
+        return recording
 
     def _finalize_hook(self, recording: Dict[str, Any]) -> None:
         merged_rel = self._stitch_merged_replay()
@@ -431,9 +464,10 @@ class DuplexSessionRecorder(SessionRecorder):
     def _stitch_merged_replay(self) -> Optional[str]:
         """拼接所有 chunk 音频为立体声 WAV（left=用户 16kHz, right=AI 24kHz→16kHz）
 
-        使用模型逻辑时间：back-to-back 无间隙拼接。每个 chunk 时长由其实际
-        音频内容决定（通常 1.0s），不使用 receive_ts_ms（那是前端性能时间）。
-        同时计算 _chunk_logical_sec 供视频和字幕对齐。
+        左声道：用户音频按 chunk back-to-back 拼接（每 chunk 至少 1.0s，模型逻辑时间）。
+        右声道：优先使用 AI 独立时间轴（`_ai_audio_timeline`，duplex 标准路径），
+                按 receive_ts_ms 对齐到左声道时间坐标；
+                若 timeline 为空则 fallback 到 chunk.result.ai_audio（兼容旧数据）。
         """
         if not self._chunks:
             return None
@@ -444,7 +478,7 @@ class DuplexSessionRecorder(SessionRecorder):
         chunk_data: List[Tuple[Optional[np.ndarray], Optional[np.ndarray], int]] = []
         for chunk in self._chunks:
             user_pcm: Optional[np.ndarray] = None
-            ai_pcm: Optional[np.ndarray] = None
+            ai_pcm_legacy: Optional[np.ndarray] = None
 
             user_rel = chunk.get("user_audio")
             if user_rel:
@@ -454,30 +488,58 @@ class DuplexSessionRecorder(SessionRecorder):
             if ai_rel:
                 raw = _read_wav_mono(os.path.join(self.session_dir, ai_rel))
                 if raw is not None:
-                    ai_pcm = _resample_linear(raw, ai_sr, out_sr)
+                    ai_pcm_legacy = _resample_linear(raw, ai_sr, out_sr)
 
             u_len = len(user_pcm) if user_pcm is not None else 0
-            a_len = len(ai_pcm) if ai_pcm is not None else 0
+            a_len = len(ai_pcm_legacy) if ai_pcm_legacy is not None else 0
             n = max(u_len, a_len, out_sr)
-            chunk_data.append((user_pcm, ai_pcm, n))
+            chunk_data.append((user_pcm, ai_pcm_legacy, n))
 
-        total = sum(n for _, _, n in chunk_data)
+        # 右声道独立 timeline（duplex 标准路径）
+        ai_placements: List[Tuple[int, np.ndarray]] = []
+        ai_end_sample = 0
+        for item in self._ai_audio_timeline:
+            rel = item.get("rel")
+            if not rel:
+                continue
+            raw = _read_wav_mono(os.path.join(self.session_dir, rel))
+            if raw is None or len(raw) == 0:
+                continue
+            ai_pcm = _resample_linear(raw, ai_sr, out_sr)
+            offset = max(0, int(item.get("receive_ts_ms", 0.0) / 1000.0 * out_sr))
+            ai_placements.append((offset, ai_pcm))
+            ai_end_sample = max(ai_end_sample, offset + len(ai_pcm))
+
+        user_total = sum(n for _, _, n in chunk_data)
+        total = max(user_total, ai_end_sample)
+        if total == 0:
+            return None
+
         left = np.zeros(total, dtype=np.float32)
         right = np.zeros(total, dtype=np.float32)
 
         off = 0
         self._chunk_logical_sec: List[Tuple[float, float]] = []
-        for user_pcm, ai_pcm, n in chunk_data:
+        for user_pcm, ai_pcm_legacy, n in chunk_data:
             if user_pcm is not None:
                 left[off:off + len(user_pcm)] = user_pcm
-            if ai_pcm is not None:
-                right[off:off + len(ai_pcm)] += ai_pcm
+            # 仅在没有独立 timeline 时回退使用 chunk 上的 legacy ai_audio
+            if not ai_placements and ai_pcm_legacy is not None:
+                right[off:off + len(ai_pcm_legacy)] += ai_pcm_legacy
             self._chunk_logical_sec.append((off / out_sr, (off + n) / out_sr))
             off += n
 
+        for offset, ai_pcm in ai_placements:
+            end = min(offset + len(ai_pcm), total)
+            if end > offset:
+                right[offset:end] += ai_pcm[:end - offset]
+
         out_path = os.path.join(self.session_dir, "merged_replay.wav")
         _write_stereo_wav(out_path, left, right, out_sr)
-        logger.info(f"[SessionRecorder] merged replay: {total / out_sr:.1f}s stereo WAV (model logical time)")
+        logger.info(
+            f"[SessionRecorder] merged replay: {total / out_sr:.1f}s stereo WAV "
+            f"(user_chunks={len(chunk_data)}, ai_stream_chunks={len(ai_placements)})"
+        )
         return "merged_replay.wav"
 
     def _stitch_merged_video(self) -> Optional[str]:

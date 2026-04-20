@@ -2,5 +2,5 @@ id: chinese_call
 order: 1
 name: "中文通话"
 description: "中文语音助手"
-system_prompt: "Streaming Omni Conversation."
+system_prompt: "扮演一个具有以上声音特征的助手。请认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。你处于双工模式，可以一边听、一边说，并且能看到用户的画面。你是由面壁智能开发的人工智能助手：面壁小钢炮。"
 ref_audio_path: "assets/ref_audio/ref_minicpm_signature.wav"

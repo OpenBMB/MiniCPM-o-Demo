@@ -661,7 +661,7 @@ async def lifespan(app: FastAPI):
             duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
             llm_model=config.get("llm_model", ""),
             cpp_server_port=config.get("cpp_server_port"),
-            ctx_size=config.get("ctx_size", 8192),
+            ctx_size=config.get("ctx_size", 32768),
             n_gpu_layers=config.get("n_gpu_layers", 99),
         )
     else:
@@ -2430,7 +2430,8 @@ async def duplex_ws(ws: WebSocket):
 
                     if hasattr(worker, '_collect_wav_output_nowait'):
                         async def _wav_poll_loop():
-                            """独立异步任务：持续轮询 C++ T2W 生成的 WAV 文件并推送给前端"""
+                            """独立异步任务：持续轮询 C++ T2W 生成的 WAV 文件并推送给前端。
+                            同时把音频分流到 session_recorder，作为 duplex 右声道数据源。"""
                             poll_interval = 0.1
                             while True:
                                 try:
@@ -2443,6 +2444,17 @@ async def duplex_ws(ws: WebSocket):
                                             "audio_data": audio_b64,
                                         })
                                         logger.info(f"[WAV poll] sent audio_only ({len(audio_b64)} chars)")
+                                        if session_recorder is not None:
+                                            try:
+                                                ai_bytes = base64.b64decode(audio_b64)
+                                                ai_pcm = np.frombuffer(ai_bytes, dtype=np.float32)
+                                                receive_ts_ms = (time.perf_counter() - session_start_perf) * 1000
+                                                session_recorder.record_ai_audio_chunk(
+                                                    receive_ts_ms=receive_ts_ms,
+                                                    pcm_float32=ai_pcm,
+                                                )
+                                            except Exception as rec_err:
+                                                logger.warning(f"[WAV poll] recorder failed: {rec_err}")
                                     await asyncio.sleep(poll_interval)
                                 except asyncio.CancelledError:
                                     break
