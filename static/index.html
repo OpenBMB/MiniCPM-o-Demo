@@ -104,6 +104,7 @@
         .mode-card.turnbased .card-icon { background: #e8e8e3; }
         .mode-card.omni .card-icon { background: #d4e4f7; }
         .mode-card.audio .card-icon { background: #e8f0e8; }
+        .mode-card.mobile .card-icon { background: #f3e8ff; }
         .mode-card .card-title {
             font-size: 18px;
             font-weight: 600;
@@ -238,22 +239,38 @@
         omni:      { css: 'omni',      icon: '🎥', desc: 'Full-duplex real-time: camera + mic or local video/audio file; speak and see with live replies. Live / File modes.' },
         audio_duplex: { css: 'audio', icon: '🎤', desc: 'Voice-only full-duplex: live mic or local audio file, low-latency voice conversation. Live / File modes.' },
     };
+    const MOBILE_PREVIEW_CARD = {
+        route: '/mobile',
+        css: 'mobile',
+        icon: '📱',
+        title: 'Mobile Preview',
+        desc: 'React + Vite mobile interaction draft for turn-based and full-duplex layouts. UI preview only.',
+    };
+
+    function renderCard(card) {
+        return `<a href="${card.route}" class="mode-card ${card.css}">
+            <div class="card-icon" aria-hidden="true">${card.icon}</div>
+            <div class="card-title">${card.title}</div>
+            <div class="card-desc">${card.desc}</div>
+            <div class="card-enter">Enter →</div>
+        </a>`;
+    }
 
     (async function() {
+        const cardsEl = document.getElementById('mode-cards');
         const apps = await initNav(null);
+        const appCards = apps ? apps.map(a => {
+            const m = APP_CARD_META[a.app_id] || { css: '', icon: '📦', desc: '' };
+            return renderCard({
+                route: a.route,
+                css: m.css,
+                icon: m.icon,
+                title: a.name,
+                desc: m.desc,
+            });
+        }) : [];
 
-        if (apps) {
-            const cardsEl = document.getElementById('mode-cards');
-            cardsEl.innerHTML = apps.map(a => {
-                const m = APP_CARD_META[a.app_id] || { css: '', icon: '📦', desc: '' };
-                return `<a href="${a.route}" class="mode-card ${m.css}">
-                    <div class="card-icon" aria-hidden="true">${m.icon}</div>
-                    <div class="card-title">${a.name}</div>
-                    <div class="card-desc">${m.desc}</div>
-                    <div class="card-enter">Enter →</div>
-                </a>`;
-            }).join('');
-        }
+        cardsEl.innerHTML = [...appCards, renderCard(MOBILE_PREVIEW_CARD)].join('');
     })();
 
     (function() {

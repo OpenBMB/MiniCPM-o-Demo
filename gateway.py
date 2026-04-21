@@ -1300,6 +1300,41 @@ async def audio_duplex():
     return HTMLResponse("<h1>Audio Duplex</h1><p>Page not found</p>")
 
 
+@app.get("/mobile", include_in_schema=False)
+async def mobile_redirect():
+    """移动端入口重定向到带尾斜杠版本，确保相对资源路径正确解析"""
+    return RedirectResponse(url="/mobile/", status_code=302)
+
+
+@app.get("/mobile/", response_class=HTMLResponse)
+async def mobile():
+    """移动端 React 预览页面"""
+    page_path = os.path.join(static_dir, "mobile", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse(
+        "<h1>Mobile Preview</h1>"
+        "<p>Build output not found. Run "
+        "<code>cd frontend/mobile && bun run --bun build:static</code> "
+        "or <code>npm run build:static</code>.</p>",
+        status_code=404,
+    )
+
+
+@app.api_route("/mobile/{asset_path:path}", methods=["GET", "HEAD"])
+async def mobile_asset(asset_path: str):
+    """移动端构建产物静态资源"""
+    mobile_root = os.path.realpath(os.path.join(static_dir, "mobile"))
+    full_path = os.path.realpath(os.path.join(mobile_root, asset_path))
+
+    if not full_path.startswith(mobile_root + os.sep):
+        raise HTTPException(status_code=400, detail="Path traversal detected")
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        raise HTTPException(status_code=404, detail=f"Mobile asset not found: {asset_path}")
+
+    return FileResponse(full_path)
+
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin():
     """Admin Dashboard"""

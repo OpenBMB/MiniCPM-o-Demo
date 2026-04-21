@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>移动端交互草图</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #eef2f7;
+            --panel: #ffffff;
+            --line: #e2e8f0;
+            --text: #101828;
+            --muted: #667085;
+            --soft: #f8fafc;
+            --dark: #0f172a;
+            --blue: #2563eb;
+            --danger: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            padding: 28px 18px 42px;
+            background:
+                radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 24%),
+                linear-gradient(180deg, #f5f7fb 0%, #eef2f7 100%);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+        }
+
+        .page {
+            max-width: 1320px;
+            margin: 0 auto;
+        }
+
+        .page-header {
+            margin-bottom: 28px;
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            height: 30px;
+            padding: 0 12px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.82);
+            color: var(--muted);
+            font-size: 12px;
+            margin-bottom: 14px;
+        }
+
+        h1 {
+            font-size: 30px;
+            line-height: 1.14;
+            margin-bottom: 12px;
+        }
+
+        .lead {
+            max-width: 860px;
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.65;
+        }
+
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(280px, 380px));
+            justify-content: center;
+            gap: 24px;
+        }
+
+        .screen-card {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .screen-label {
+            padding: 0 8px;
+        }
+
+        .screen-tag {
+            display: inline-flex;
+            align-items: center;
+            height: 28px;
+            padding: 0 12px;
+            border-radius: 999px;
+            background: #dbeafe;
+            color: #1d4ed8;
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .screen-label h2 {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+
+        .screen-label p {
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .phone {
+            background: #0b1220;
+            border-radius: 34px;
+            padding: 10px;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+        }
+
+        .phone-shell {
+            position: relative;
+            overflow: hidden;
+            min-height: 760px;
+            border-radius: 26px;
+            background: var(--panel);
+        }
+
+        .status-bar {
+            height: 32px;
+            padding: 0 18px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--muted);
+            background: rgba(255, 255, 255, 0.92);
+        }
+
+        .empty-stage {
+            position: relative;
+            min-height: 600px;
+            padding: 22px 18px 12px;
+            background: #ffffff;
+        }
+
+        .entry-phone {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+            width: 42px;
+            height: 42px;
+            border-radius: 999px;
+            border: 1px solid #e7ebf1;
+            background: #ffffff;
+            box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: #111827;
+        }
+
+        .thread {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding-top: 34px;
+        }
+
+        .msg {
+            max-width: 82%;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.6;
+            box-shadow: 0 8px 16px rgba(15, 23, 42, 0.05);
+        }
+
+        .msg.assistant {
+            align-self: flex-start;
+            padding: 14px 16px;
+            background: #f8fafc;
+            border: 1px solid #e7ebf1;
+            color: #1f2937;
+        }
+
+        .msg.user-text {
+            align-self: flex-end;
+            padding: 14px 16px;
+            background: #111827;
+            color: #ffffff;
+        }
+
+        .msg.user-voice {
+            align-self: flex-end;
+            min-width: 180px;
+            padding: 12px 14px;
+            background: #eef2ff;
+            border: 1px solid #dbe4ff;
+            color: #1d4ed8;
+        }
+
+        .voice-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .voice-pill {
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            background: rgba(37, 99, 235, 0.14);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        .voice-wave {
+            flex: 1;
+            height: 18px;
+            border-radius: 999px;
+            background:
+                repeating-linear-gradient(
+                    90deg,
+                    rgba(37, 99, 235, 0.18),
+                    rgba(37, 99, 235, 0.18) 6px,
+                    rgba(37, 99, 235, 0.72) 6px,
+                    rgba(37, 99, 235, 0.72) 10px
+                );
+        }
+
+        .voice-time {
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .bottom-bar {
+            padding: 0 14px 18px;
+        }
+
+        .talk-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 78px;
+            gap: 12px;
+        }
+
+        .talk-bar {
+            height: 74px;
+            border-radius: 22px;
+            border: 1px solid #e7ebf1;
+            background: #ffffff;
+            box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 18px;
+        }
+
+        .talk-main {
+            font-size: 17px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            color: #111827;
+        }
+
+        .text-side-btn {
+            height: 74px;
+            border-radius: 22px;
+            border: 1px solid #e7ebf1;
+            background: #ffffff;
+            box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 800;
+            color: #111827;
+        }
+
+        .duplex-live {
+            position: relative;
+            min-height: 728px;
+            background:
+                radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.18), transparent 18%),
+                linear-gradient(180deg, #51565d 0%, #676a6f 14%, #c5c8cb 40%, #f5f6f7 64%, #eff1f4 100%);
+        }
+
+        .camera-scene {
+            position: absolute;
+            inset: 72px 0 0;
+        }
+
+        .monitor {
+            position: absolute;
+            left: 28px;
+            top: 54px;
+            width: 118px;
+            height: 186px;
+            border-radius: 8px;
+            background: #1a1d21;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+        }
+
+        .stand {
+            position: absolute;
+            left: 152px;
+            top: 234px;
+            width: 122px;
+            height: 84px;
+            border: 4px solid #23262a;
+            border-top-width: 6px;
+            border-radius: 4px;
+            transform: skew(-16deg);
+        }
+
+        .desk {
+            position: absolute;
+            left: -16px;
+            right: -16px;
+            bottom: 116px;
+            height: 268px;
+            background: linear-gradient(180deg, #ffffff 0%, #f4f5f7 100%);
+            transform: perspective(700px) rotateX(65deg);
+            transform-origin: bottom center;
+        }
+
+        .cable {
+            position: absolute;
+            right: 24px;
+            bottom: 150px;
+            width: 170px;
+            height: 174px;
+            border-bottom: 4px solid #d7dbe0;
+            border-right: 4px solid #d7dbe0;
+            border-radius: 0 0 120px 0;
+            opacity: 0.9;
+        }
+
+        .top-actions {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            color: #ffffff;
+            font-size: 15px;
+        }
+
+        .text-switch {
+            font-size: 31px;
+            line-height: 1;
+        }
+
+        .helper-copy {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 134px;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.94);
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        .pager {
+            position: absolute;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .pager span {
+            width: 12px;
+            height: 12px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.42);
+        }
+
+        .pager span.active {
+            background: #ffffff;
+        }
+
+        .live-pager {
+            bottom: 166px;
+        }
+
+        .control-strip {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 34px;
+            display: flex;
+            justify-content: center;
+            gap: 18px;
+        }
+
+        .circle-btn {
+            width: 72px;
+            height: 72px;
+            border-radius: 999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(94, 94, 96, 0.72);
+            color: #ffffff;
+            font-size: 30px;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+        }
+
+        .circle-btn.white {
+            background: rgba(255, 255, 255, 0.96);
+            color: #111827;
+        }
+
+        .circle-btn.light {
+            background: rgba(255, 255, 255, 0.26);
+            color: #111827;
+        }
+
+        .circle-btn.danger {
+            color: #ff4b4b;
+        }
+
+        .duplex-soft {
+            position: relative;
+            min-height: 728px;
+            background:
+                radial-gradient(circle at 32% 10%, rgba(255, 185, 203, 0.8), transparent 34%),
+                radial-gradient(circle at 74% 76%, rgba(206, 226, 255, 0.92), transparent 38%),
+                linear-gradient(180deg, #f9dfe8 0%, #f3e7f3 42%, #e4ecff 100%);
+        }
+
+        .soft-top {
+            position: absolute;
+            top: 12px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            color: #101828;
+            font-size: 18px;
+        }
+
+        .scene-pill {
+            position: absolute;
+            top: 44px;
+            left: 50%;
+            transform: translateX(-50%);
+            min-width: 126px;
+            height: 42px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.36);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #222b36;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+            backdrop-filter: blur(12px);
+        }
+
+        .voice-copy {
+            position: absolute;
+            left: 34px;
+            top: 148px;
+            color: rgba(31, 41, 55, 0.88);
+            font-size: 18px;
+        }
+
+        .voice-orb {
+            position: absolute;
+            left: 50%;
+            top: 190px;
+            width: 224px;
+            height: 316px;
+            margin-left: -112px;
+            border-radius: 999px;
+            background: radial-gradient(circle at 40% 28%, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.04) 60%);
+            opacity: 0.54;
+        }
+
+        .soft-footer {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 34px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .soft-helper {
+            color: rgba(255, 255, 255, 0.95);
+            font-size: 15px;
+            font-weight: 600;
+            text-shadow: 0 3px 14px rgba(15, 23, 42, 0.18);
+        }
+
+        .soft-pager {
+            position: static;
+        }
+
+        .notes {
+            margin-top: 28px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 18px;
+        }
+
+        .notes h3 {
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        .notes ul {
+            padding-left: 18px;
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.65;
+        }
+
+        @media (max-width: 1220px) {
+            .gallery {
+                grid-template-columns: repeat(2, minmax(280px, 380px));
+            }
+        }
+
+        @media (max-width: 820px) {
+            .gallery {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 20px 12px 36px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .phone {
+                padding: 8px;
+                border-radius: 28px;
+            }
+
+            .phone-shell {
+                min-height: 700px;
+                border-radius: 22px;
+            }
+
+            .circle-btn {
+                width: 66px;
+                height: 66px;
+                font-size: 28px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <header class="page-header">
+            <div class="eyebrow">MiniCPM-o Demo / 移动端参考草图</div>
+            <h1>按你发的三张图重新收了一版</h1>
+            <p class="lead">
+                这版直接对应你最近发给魏弘量的三张参考图：一个 `turn-based` 主界面，两个 `full-duplex` 视觉态。
+                先确认手机端信息层级和样式方向，暂时不接任何真实功能。
+            </p>
+        </header>
+
+        <main class="gallery">
+            <section class="screen-card">
+                <div class="screen-label">
+                    <div class="screen-tag">参考图 1</div>
+                    <h2>Turn-based 主界面</h2>
+                    <p>电话图标回到右上角，底部右侧改成“文”，点它表示切换到文本输入；对话内容区展示交错的用户输入与机器回答。</p>
+                </div>
+
+                <div class="phone">
+                    <div class="phone-shell">
+                        <div class="status-bar">
+                            <span>9:02</span>
+                            <span>4G 50%</span>
+                        </div>
+                        <div class="empty-stage">
+                            <div class="entry-phone">📞</div>
+                            <div class="thread">
+                                <div class="msg assistant">
+                                    你好，我现在是 turn-based 模式。你可以按住说话，也可以点右下角的“文”切换到文本输入。
+                                </div>
+                                <div class="msg user-voice">
+                                    <div class="voice-row">
+                                        <div class="voice-pill">🎤</div>
+                                        <div class="voice-wave"></div>
+                                        <div class="voice-time">2.3s</div>
+                                    </div>
+                                </div>
+                                <div class="msg assistant">
+                                    我明白了。进入全双工之后，主界面会切到摄像头画面，退出再回到这里。
+                                </div>
+                                <div class="msg user-text">
+                                    那我也想保留一种纯文字输入的方式。
+                                </div>
+                                <div class="msg assistant">
+                                    可以，底部右侧的“文”就作为切换入口，这样语音和文字仍然共用同一个 turn-based 页面。
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bottom-bar">
+                            <div class="talk-row">
+                                <div class="talk-bar">
+                                    <div class="talk-main">按住说话</div>
+                                </div>
+                                <div class="text-side-btn">文</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="screen-card">
+                <div class="screen-label">
+                    <div class="screen-tag">参考图 2</div>
+                    <h2>Full-duplex 实拍摄像头态</h2>
+                    <p>主区域就是摄像头画面，右上角是“翻转摄像头 / 文字区”，底部是 4 个圆形控制按钮。</p>
+                </div>
+
+                <div class="phone">
+                    <div class="phone-shell duplex-live">
+                        <div class="status-bar">
+                            <span>9:03</span>
+                            <span>4G 49%</span>
+                        </div>
+                        <div class="camera-scene">
+                            <div class="monitor"></div>
+                            <div class="stand"></div>
+                            <div class="desk"></div>
+                            <div class="cable"></div>
+                        </div>
+                        <div class="top-actions">
+                            <span>⇆</span>
+                            <span class="text-switch">字</span>
+                        </div>
+                        <div class="pager live-pager">
+                            <span></span>
+                            <span></span>
+                            <span class="active"></span>
+                        </div>
+                        <div class="helper-copy">你可以开始说话</div>
+                        <div class="control-strip">
+                            <div class="circle-btn">🎤</div>
+                            <div class="circle-btn">⤴</div>
+                            <div class="circle-btn white">🎥</div>
+                            <div class="circle-btn danger">✕</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="screen-card">
+                <div class="screen-label">
+                    <div class="screen-tag">参考图 3</div>
+                    <h2>Full-duplex 柔和视觉态</h2>
+                    <p>同样的全双工结构，但把主舞台换成更轻、更抽象的渐变视觉，适合非实拍场景。</p>
+                </div>
+
+                <div class="phone">
+                    <div class="phone-shell duplex-soft">
+                        <div class="status-bar">
+                            <span>9:02</span>
+                            <span>4G 48%</span>
+                        </div>
+                        <div class="soft-top">
+                            <div>…</div>
+                            <div style="display:flex;gap:14px;align-items:center;">
+                                <span>🎤</span>
+                                <span class="text-switch">字</span>
+                            </div>
+                        </div>
+                        <div class="scene-pill">选择情景</div>
+                        <div class="voice-copy">请说话</div>
+                        <div class="voice-orb"></div>
+                        <div class="soft-footer">
+                            <div class="pager soft-pager">
+                                <span></span>
+                                <span class="active"></span>
+                                <span></span>
+                            </div>
+                            <div class="soft-helper">你可以开始说话</div>
+                            <div class="control-strip" style="position: static;">
+                                <div class="circle-btn light">🎤</div>
+                                <div class="circle-btn light">⤴</div>
+                                <div class="circle-btn light">🎥</div>
+                                <div class="circle-btn light danger">✕</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <section class="notes">
+            <h3>这版主要确认的方向</h3>
+            <ul>
+                <li>`turn-based` 页面里应该直接展示交错的真实对话，而不是完全空白的占位区。</li>
+                <li>电话图标放回右上角，作为进入全双工的入口；底部右侧改成“文”，代表切换到文本输入框。</li>
+                <li>`full-duplex` 的核心是“全屏舞台 + 顶部轻按钮 + 底部四个圆形控制按钮”，主信息不应该被复杂面板打断。</li>
+                <li>全双工可以允许两种视觉风格并存：实拍摄像头态与柔和渐变态，但控制布局保持一致。</li>
+            </ul>
+        </section>
+    </div>
+</body>
+</html>
