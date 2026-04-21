@@ -159,22 +159,11 @@
             <summary style="display:none;">System Prompt Details</summary>
             <div class="cg-body">
                 <div class="cg-row">
-                    <textarea class="cg-input" id="systemPrompt" rows="3" placeholder="System prompt">扮演一个具有以上声音特征的助手。请认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。你处于双工模式，可以一边听、一边说。你是由面壁智能开发的人工智能助手：面壁小钢炮。</textarea>
+                    <textarea class="cg-input" id="systemPrompt" rows="3" placeholder="System prompt">扮演一个自然、专业的语音助手。请认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。你处于双工模式，可以一边听、一边说。你是由面壁智能开发的人工智能助手：面壁小钢炮。</textarea>
                 </div>
                 <div class="cg-row">
                     <span class="cg-label">LLM Ref Audio (system prompt)</span>
                     <div id="refAudioPlayerDuplex"></div>
-                </div>
-                <div class="cg-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #f0ede8;">
-                    <span class="cg-label">TTS Ref Audio (voice cloning)</span>
-                    <div style="font-size:12px;">
-                        <div style="display:flex;gap:12px;align-items:center;margin-bottom:4px;">
-                            <label style="cursor:pointer;color:#555;"><input type="radio" name="duplexTtsRefMode" value="extract" checked> Same as LLM</label>
-                            <label style="cursor:pointer;color:#555;"><input type="radio" name="duplexTtsRefMode" value="independent"> Independent</label>
-                        </div>
-                        <div id="duplexTtsRefHint" style="font-size:11px;color:#aaa;"></div>
-                        <div id="duplexTtsRefUpload" style="display:none;margin-top:6px;"></div>
-                    </div>
                 </div>
             </div>
         </details>

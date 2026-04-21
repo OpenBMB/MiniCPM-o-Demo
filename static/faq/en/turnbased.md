@@ -13,13 +13,13 @@ Turn-based Chat is the classic question-and-answer conversation mode. You can se
 
 ## About System Prompt
 
-MiniCPM-o 4.5 introduces the concept of multimodal system prompts, allowing users to include text instructions, reference audio, etc. in the system prompt. The model will adjust its text style and voice prosody based on the text instructions and reference audio.
+The System Prompt mainly defines the assistant's role, behavior, and response style. In the current deployment, voice replies use the preset's default voice configuration rather than a voice-customization workflow.
 
 In the configuration card at the top, expand the **System Prompt** section to edit it. The System Prompt is sent to the model at the beginning of each conversation to define the role and behavior.
 
-- About Reference Audio
+- About Voice Replies
 
-In the System Prompt configuration section, upload a reference audio clip. The model will mimic the voice characteristics of the audio for its voice responses. Supports WAV / MP3 formats, recommended duration is 5-15 seconds.
+Some presets include a built-in audio item used to initialize the default voice reply. In normal use, you usually only need to edit the text instructions in the System Prompt.
 
 ## Mode Switching (Voice, Video Understanding, Text Chat)
 

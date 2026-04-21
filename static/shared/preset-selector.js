@@ -58,7 +58,7 @@ class PresetSelector {
         header.className = 'preset-header';
         header.innerHTML = `
             <span class="preset-title">Preset System Prompt</span>
-            <span class="preset-subtitle">Controls response language, voice style, rhythm and timbre. Customizable via Advanced. You can customize the reference audio and system prompt in advanced settings. More presets are coming soon.</span>
+            <span class="preset-subtitle">Controls response language, assistant behavior, and conversational style. You can further edit the system prompt text in Advanced. More presets are coming soon.</span>
         `;
         wrap.appendChild(header);
 

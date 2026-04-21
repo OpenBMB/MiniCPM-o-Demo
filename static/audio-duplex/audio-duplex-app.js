@@ -29,7 +29,6 @@ import {
     getMixerPanelHTML,
 } from '../duplex/ui/duplex-ui.js';
 import { startDingDongLoop, playAlarmBell, playSessionChime } from '../duplex/lib/queue-chimes.js';
-import { createTtsRefController } from '../duplex/ui/tts-ref-controller.js';
 import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
 
 // ============================================================================
@@ -114,8 +113,6 @@ const settingsPersistence = new SettingsPersistence('audio_duplex_settings', [
     { id: 'duplexLengthPenalty', type: 'number' },
     // System prompt
     { id: 'systemPrompt', type: 'textarea' },
-    // TTS ref mode
-    { type: 'radio', name: 'duplexTtsRefMode' },
     // Recording
     { id: 'recCheckbox', type: 'checkbox' },
     // Mixer
@@ -159,11 +156,7 @@ document.getElementById('btnResetSettings')?.addEventListener('click', () => {
 // ============================================================================
 // Ref Audio (init before preset so preset can update it)
 // ============================================================================
-const duplexTtsRef = createTtsRefController('duplex', () => refAudio.getBase64());
-const refAudio = initRefAudio('refAudioPlayerDuplex', {
-    onTtsHintUpdate: () => duplexTtsRef.updateHint(),
-});
-duplexTtsRef.init();
+const refAudio = initRefAudio('refAudioPlayerDuplex');
 
 // ============================================================================
 // Preset Selector
@@ -965,8 +958,6 @@ async function startSession() {
     };
     const refBase64 = refAudio.getBase64();
     if (refBase64) preparePayload.ref_audio_base64 = refBase64;
-    const ttsRef = duplexTtsRef.getBase64();
-    if (ttsRef && ttsRef !== refBase64) preparePayload.tts_ref_audio_base64 = ttsRef;
 
     try {
         // Wire AI audio recording hook
@@ -1092,11 +1083,6 @@ document.querySelectorAll('input[name="fileAudioMode"]').forEach(radio => {
 });
 
 // Mic calibration is handled by MixerController
-
-// TTS ref mode radios
-document.querySelectorAll('input[name="duplexTtsRefMode"]').forEach(radio => {
-    radio.addEventListener('change', () => duplexTtsRef.onModeChange());
-});
 
 // ============================================================================
 // Mixer Controller (shared module)

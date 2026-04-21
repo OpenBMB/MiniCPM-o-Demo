@@ -4,10 +4,10 @@
  * 将 System Prompt 建模为一个 content list，每个 item 可以是 text 或 audio。
  * 用户可以任意添加、删除、重排项目。
  *
- * 默认结构（模型最佳实践）：
- *   [text] 模仿音频样本的音色并生成新的内容。
- *   [audio] (default ref audio)
- *   [text] 你的任务是用这种声音模式来当一个助手。...
+ * 默认结构：
+ *   [text] 请使用自然、清晰的方式完成语音回复。
+ *   [audio] (default audio item)
+ *   [text] 你的任务是作为一个助手，认真、高质量地回复用户的问题。...
  *
  * 依赖: ref-audio-player.js (RefAudioPlayer)
  *

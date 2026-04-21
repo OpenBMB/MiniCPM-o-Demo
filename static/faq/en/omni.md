@@ -14,13 +14,13 @@ In Omni Full-Duplex mode, you can speak and show visuals at the same time. The m
 
 Due to limitations in the model's training data, responses may be brief. **You can increase the Length Penalty parameter in the left sidebar to 1.3 to achieve longer responses and better empathy.** The default value of 1.05 produces shorter responses. However, a known issue is that at Length Penalty = 1.3, voice interruption may become difficult. This will be a focus of improvement in the next model version.
 
-## Can I customize the voice tone and prosody?
+## What does Preset System Prompt control?
 
-Yes. Click the **Advanced** button under Preset System Prompt and upload a custom reference audio. MiniCPM-o 4.5 introduces the concept of multimodal system prompts, allowing users to include text instructions, reference audio, etc. in the system prompt. The model will adjust its text style and voice prosody based on the text instructions and reference audio.
+It mainly affects response language, assistant behavior, and conversational style. The current deployment uses a preset default voice configuration instead of separate voice customization controls.
 
 ## Can I customize the system prompt?
 
-Yes. Click the **Advanced** button under Preset System Prompt to modify the system prompt. Changing the prompt will alter the model's style and behavior. MiniCPM-o 4.5 introduces the concept of multimodal system prompts, allowing users to include text instructions, reference audio, etc. in the system prompt. The model will adjust its text style and voice prosody based on the text instructions and reference audio.
+Yes. Click the **Advanced** button under Preset System Prompt to edit the system prompt text. This changes the assistant's role, behavior, and response style, but does not change the default voice configuration.
 
 ## What should I do if it feels laggy?
 

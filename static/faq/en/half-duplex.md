@@ -4,7 +4,7 @@
 
 Half-Duplex mode supports voice conversation using VAD (Voice Activity Detection) to detect when the user finishes speaking, then triggers model inference. Only one party speaks at a time — the model listens while you speak, and you wait while the model replies. Interruption is not currently supported, but is theoretically feasible.
 
-The model's response accuracy, voice quality, and typo rate are at a satisfactory level. Suitable for scenarios that require high performance.
+The model's response accuracy, speech naturalness, and typo rate are at a satisfactory level. Suitable for scenarios that require high performance.
 
 ## How do I adjust the VAD parameters?
 
