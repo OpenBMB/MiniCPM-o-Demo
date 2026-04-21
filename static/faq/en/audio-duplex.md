@@ -10,13 +10,13 @@ Audio Full-Duplex mode supports **real-time bidirectional audio-only conversatio
 
 Due to limitations in the model's training data, responses may be brief. **You can increase the Length Penalty parameter in the left sidebar to 1.3 to achieve longer responses and better empathy.** The default value of 1.05 produces shorter responses. However, a known issue is that at Length Penalty = 1.3, voice interruption may become difficult. This will be a focus of improvement in the next model version.
 
-## What does Preset System Prompt control?
+## Can the preset/system prompt affect voice tone and prosody?
 
-It mainly affects response language, assistant behavior, and conversational style. The current deployment uses a preset default voice configuration instead of separate voice customization controls.
+Yes. The preset and system prompt text still influence response language, speaking style, rhythm, and prosody. This deployment uses preset/default reference audio, but does not expose a separate TTS reference-audio replacement control. To fully replace the C++ TTS synthesis voice, follow the [voice guide](https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md) and replace `prompt_cache.gguf` plus the related assets yourself.
 
 ## Can I customize the system prompt?
 
-Yes. Click the **Advanced** button under Preset System Prompt to edit the system prompt text. This changes the assistant's role, behavior, and response style, but does not change the default voice configuration.
+Yes. Click the **Advanced** button under Preset System Prompt to edit the system prompt text. This changes the assistant's role, behavior, response style, and voice expression, but does not provide a separate TTS reference-audio replacement control.
 
 
 ## What is the difference from Half-Duplex?

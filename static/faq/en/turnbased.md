@@ -13,13 +13,13 @@ Turn-based Chat is the classic question-and-answer conversation mode. You can se
 
 ## About System Prompt
 
-The System Prompt mainly defines the assistant's role, behavior, and response style. In the current deployment, voice replies use the preset's default voice configuration rather than a voice-customization workflow.
+MiniCPM-o 4.5 supports multimodal system prompts. In the current deployment, the preset/system prompt still affects text style as well as voice expression, rhythm, and prosody. The deployment uses preset/default reference audio, but does not expose a separate TTS reference-audio replacement control. To fully replace the C++ TTS synthesis voice, follow the [voice guide](https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md) and replace `prompt_cache.gguf` plus the related assets yourself.
 
 In the configuration card at the top, expand the **System Prompt** section to edit it. The System Prompt is sent to the model at the beginning of each conversation to define the role and behavior.
 
-- About Voice Replies
+- About Voice Style
 
-Some presets include a built-in audio item used to initialize the default voice reply. In normal use, you usually only need to edit the text instructions in the System Prompt.
+Some presets include a built-in audio item, and the System Prompt text also affects the final voice reply. In normal use, you can change style by switching presets or editing the System Prompt text, but the UI does not expose a separate TTS reference-audio replacement control.
 
 ## Mode Switching (Voice, Video Understanding, Text Chat)
 

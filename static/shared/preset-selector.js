@@ -58,7 +58,7 @@ class PresetSelector {
         header.className = 'preset-header';
         header.innerHTML = `
             <span class="preset-title">Preset System Prompt</span>
-            <span class="preset-subtitle">Controls response language, assistant behavior, and conversational style. You can further edit the system prompt text in Advanced. More presets are coming soon.</span>
+            <span class="preset-subtitle">Controls response language, voice style, rhythm and timbre. You can further edit the system prompt text in Advanced. The web UI does not replace the C++ TTS cache (`prompt_cache.gguf`); for full TTS voice replacement, see the <a href="https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md" target="_blank" rel="noopener">voice guide</a>.</span>
         `;
         wrap.appendChild(header);
 

@@ -14,13 +14,13 @@ Omni 全双工模式下，你可以一边说话一边展示画面，模型能同
 
 由于模型训练语料有局限性，回复可能较为简洁。**可以通过左侧栏调高 Length Penalty 参数，达到 1.3 实现更长的回复长度和更好的共情能力。**默认值为 1.05 回复较为简洁。但已知问题是在 Length Penalty = 1.3 时，可能难以语音打断。下个模型版本会重点提升。
 
-## Preset System Prompt 会影响什么？
+## Preset System Prompt 会影响音色、韵律吗？
 
-它主要影响回复语言、助手角色、行为方式和对话风格。当前部署默认使用预设语音配置，不再以单独调整音色或参考音频作为主要使用方式。
+会。当前这组 preset 和 system prompt 文本仍然会影响回复语言、说话风格、节奏感和韵律表现。当前部署默认使用预设/默认参考音频，但没有开放单独替换 TTS 参考音频的入口。若要真正替换 C++ 侧的 TTS 合成音色，需要参照[换音色指南](https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md)自行替换 `prompt_cache.gguf` 和相关资源。
 
 ## 可以自定义系统提示词吗？
 
-可以，通过 Preset System Prompt 点击 Advanced 按钮修改 system prompt 文本。修改后会影响模型的角色、行为和回复风格，但不会改变默认语音配置。
+可以，通过 Preset System Prompt 点击 Advanced 按钮修改 system prompt 文本。修改后会影响模型的角色、行为、回复风格，以及语音回复的表达方式；但不会提供单独替换 TTS 参考音频的入口。
 
 ## 体感卡顿怎么办？
 

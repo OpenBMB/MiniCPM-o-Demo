@@ -29,6 +29,10 @@ Half-Duplex（半双工）模式支持语音对话，使用VAD检测用户发言
 
 Length Penalty 控制模型回复的长度。值大于 1 会鼓励更长的回复，小于 1 则倾向于更短的回复。默认值 1.1 会产生适中长度的回复。1.1下，模型的共情能力较好。
 
+## 网页上能直接替换 TTS 音色吗？
+
+不能。当前页面里的 system prompt / preset 仍然会影响语音回复的表达方式和风格，但网页端不提供单独替换 C++ TTS 合成缓存的入口。若要真正替换 C++ 侧的 TTS 合成音色，需要参照[换音色指南](https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md)自行替换 `prompt_cache.gguf` 和相关资源。
+
 ## 会话超时是什么意思？
 
 **Session Timeout** 设置 Worker 的独占锁时间。超过该时间后，会话会自动结束，Worker 会释放给其他用户。默认 300 秒（5 分钟）。可以调整。

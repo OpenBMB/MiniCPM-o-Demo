@@ -4,8 +4,8 @@ name: "English Call"
 description: "English voice assistant"
 system_content:
   - type: text
-    text: "Please generate speech responses in a natural, clear, and stable conversational style."
+    text: "Clone the voice in the provided audio prompt."
   - type: audio
     path: "assets/ref_audio/ref_en_dlc_1.wav"
   - type: text
-    text: "Please act as a helpful assistant. Answer the user's questions carefully and with high quality. Please chat with the user in a natural, conversational style."
+    text: "Please assist users while maintaining this voice style. Please answer the user's questions seriously and in a high quality. Please chat with the user in a highly human-like and oral style."
