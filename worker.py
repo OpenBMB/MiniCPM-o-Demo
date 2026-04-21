@@ -770,7 +770,7 @@ async def health():
             logger.warning("health check: C++ llama-server is not responding")
         else:
             model_loaded = True
-        kv_len = getattr(worker, 'kv_cache_length', 0)
+            kv_len = getattr(worker, 'kv_cache_length', 0)
 
     status = "healthy" if model_loaded else "error"
     worker_status = worker.state.status
@@ -1161,7 +1161,7 @@ async def chat_ws(ws: WebSocket):
                 )
 
             await asyncio.to_thread(_do_prefill)
-            pre_kv = worker.processor.kv_cache_length if worker.processor else 0
+            pre_kv = worker.processor.kv_cache_length if worker.processor else getattr(worker, "kv_cache_length", 0)
             await ws.send_json({"type": "prefill_done", "input_tokens": pre_kv})
 
             # 3. TTS init (PyTorch only; C++ handles TTS internally via omni_init)
@@ -2169,7 +2169,7 @@ async def duplex_ws(ws: WebSocket):
                 t_gen = time.perf_counter()
 
                 prefill_ms = (t_prefill - t0) * 1000
-                kv_len = worker.processor.kv_cache_length if worker.processor else 0
+                kv_len = worker.processor.kv_cache_length if worker.processor else getattr(worker, "kv_cache_length", 0)
                 return gen_result, prefill_ms, prefill_result, kv_len
 
             result, prefill_ms, prefill_cost, kv_cache_len = await asyncio.to_thread(_duplex_step)
@@ -2600,9 +2600,10 @@ async def cache_info():
     if worker is None:
         raise HTTPException(status_code=503, detail="Worker not ready")
 
+    kv_len = worker.processor.kv_cache_length if worker.processor else getattr(worker, "kv_cache_length", 0)
     return {
         "status": worker.state.status.value,
-        "note": "KV cache state is now tracked by Gateway (cached_hash on WorkerConnection)",
+        "kv_cache_length": kv_len,
     }
 
 

@@ -186,6 +186,7 @@ class CppBackendWorker:
         self._current_session_id: Optional[str] = None
         self._round_number: int = 0
         self._sent_wav_files: set = set()
+        self._last_kv_cache_length: int = 0
 
     # ================================================================
     # Model loading (maps to omni_init)
@@ -209,7 +210,14 @@ class CppBackendWorker:
 
     @property
     def kv_cache_length(self) -> int:
-        return 0
+        return int(self._last_kv_cache_length)
+
+    def _maybe_update_kv_cache_length(self, payload: Any) -> None:
+        if isinstance(payload, dict) and "kv_cache_length" in payload:
+            try:
+                self._last_kv_cache_length = int(payload.get("kv_cache_length", 0) or 0)
+            except (TypeError, ValueError):
+                logger.debug("invalid kv_cache_length payload: %r", payload.get("kv_cache_length"))
 
     # ================================================================
     # Duplex
@@ -303,6 +311,8 @@ class CppBackendWorker:
                     event = json.loads(data_str)
                 except json.JSONDecodeError:
                     continue
+
+                self._maybe_update_kv_cache_length(event)
 
                 if "is_listen" in event:
                     is_listen = event["is_listen"]
@@ -480,11 +490,10 @@ class CppBackendWorker:
                 event = json.loads(data_str)
             except json.JSONDecodeError:
                 continue
+            self._maybe_update_kv_cache_length(event)
             content = event.get("content", "")
             if content:
                 pieces.append(content)
-            if event.get("stop"):
-                break
         return "".join(pieces)
 
     def half_duplex_generate(
@@ -577,6 +586,7 @@ class CppBackendWorker:
                             event = json.loads(data_str)
                         except json.JSONDecodeError:
                             continue
+                        self._maybe_update_kv_cache_length(event)
                         content = event.get("content", "")
                         if content:
                             sse_text_pieces.append(content)
@@ -587,8 +597,6 @@ class CppBackendWorker:
                                 duration_ms=round((time.perf_counter() - t0) * 1000, 1),
                             )
                             chunk_idx += 1
-                        if event.get("stop"):
-                            break
 
                     if generate_audio:
                         for audio_b64 in _yield_new_wavs():
@@ -967,7 +975,9 @@ class CppBackendWorker:
         )
         if resp.status_code != 200:
             raise RuntimeError(f"omni_init failed: {resp.text}")
-        logger.info(f"omni_init success: {resp.json()}")
+        payload = resp.json()
+        self._maybe_update_kv_cache_length(payload)
+        logger.info(f"omni_init success: {payload}")
 
     def _call_update_session_config(
         self,
@@ -1039,6 +1049,7 @@ class CppBackendWorker:
         )
         if resp.status_code != 200:
             raise RuntimeError(f"update_session_config failed: {resp.text}")
+        self._maybe_update_kv_cache_length(resp.json())
 
     def _call_prefill(self, audio_path: str, img_path: str, cnt: int,
                       max_slice_nums: int = -1) -> None:
@@ -1057,6 +1068,11 @@ class CppBackendWorker:
         )
         if resp.status_code != 200:
             logger.error(f"prefill failed (cnt={cnt}): {resp.text}")
+            return
+        try:
+            self._maybe_update_kv_cache_length(resp.json())
+        except Exception as e:
+            logger.debug("prefill kv_cache_length parse failed: %s", e)
 
     # ================================================================
     # Internal: data conversion helpers
