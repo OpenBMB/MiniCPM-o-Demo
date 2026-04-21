@@ -533,6 +533,7 @@ class MiniCPMOWorker:
         media_type: int = 2,
         lang: Optional[str] = None,
         system_content: Any = None,
+        length_penalty: Optional[float] = None,
     ) -> str:
         """Duplex 准备
 
@@ -544,6 +545,8 @@ class MiniCPMOWorker:
                 若不提供则 fallback 到 ref_audio_path。
         """
         duplex_view = self.processor.set_duplex_mode()
+        if length_penalty is not None and getattr(duplex_view, "config", None) is not None:
+            duplex_view.config.length_penalty = float(length_penalty)
         kwargs = {
             "system_prompt_text": system_prompt_text,
             "ref_audio_path": ref_audio_path or self.ref_audio_path,
@@ -2319,6 +2322,10 @@ async def duplex_ws(ws: WebSocket):
                 if config_dict and worker.processor is not None:
                     duplex_view = worker.processor.set_duplex_mode()
                     duplex_view.config = DuplexConfig(**config_dict)
+                duplex_length_penalty_value = (config_dict or {}).get("length_penalty", 1.1)
+                duplex_length_penalty = float(
+                    duplex_length_penalty_value if duplex_length_penalty_value is not None else 1.1
+                )
 
                 # LLM ref audio → ref_audio_path（嵌入 system prompt）
                 # TTS ref audio → prompt_wav_path（初始化 vocoder）
@@ -2392,6 +2399,7 @@ async def duplex_ws(ws: WebSocket):
                         media_type=duplex_media_type,
                         lang=_infer_lang_from_texts([system_prompt]),
                         system_content=duplex_system_content,
+                        length_penalty=duplex_length_penalty,
                     )
                     logger.info(f"Duplex prepared ({duplex_type}, media_type={duplex_media_type}, deferred_finalize={use_deferred_finalize})")
                     from config import get_config
