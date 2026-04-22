@@ -11,6 +11,7 @@ import {
   type DuplexResultLike,
   type DuplexSessionLike,
 } from './mobile-duplex'
+import { StreamingPcmPlayer, float32ToWavBlobUrl } from './streaming-player'
 import './App.css'
 
 type BackendContentItem =
@@ -147,6 +148,7 @@ type SettingsState = {
   audioDuplexLengthPenalty: number
   videoDuplexLengthPenalty: number
   turnTtsEnabled: boolean
+  turnStreamingEnabled: boolean
 }
 
 type IconProps = {
@@ -183,6 +185,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   audioDuplexLengthPenalty: 1.05,
   videoDuplexLengthPenalty: 1.1,
   turnTtsEnabled: true,
+  turnStreamingEnabled: true,
 }
 
 function createId(prefix: string): string {
@@ -689,10 +692,7 @@ async function convertAudioBlobToFloat32Base64(blob: Blob): Promise<string> {
   }
 }
 
-function float32Base64ToWavUrl(
-  base64Data: string,
-  sampleRate = 24000,
-): string {
+function base64ToBytes(base64Data: string): Uint8Array {
   const binary = atob(base64Data)
   const raw = new Uint8Array(binary.length)
 
@@ -700,6 +700,43 @@ function float32Base64ToWavUrl(
     raw[index] = binary.charCodeAt(index)
   }
 
+  return raw
+}
+
+function isWavBytes(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 44 &&
+    bytes[0] === 0x52 && // R
+    bytes[1] === 0x49 && // I
+    bytes[2] === 0x46 && // F
+    bytes[3] === 0x46 && // F
+    bytes[8] === 0x57 && // W
+    bytes[9] === 0x41 && // A
+    bytes[10] === 0x56 && // V
+    bytes[11] === 0x45 // E
+  )
+}
+
+function bytesToBlobUrl(bytes: Uint8Array, type: string): string {
+  const copy = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(copy).set(bytes)
+  return URL.createObjectURL(new Blob([copy], { type }))
+}
+
+function audioBase64ToBlobUrl(
+  base64Data: string,
+  sampleRate = 24000,
+): string {
+  const bytes = base64ToBytes(base64Data)
+
+  if (isWavBytes(bytes)) {
+    return bytesToBlobUrl(bytes, 'audio/wav')
+  }
+
+  return float32PcmBytesToWavUrl(bytes, sampleRate)
+}
+
+function float32PcmBytesToWavUrl(raw: Uint8Array, sampleRate: number): string {
   const float32 = new Float32Array(raw.buffer)
   const wavBuffer = new ArrayBuffer(44 + float32.length * 2)
   const view = new DataView(wavBuffer)
@@ -740,7 +777,7 @@ function float32Base64ToWavUrl(
 }
 
 function playPcmBase64(base64Data: string, sampleRate = 16000) {
-  const url = float32Base64ToWavUrl(base64Data, sampleRate)
+  const url = audioBase64ToBlobUrl(base64Data, sampleRate)
   const audio = new Audio(url)
 
   audio.onended = () => {
@@ -836,6 +873,7 @@ type SettingsSummaryProps = {
   lengthPenalty: number
   maxNewTokens?: number
   turnTtsEnabled?: boolean
+  turnStreamingEnabled?: boolean
   onOpen: () => void
 }
 
@@ -847,6 +885,7 @@ function SettingsSummary({
   lengthPenalty,
   maxNewTokens,
   turnTtsEnabled,
+  turnStreamingEnabled,
   onOpen,
 }: SettingsSummaryProps) {
   return (
@@ -871,6 +910,11 @@ function SettingsSummary({
         {typeof turnTtsEnabled === 'boolean' ? (
           <span className="settings-chip">{turnTtsEnabled ? '语音回复开' : '语音回复关'}</span>
         ) : null}
+        {typeof turnStreamingEnabled === 'boolean' ? (
+          <span className="settings-chip">
+            {turnStreamingEnabled ? '流式输出开' : '流式输出关'}
+          </span>
+        ) : null}
       </div>
       <div className="settings-summary-prompt">{summarizePrompt(systemPrompt)}</div>
     </div>
@@ -887,12 +931,14 @@ type SettingsSheetProps = {
   lengthPenalty: number
   maxNewTokens: number
   turnTtsEnabled: boolean
+  turnStreamingEnabled: boolean
   onClose: () => void
   onSelectPreset: (presetId: string) => void
   onPromptChange: (value: string) => void
   onLengthPenaltyChange: (value: number) => void
   onMaxTokensChange: (value: number) => void
   onTurnTtsEnabledChange: (value: boolean) => void
+  onTurnStreamingEnabledChange: (value: boolean) => void
   onUseDefaultRefAudio: () => void
   onClearRefAudio: () => void
   onUploadRefAudio: () => void
@@ -909,12 +955,14 @@ function SettingsSheet({
   lengthPenalty,
   maxNewTokens,
   turnTtsEnabled,
+  turnStreamingEnabled,
   onClose,
   onSelectPreset,
   onPromptChange,
   onLengthPenaltyChange,
   onMaxTokensChange,
   onTurnTtsEnabledChange,
+  onTurnStreamingEnabledChange,
   onUseDefaultRefAudio,
   onClearRefAudio,
   onUploadRefAudio,
@@ -1067,16 +1115,28 @@ function SettingsSheet({
           </div>
 
           {activeMode === 'turnbased' ? (
-            <label className="settings-toggle">
-              <input
-                type="checkbox"
-                checked={turnTtsEnabled}
-                onChange={(event) => {
-                  onTurnTtsEnabledChange(event.target.checked)
-                }}
-              />
-              <span>Turn-based 语音回复</span>
-            </label>
+            <>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={turnTtsEnabled}
+                  onChange={(event) => {
+                    onTurnTtsEnabledChange(event.target.checked)
+                  }}
+                />
+                <span>Turn-based 语音回复</span>
+              </label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={turnStreamingEnabled}
+                  onChange={(event) => {
+                    onTurnStreamingEnabledChange(event.target.checked)
+                  }}
+                />
+                <span>Turn-based 流式输出</span>
+              </label>
+            </>
           ) : null}
         </div>
       </div>
@@ -1125,6 +1185,9 @@ function App() {
 
   const messagesRef = useRef<ConversationEntry[]>([])
   const abortRef = useRef<AbortController | null>(null)
+  const streamingWsRef = useRef<WebSocket | null>(null)
+  const streamingPlayerRef = useRef<StreamingPcmPlayer | null>(null)
+  const streamingStopRef = useRef<(() => void) | null>(null)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
   const duplexEndRef = useRef<HTMLDivElement | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -1695,6 +1758,12 @@ function App() {
 
   function stopCurrentReply() {
     abortRef.current?.abort()
+
+    const stop = streamingStopRef.current
+    if (stop) {
+      streamingStopRef.current = null
+      stop()
+    }
   }
 
   function appendDuplexEntry(role: DuplexEntry['role'], text: string): string {
@@ -1933,7 +2002,50 @@ function App() {
     }
   }
 
+  function buildChatRequestBody(
+    nextMessages: ConversationEntry[],
+    systemMessage: string | BackendContentItem[] | null | undefined,
+    streaming: boolean,
+  ) {
+    return {
+      messages: buildRequestMessages(nextMessages, systemMessage),
+      streaming,
+      generation: {
+        max_new_tokens: settings.maxNewTokens,
+        length_penalty: settings.turnLengthPenalty,
+      },
+      ...(settings.turnTtsEnabled
+        ? {
+            use_tts_template: true,
+          }
+        : {}),
+      tts: {
+        enabled: settings.turnTtsEnabled,
+        ...(settings.turnTtsEnabled && settings.turnbased.refAudio.base64
+          ? {
+              mode: 'audio_assistant',
+              ref_audio_data: settings.turnbased.refAudio.base64,
+            }
+          : settings.turnTtsEnabled
+            ? {
+                mode: 'audio_assistant',
+              }
+            : {}),
+      },
+    }
+  }
+
   async function submitConversation(nextMessages: ConversationEntry[]) {
+    if (settings.turnStreamingEnabled) {
+      await submitConversationStreaming(nextMessages)
+    } else {
+      await submitConversationNonStreaming(nextMessages)
+    }
+  }
+
+  async function submitConversationNonStreaming(
+    nextMessages: ConversationEntry[],
+  ) {
     const systemMessage = buildTurnSystemMessage()
 
     setPendingReply({
@@ -1954,31 +2066,9 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          messages: buildRequestMessages(nextMessages, systemMessage),
-          generation: {
-            max_new_tokens: settings.maxNewTokens,
-            length_penalty: settings.turnLengthPenalty,
-          },
-          ...(settings.turnTtsEnabled
-            ? {
-                use_tts_template: true,
-              }
-            : {}),
-          tts: {
-            enabled: settings.turnTtsEnabled,
-            ...(settings.turnTtsEnabled && settings.turnbased.refAudio.base64
-              ? {
-                  mode: 'audio_assistant',
-                  ref_audio_data: settings.turnbased.refAudio.base64,
-                }
-              : settings.turnTtsEnabled
-                ? {
-                    mode: 'audio_assistant',
-                  }
-                : {}),
-          },
-        }),
+        body: JSON.stringify(
+          buildChatRequestBody(nextMessages, systemMessage, false),
+        ),
         signal: controller.signal,
       })
 
@@ -2013,7 +2103,7 @@ function App() {
 
       if (payload.audio_data) {
         try {
-          assistantAudioUrl = float32Base64ToWavUrl(
+          assistantAudioUrl = audioBase64ToBlobUrl(
             payload.audio_data,
             payload.audio_sample_rate ?? 24000,
           )
@@ -2053,6 +2143,275 @@ function App() {
       abortRef.current = null
       setPendingReply(null)
       setIsGenerating(false)
+    }
+  }
+
+  async function submitConversationStreaming(
+    nextMessages: ConversationEntry[],
+  ) {
+    const systemMessage = buildTurnSystemMessage()
+
+    const pendingId = createId('pending')
+
+    setPendingReply({
+      id: pendingId,
+      role: 'assistant',
+      kind: 'pending',
+      text: '正在生成…',
+    })
+    setIsGenerating(true)
+
+    const wsProto =
+      window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsUrl = `${wsProto}//${window.location.host}/ws/chat`
+
+    let ws: WebSocket
+    try {
+      ws = new WebSocket(wsUrl)
+    } catch (error) {
+      setMessages([
+        ...nextMessages,
+        {
+          id: createId('assistant'),
+          role: 'assistant',
+          kind: 'assistant',
+          text: `连接失败：${getErrorMessage(error)}`,
+          error: true,
+        },
+      ])
+      setPendingReply(null)
+      setIsGenerating(false)
+      return
+    }
+
+    streamingWsRef.current = ws
+
+    let player: StreamingPcmPlayer | null = null
+    if (settings.turnTtsEnabled) {
+      try {
+        player = new StreamingPcmPlayer(24000)
+        streamingPlayerRef.current = player
+      } catch {
+        player = null
+        streamingPlayerRef.current = null
+      }
+    }
+
+    let fullText = ''
+    let stoppedByUser = false
+    let finished = false
+    let lastSampleRate = 24000
+
+    const finalize = (
+      entry: ConversationEntry | null,
+      options: { errorMessage?: string; cutPlayback?: boolean } = {},
+    ) => {
+      if (finished) {
+        return
+      }
+      finished = true
+
+      const { errorMessage, cutPlayback = false } = options
+
+      let resolvedEntry = entry
+
+      if (player) {
+        const merged = player.getMergedFloat32()
+        let mergedUrl: string | null = null
+        if (merged && merged.length > 0) {
+          try {
+            mergedUrl = float32ToWavBlobUrl(merged, lastSampleRate)
+          } catch {
+            mergedUrl = null
+          }
+        }
+        if (mergedUrl && resolvedEntry && resolvedEntry.kind === 'assistant') {
+          resolvedEntry = { ...resolvedEntry, audioPreviewUrl: mergedUrl }
+        }
+
+        if (cutPlayback) {
+          void player.dispose()
+        } else {
+          player.markFinished()
+          player.disposeAfterDrain()
+        }
+        player = null
+      }
+
+      if (resolvedEntry) {
+        setMessages([...nextMessages, resolvedEntry])
+      } else if (errorMessage) {
+        setMessages([
+          ...nextMessages,
+          {
+            id: createId('assistant'),
+            role: 'assistant',
+            kind: 'assistant',
+            text: errorMessage,
+            error: true,
+          },
+        ])
+      }
+
+      setPendingReply(null)
+      setIsGenerating(false)
+
+      if (streamingWsRef.current === ws) {
+        streamingWsRef.current = null
+      }
+
+      if (streamingPlayerRef.current === player) {
+        streamingPlayerRef.current = null
+      }
+
+      if (streamingStopRef.current) {
+        streamingStopRef.current = null
+      }
+    }
+
+    streamingStopRef.current = () => {
+      stoppedByUser = true
+      try {
+        ws.close()
+      } catch {
+        /* ignore */
+      }
+    }
+
+    ws.onopen = () => {
+      try {
+        ws.send(
+          JSON.stringify(buildChatRequestBody(nextMessages, systemMessage, true)),
+        )
+      } catch (error) {
+        finalize(null, {
+          errorMessage: `发送失败：${getErrorMessage(error)}`,
+          cutPlayback: true,
+        })
+        try {
+          ws.close()
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    ws.onmessage = (event) => {
+      let msg: {
+        type?: string
+        text_delta?: string
+        text?: string
+        audio_data?: string
+        audio_sample_rate?: number
+        recording_session_id?: string | null
+        error?: string
+      }
+
+      try {
+        msg = JSON.parse(event.data)
+      } catch {
+        return
+      }
+
+      if (msg.type === 'prefill_done') {
+        return
+      }
+
+      if (msg.type === 'chunk') {
+        if (typeof msg.text_delta === 'string' && msg.text_delta) {
+          fullText += msg.text_delta
+          setPendingReply({
+            id: pendingId,
+            role: 'assistant',
+            kind: 'pending',
+            text: fullText,
+          })
+        }
+
+        if (msg.audio_data && player) {
+          if (typeof msg.audio_sample_rate === 'number') {
+            lastSampleRate = msg.audio_sample_rate
+          }
+          try {
+            player.pushBase64(msg.audio_data)
+          } catch {
+            /* ignore */
+          }
+        }
+        return
+      }
+
+      if (msg.type === 'done') {
+        const finalText = (fullText || msg.text || '').trim() || '(空回复)'
+        const recordingSessionId = msg.recording_session_id ?? null
+
+        if (recordingSessionId) {
+          setLastSessionId(recordingSessionId)
+        }
+
+        finalize(
+          {
+            id: createId('assistant'),
+            role: 'assistant',
+            kind: 'assistant',
+            text: finalText,
+            audioPreviewUrl: null,
+            recordingSessionId,
+          },
+          { cutPlayback: false },
+        )
+
+        try {
+          ws.close()
+        } catch {
+          /* ignore */
+        }
+        return
+      }
+
+      if (msg.type === 'error') {
+        finalize(null, {
+          errorMessage: `请求失败：${msg.error || 'unknown error'}`,
+          cutPlayback: true,
+        })
+        try {
+          ws.close()
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    ws.onerror = () => {
+      finalize(null, {
+        errorMessage: 'WebSocket 连接异常',
+        cutPlayback: true,
+      })
+    }
+
+    ws.onclose = () => {
+      if (finished) {
+        return
+      }
+
+      if (stoppedByUser) {
+        finalize(
+          {
+            id: createId('assistant'),
+            role: 'assistant',
+            kind: 'assistant',
+            text: fullText.trim() || '已停止当前回复。',
+            audioPreviewUrl: null,
+            recordingSessionId: null,
+          },
+          { cutPlayback: true },
+        )
+      } else {
+        finalize(null, {
+          errorMessage: '连接已关闭',
+          cutPlayback: true,
+        })
+      }
     }
   }
 
@@ -2237,6 +2596,7 @@ function App() {
         lengthPenalty={activeLengthPenalty}
         maxNewTokens={settings.maxNewTokens}
         turnTtsEnabled={settings.turnTtsEnabled}
+        turnStreamingEnabled={settings.turnStreamingEnabled}
         onClose={() => {
           setSettingsOpen(false)
         }}
@@ -2259,6 +2619,12 @@ function App() {
           setSettings((previous) => ({
             ...previous,
             turnTtsEnabled: value,
+          }))
+        }}
+        onTurnStreamingEnabledChange={(value) => {
+          setSettings((previous) => ({
+            ...previous,
+            turnStreamingEnabled: value,
           }))
         }}
         onUseDefaultRefAudio={() => {
@@ -2316,6 +2682,7 @@ function App() {
               lengthPenalty={settings.turnLengthPenalty}
               maxNewTokens={settings.maxNewTokens}
               turnTtsEnabled={settings.turnTtsEnabled}
+              turnStreamingEnabled={settings.turnStreamingEnabled}
               onOpen={() => {
                 setSettingsOpen(true)
               }}
