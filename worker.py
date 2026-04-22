@@ -339,9 +339,17 @@ class MiniCPMOWorker:
         lang: Optional[str] = None,
         reset_context: bool = True,
         ref_audio_path: Optional[str] = None,
+        system_content: Any = None,
     ) -> str:
-        """Chat prefill：一次性 prefill 所有消息到 KV cache"""
+        """Chat prefill：一次性 prefill 所有消息到 KV cache
+
+        Args:
+            system_content: 前端原始 system 段（list of {type, text/data, ...}）。
+                C++ backend 会用它构造 voice_clone_prompt / assistant_prompt；
+                pytorch backend 不识别该参数时通过 TypeError 逐级 fallback。
+        """
         chat_view = self.processor.set_chat_mode()
+        # C++ backend 接受 system_content；pytorch backend 不一定，逐级 fallback
         try:
             prompt = chat_view.prefill(
                 session_id=session_id,
@@ -353,16 +361,30 @@ class MiniCPMOWorker:
                 lang=lang,
                 reset_context=reset_context,
                 ref_audio_path=ref_audio_path,
+                system_content=system_content,
             )
         except TypeError:
-            prompt = chat_view.prefill(
-                session_id=session_id,
-                msgs=msgs,
-                omni_mode=omni_mode,
-                max_slice_nums=max_slice_nums,
-                use_tts_template=use_tts_template,
-                enable_thinking=enable_thinking,
-            )
+            try:
+                prompt = chat_view.prefill(
+                    session_id=session_id,
+                    msgs=msgs,
+                    omni_mode=omni_mode,
+                    max_slice_nums=max_slice_nums,
+                    use_tts_template=use_tts_template,
+                    enable_thinking=enable_thinking,
+                    lang=lang,
+                    reset_context=reset_context,
+                    ref_audio_path=ref_audio_path,
+                )
+            except TypeError:
+                prompt = chat_view.prefill(
+                    session_id=session_id,
+                    msgs=msgs,
+                    omni_mode=omni_mode,
+                    max_slice_nums=max_slice_nums,
+                    use_tts_template=use_tts_template,
+                    enable_thinking=enable_thinking,
+                )
         return prompt
 
     def chat_non_streaming_generate(
@@ -1158,6 +1180,7 @@ async def chat_ws(ws: WebSocket):
                     lang=session_lang,
                     reset_context=reset_context,
                     ref_audio_path=session_ref_audio_path,
+                    system_content=_sys_content_items or None,
                 )
 
             await asyncio.to_thread(_do_prefill)
