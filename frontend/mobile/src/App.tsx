@@ -89,6 +89,14 @@ type DuplexStatus =
   | 'stopped'
   | 'error'
 
+type Screen = 'turn' | 'audio-duplex' | 'video-duplex'
+
+type DuplexMode = 'audio' | 'video'
+
+type IconProps = {
+  className?: string
+}
+
 function createId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
 }
@@ -103,6 +111,281 @@ function getErrorMessage(error: unknown): string {
   }
 
   return 'Unknown error'
+}
+
+function getDuplexModeLabel(mode: DuplexMode): string {
+  return mode === 'audio' ? '音频双工' : '视频双工'
+}
+
+function getDuplexScreen(mode: DuplexMode): Screen {
+  return mode === 'audio' ? 'audio-duplex' : 'video-duplex'
+}
+
+function getDuplexBadgeText(status: DuplexStatus, mode: DuplexMode): string {
+  switch (status) {
+    case 'live':
+      return `${getDuplexModeLabel(mode)}进行中`
+    case 'queueing':
+      return '排队中'
+    case 'paused':
+      return '已暂停'
+    case 'error':
+      return '连接异常'
+    case 'stopped':
+      return '已结束'
+    default:
+      return '连接中'
+  }
+}
+
+function PhoneIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M6.6 4.8h3.2l1 3.8-1.8 1.8a15.4 15.4 0 0 0 4.7 4.7l1.8-1.8 3.8 1v3.2a1.6 1.6 0 0 1-1.7 1.6A15.9 15.9 0 0 1 4.9 6.5 1.6 1.6 0 0 1 6.6 4.8Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function KeyboardIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <rect
+        x="3.5"
+        y="6"
+        width="17"
+        height="12"
+        rx="2.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M7.5 10h9M7.5 13h4.5M14 13h2.5M7.5 16h7"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function MicIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M12 4.5A2.5 2.5 0 0 1 14.5 7v4a2.5 2.5 0 0 1-5 0V7A2.5 2.5 0 0 1 12 4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M7.5 10.5a4.5 4.5 0 0 0 9 0M12 15v4M9 19h6"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function WaveIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M4 13h2l1.4-4 2.4 9 2.4-12 2.1 7H20"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function TranscriptIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <rect
+        x="4"
+        y="5"
+        width="16"
+        height="14"
+        rx="3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M8 10h8M8 14h5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function FlipCameraIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M4.5 9.5 7 7h10l2.5 2.5v7A2.5 2.5 0 0 1 17 19H7a2.5 2.5 0 0 1-2.5-2.5Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M15.5 13a3.5 3.5 0 0 1-5.8 2.6M8.5 13a3.5 3.5 0 0 1 5.8-2.6M9.6 17.5l-2-.2.2-2M14.4 8.5l2 .2-.2 2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function PauseIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <rect x="7" y="6" width="3.2" height="12" rx="1.2" fill="currentColor" />
+      <rect x="13.8" y="6" width="3.2" height="12" rx="1.2" fill="currentColor" />
+    </svg>
+  )
+}
+
+function PlayIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path d="M9 7.5v9l7-4.5-7-4.5Z" fill="currentColor" />
+    </svg>
+  )
+}
+
+function VideoCallIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M4.5 8.25A2.25 2.25 0 0 1 6.75 6h7.5a2.25 2.25 0 0 1 2.25 2.25v7.5A2.25 2.25 0 0 1 14.25 18h-7.5A2.25 2.25 0 0 1 4.5 15.75Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="m16.5 10.1 2.9-1.8a.7.7 0 0 1 1.1.6v6.2a.7.7 0 0 1-1.1.6l-2.9-1.8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <circle cx="10.5" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  )
+}
+
+function CloseIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="m8 8 8 8M16 8l-8 8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function StopIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <rect x="7" y="7" width="10" height="10" rx="2.4" fill="currentColor" />
+    </svg>
+  )
+}
+
+function SendIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M4.5 11.5 19 5l-4.5 14-2.6-5-7.4-2.5Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M19 5 11.8 14"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
 }
 
 function buildRequestMessages(entries: ConversationEntry[]): BackendMessage[] {
@@ -253,7 +536,8 @@ function MessageBubble({ entry }: { entry: ThreadEntry }) {
               void audio.play()
             }}
           >
-            PLAY
+            <PlayIcon className="app-icon app-icon-sm" />
+            <span>播放</span>
           </button>
           <div className="voice-wave" />
           <div className="voice-time">{formatDurationMs(entry.durationMs)}</div>
@@ -286,7 +570,8 @@ function MessageBubble({ entry }: { entry: ThreadEntry }) {
               void audio.play()
             }}
           >
-            PLAY AUDIO
+            <PlayIcon className="app-icon app-icon-sm" />
+            <span>收听</span>
           </button>
         </div>
       ) : null}
@@ -299,7 +584,7 @@ function DuplexLogBubble({ entry }: { entry: DuplexEntry }) {
 }
 
 function App() {
-  const [screen, setScreen] = useState<'turn' | 'duplex'>('turn')
+  const [screen, setScreen] = useState<Screen>('turn')
   const [composeMode, setComposeMode] = useState<'voice' | 'text'>('voice')
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState<ConversationEntry[]>([])
@@ -317,8 +602,8 @@ function App() {
   const [duplexEntries, setDuplexEntries] = useState<DuplexEntry[]>([])
   const [duplexStatus, setDuplexStatus] = useState<DuplexStatus>('idle')
   const [duplexStatusText, setDuplexStatusText] = useState('等待进入全双工')
+  const [duplexMode, setDuplexMode] = useState<DuplexMode>('audio')
   const [duplexMicEnabled, setDuplexMicEnabled] = useState(true)
-  const [duplexCameraEnabled, setDuplexCameraEnabled] = useState(true)
   const [duplexTextPanelOpen, setDuplexTextPanelOpen] = useState(true)
   const [duplexPauseState, setDuplexPauseState] = useState<
     'active' | 'pausing' | 'paused'
@@ -343,6 +628,9 @@ function App() {
   const threadEntries: ThreadEntry[] = pendingReply
     ? [...messages, pendingReply]
     : messages
+  const duplexBadgeText = getDuplexBadgeText(duplexStatus, duplexMode)
+  const audioDuplexScreenOpen = screen === 'audio-duplex'
+  const videoDuplexScreenOpen = screen === 'video-duplex'
 
   useEffect(() => {
     messagesRef.current = messages
@@ -408,19 +696,6 @@ function App() {
   }, [duplexMicEnabled])
 
   useEffect(() => {
-    const media = duplexMediaRef.current
-
-    if (!media) {
-      return
-    }
-
-    void media.setCameraEnabled(duplexCameraEnabled).catch((error: unknown) => {
-      setDuplexCameraEnabled(false)
-      appendDuplexEntry('system', `切换摄像头失败：${getErrorMessage(error)}`)
-    })
-  }, [duplexCameraEnabled])
-
-  useEffect(() => {
     return () => {
       abortRef.current?.abort()
       duplexSessionRef.current?.stop()
@@ -482,6 +757,8 @@ function App() {
   }
 
   function stopDuplexSession(options?: { preserveScreen?: boolean }) {
+    const modeLabel = getDuplexModeLabel(duplexMode)
+
     duplexStartInFlightRef.current = false
     duplexListenEntryIdRef.current = null
     duplexMediaRef.current?.stop()
@@ -493,7 +770,7 @@ function App() {
     }
 
     setDuplexStatus('stopped')
-    setDuplexStatusText('全双工会话已结束')
+    setDuplexStatusText(`${modeLabel}会话已结束`)
     setDuplexPauseState('active')
 
     if (!options?.preserveScreen) {
@@ -501,7 +778,16 @@ function App() {
     }
   }
 
-  async function startDuplexSession() {
+  function openDuplexScreen(mode: DuplexMode) {
+    setDuplexMode(mode)
+    setScreen(getDuplexScreen(mode))
+
+    requestAnimationFrame(() => {
+      void startDuplexSession(mode)
+    })
+  }
+
+  async function startDuplexSession(mode: DuplexMode) {
     if (
       duplexStartInFlightRef.current ||
       duplexSessionRef.current ||
@@ -511,14 +797,19 @@ function App() {
       return
     }
 
+    const modeLabel = getDuplexModeLabel(mode)
+    const withVideo = mode === 'video'
+
     duplexStartInFlightRef.current = true
     duplexListenEntryIdRef.current = null
+    setDuplexMode(mode)
     setDuplexEntries([])
     setDuplexMicEnabled(true)
-    setDuplexCameraEnabled(true)
     setDuplexPauseState('active')
     setDuplexStatus('starting')
-    setDuplexStatusText('正在请求摄像头和麦克风...')
+    setDuplexStatusText(
+      withVideo ? '正在请求摄像头和麦克风...' : '正在请求麦克风...',
+    )
 
     try {
       const runtime = await loadDuplexRuntime()
@@ -526,7 +817,7 @@ function App() {
         videoEl: duplexVideoRef.current,
         canvasEl: duplexCanvasRef.current,
       })
-      const session = new runtime.DuplexSession('omni', {
+      const session = new runtime.DuplexSession(withVideo ? 'omni' : 'adx', {
         getMaxKvTokens: () => 8192,
         getPlaybackDelayMs: () => 200,
         outputSampleRate: 24000,
@@ -536,7 +827,7 @@ function App() {
       duplexSessionRef.current = session
 
       media.setMicEnabled(true)
-      await media.setCameraEnabled(true)
+      await media.setCameraEnabled(withVideo)
 
       session.onSystemLog = (text) => {
         appendDuplexEntry('system', text)
@@ -553,24 +844,24 @@ function App() {
       }
       session.onQueueDone = () => {
         setDuplexStatus('starting')
-        setDuplexStatusText('Worker 已分配，正在准备会话...')
+        setDuplexStatusText(`Worker 已分配，正在准备${modeLabel}会话...`)
       }
       session.onPrepared = () => {
-        setDuplexStatusText('会话已准备，开始双工推流...')
+        setDuplexStatusText(`会话已准备，开始${modeLabel}推流...`)
       }
       session.onRunningChange = (running) => {
         setDuplexStatus(running ? 'live' : 'stopped')
-        setDuplexStatusText(running ? '双工进行中' : '全双工会话已停止')
+        setDuplexStatusText(running ? `${modeLabel}进行中` : `${modeLabel}会话已停止`)
       }
       session.onPauseStateChange = (state) => {
         setDuplexPauseState(state)
         setDuplexStatus(state === 'active' ? 'live' : 'paused')
         setDuplexStatusText(
           state === 'active'
-            ? '双工进行中'
+            ? `${modeLabel}进行中`
             : state === 'pausing'
-              ? '正在暂停双工...'
-              : '双工已暂停',
+              ? `正在暂停${modeLabel}...`
+              : `${modeLabel}已暂停`,
         )
       }
       session.onMetrics = (data) => {
@@ -615,18 +906,23 @@ function App() {
         duplexSessionRef.current = null
         setDuplexPauseState('active')
         setDuplexStatus('stopped')
-        setDuplexStatusText('全双工会话已结束')
+        setDuplexStatusText(`${modeLabel}会话已结束`)
+      }
+
+      const preparePayload: Record<string, unknown> = {
+        config: {
+          length_penalty: withVideo ? 1.1 : 1.05,
+        },
+      }
+
+      if (withVideo) {
+        preparePayload.max_slice_nums = 1
+        preparePayload.deferred_finalize = true
       }
 
       await session.start(
         'You are a helpful assistant.',
-        {
-          config: {
-            length_penalty: 1.1,
-          },
-          max_slice_nums: 1,
-          deferred_finalize: true,
-        },
+        preparePayload,
         async () => {
           media.onChunk = (chunk) => {
             const message: Record<string, unknown> = {
@@ -634,7 +930,7 @@ function App() {
               audio_base64: runtime.arrayBufferToBase64(chunk.audio.buffer),
             }
 
-            if (chunk.frameBase64) {
+            if (withVideo && chunk.frameBase64) {
               message.frame_base64_list = [chunk.frameBase64]
             }
 
@@ -916,10 +1212,17 @@ function App() {
       : '录完后自动发给模型'
 
   const secondaryLabel = isGenerating
-    ? '停'
+    ? '停止'
     : composeMode === 'voice'
-      ? '文'
-      : '麦'
+      ? '文字'
+      : '语音'
+
+  const talkVisualIcon =
+    isRecording || isPreparingRecording ? (
+      <WaveIcon className="app-icon app-icon-xl talk-icon" />
+    ) : (
+      <MicIcon className="app-icon app-icon-xl talk-icon" />
+    )
 
   return (
     <div className="mobile-app">
@@ -930,19 +1233,32 @@ function App() {
               <span className="service-dot" />
               <span>{serviceState.summary}</span>
             </div>
-            <button
-              className="entry-phone"
-              type="button"
-              onClick={() => {
-                setScreen('duplex')
-                requestAnimationFrame(() => {
-                  void startDuplexSession()
-                })
-              }}
-              disabled={isGenerating || isRecording || isPreparingRecording}
-            >
-              TEL
-            </button>
+            <div className="turn-top-actions">
+              <button
+                className="entry-action audio"
+                type="button"
+                onClick={() => {
+                  openDuplexScreen('audio')
+                }}
+                disabled={isGenerating || isRecording || isPreparingRecording}
+                aria-label="进入音频双工"
+              >
+                <PhoneIcon className="app-icon app-icon-md" />
+                <span className="button-inline-label">音频</span>
+              </button>
+              <button
+                className="entry-action video"
+                type="button"
+                onClick={() => {
+                  openDuplexScreen('video')
+                }}
+                disabled={isGenerating || isRecording || isPreparingRecording}
+                aria-label="进入视频双工"
+              >
+                <VideoCallIcon className="app-icon app-icon-md" />
+                <span className="button-inline-label">视频</span>
+              </button>
+            </div>
           </div>
 
           <div className="thread-wrap">
@@ -984,7 +1300,14 @@ function App() {
                     type={isGenerating ? 'button' : 'submit'}
                     onClick={isGenerating ? stopCurrentReply : undefined}
                   >
-                    {isGenerating ? '停止' : '发送'}
+                    {isGenerating ? (
+                      <StopIcon className="app-icon app-icon-md" />
+                    ) : (
+                      <SendIcon className="app-icon app-icon-md" />
+                    )}
+                    <span className="button-inline-label">
+                      {isGenerating ? '停止' : '发送'}
+                    </span>
                   </button>
                   <button
                     className="secondary-btn"
@@ -998,7 +1321,12 @@ function App() {
                       setComposeMode('voice')
                     }}
                   >
-                    {secondaryLabel}
+                    {isGenerating ? (
+                      <StopIcon className="app-icon app-icon-md" />
+                    ) : (
+                      <MicIcon className="app-icon app-icon-md" />
+                    )}
+                    <span className="button-inline-label">{secondaryLabel}</span>
                   </button>
                 </div>
               </form>
@@ -1025,8 +1353,13 @@ function App() {
                   onPointerCancel={() => stopRecording('cancel')}
                   disabled={isGenerating || isPreparingRecording}
                 >
-                  <div className="talk-main">{voiceMainLabel}</div>
-                  <div className="talk-sub">{voiceSubLabel}</div>
+                  <div className="talk-visual" aria-hidden="true">
+                    <div className="talk-orb">{talkVisualIcon}</div>
+                  </div>
+                  <div className="talk-copy">
+                    <div className="talk-main">{voiceMainLabel}</div>
+                    <div className="talk-sub">{voiceSubLabel}</div>
+                  </div>
                 </button>
                 <button
                   className="text-side-btn"
@@ -1040,7 +1373,12 @@ function App() {
                     setComposeMode('text')
                   }}
                 >
-                  {secondaryLabel}
+                  {isGenerating ? (
+                    <StopIcon className="app-icon app-icon-lg" />
+                  ) : (
+                    <KeyboardIcon className="app-icon app-icon-lg" />
+                  )}
+                  <span className="button-stack-label">{secondaryLabel}</span>
                 </button>
               </div>
             )}
@@ -1053,8 +1391,8 @@ function App() {
             </div>
           </div>
         </div>
-      ) : (
-        <div className="duplex-screen">
+      ) : audioDuplexScreenOpen ? (
+        <div className="duplex-screen audio-mode">
           <div className="top-actions">
             <button
               className="top-action-button"
@@ -1063,63 +1401,35 @@ function App() {
                 setDuplexTextPanelOpen((previous) => !previous)
               }}
             >
-              文
-            </button>
-            <button
-              className="top-action-button"
-              type="button"
-              onClick={() => {
-                const action = duplexMediaRef.current?.flipCamera()
-
-                if (action) {
-                  void action.catch((error: unknown) => {
-                    appendDuplexEntry(
-                      'system',
-                      `翻转摄像头失败：${getErrorMessage(error)}`,
-                    )
-                  })
-                }
-              }}
-            >
-              翻
+              <TranscriptIcon className="app-icon app-icon-md" />
+              <span className="button-inline-label">字幕</span>
             </button>
           </div>
 
           <div className="duplex-badge-row">
-            <div className={`duplex-badge ${duplexStatus}`}>
-              {duplexStatus === 'live'
-                ? 'FULL DUPLEX LIVE'
-                : duplexStatus === 'queueing'
-                  ? 'QUEUEING'
-                  : duplexStatus === 'paused'
-                    ? 'PAUSED'
-                    : duplexStatus === 'error'
-                      ? 'ERROR'
-                      : 'CONNECTING'}
-            </div>
+            <div className={`duplex-badge ${duplexStatus}`}>{duplexBadgeText}</div>
             <div className="duplex-status-copy">{duplexStatusText}</div>
           </div>
 
-          <div className="duplex-stage">
+          <div className="duplex-stage audio-stage">
             <video
               ref={duplexVideoRef}
-              className={[
-                'duplex-video',
-                duplexCameraEnabled ? 'visible' : 'hidden',
-              ]
-                .filter(Boolean)
-                .join(' ')}
+              className="duplex-video hidden"
               autoPlay
               muted
               playsInline
             />
             <canvas ref={duplexCanvasRef} className="duplex-capture-canvas" />
 
-            {!duplexCameraEnabled ? (
-              <div className="duplex-stage-overlay camera-off">
-                摄像头已关闭，当前继续走纯音频双工。
+            <div className="audio-stage-core">
+              <div className="audio-stage-orb" aria-hidden="true">
+                <WaveIcon className="app-icon app-icon-xl" />
               </div>
-            ) : null}
+              <div className="audio-stage-title">纯音频双工</div>
+              <div className="audio-stage-copy">
+                这一页只上传麦克风音频，不发送摄像头画面，适合耳机或通话场景。
+              </div>
+            </div>
 
             {duplexTextPanelOpen ? (
               <div className="duplex-transcript">
@@ -1147,7 +1457,10 @@ function App() {
                 setDuplexMicEnabled((previous) => !previous)
               }}
             >
-              {duplexMicEnabled ? 'MIC' : 'MIC OFF'}
+              <MicIcon className="app-icon app-icon-lg" />
+              <span className="circle-btn-label">
+                {duplexMicEnabled ? '麦克风' : '已静音'}
+              </span>
             </button>
             <button
               className={['circle-btn', duplexPauseState === 'active' ? '' : 'muted']
@@ -1159,18 +1472,14 @@ function App() {
               }}
               disabled={!duplexSessionRef.current}
             >
-              {duplexPauseState === 'active' ? 'PAUSE' : 'RESUME'}
-            </button>
-            <button
-              className={['circle-btn', 'white', duplexCameraEnabled ? '' : 'muted']
-                .filter(Boolean)
-                .join(' ')}
-              type="button"
-              onClick={() => {
-                setDuplexCameraEnabled((previous) => !previous)
-              }}
-            >
-              {duplexCameraEnabled ? 'CAM' : 'CAM OFF'}
+              {duplexPauseState === 'active' ? (
+                <PauseIcon className="app-icon app-icon-lg" />
+              ) : (
+                <PlayIcon className="app-icon app-icon-lg" />
+              )}
+              <span className="circle-btn-label">
+                {duplexPauseState === 'active' ? '暂停' : '继续'}
+              </span>
             </button>
             <button
               className="circle-btn danger"
@@ -1179,7 +1488,121 @@ function App() {
                 stopDuplexSession()
               }}
             >
-              EXIT
+              <CloseIcon className="app-icon app-icon-lg" />
+              <span className="circle-btn-label">退出</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="duplex-screen">
+          <div className="top-actions">
+            <button
+              className="top-action-button"
+              type="button"
+              onClick={() => {
+                setDuplexTextPanelOpen((previous) => !previous)
+              }}
+            >
+              <TranscriptIcon className="app-icon app-icon-md" />
+              <span className="button-inline-label">字幕</span>
+            </button>
+            <button
+              className="top-action-button"
+              type="button"
+              onClick={() => {
+                const action = duplexMediaRef.current?.flipCamera()
+
+                if (action) {
+                  void action.catch((error: unknown) => {
+                    appendDuplexEntry(
+                      'system',
+                      `翻转摄像头失败：${getErrorMessage(error)}`,
+                    )
+                  })
+                }
+              }}
+            >
+              <FlipCameraIcon className="app-icon app-icon-md" />
+              <span className="button-inline-label">翻转</span>
+            </button>
+          </div>
+
+          <div className="duplex-badge-row">
+            <div className={`duplex-badge ${duplexStatus}`}>{duplexBadgeText}</div>
+            <div className="duplex-status-copy">{duplexStatusText}</div>
+          </div>
+
+          <div className="duplex-stage">
+            <video
+              ref={duplexVideoRef}
+              className={['duplex-video', videoDuplexScreenOpen ? 'visible' : 'hidden']
+                .filter(Boolean)
+                .join(' ')}
+              autoPlay
+              muted
+              playsInline
+            />
+            <canvas ref={duplexCanvasRef} className="duplex-capture-canvas" />
+
+            {duplexTextPanelOpen ? (
+              <div className="duplex-transcript">
+                {duplexEntries.length ? (
+                  duplexEntries.map((entry) => (
+                    <DuplexLogBubble key={entry.id} entry={entry} />
+                  ))
+                ) : (
+                  <div className="duplex-transcript-empty">
+                    进入后会在这里显示系统状态、用户转写和模型回复。
+                  </div>
+                )}
+                <div ref={duplexEndRef} />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="control-strip">
+            <button
+              className={['circle-btn', duplexMicEnabled ? '' : 'muted']
+                .filter(Boolean)
+                .join(' ')}
+              type="button"
+              onClick={() => {
+                setDuplexMicEnabled((previous) => !previous)
+              }}
+            >
+              <MicIcon className="app-icon app-icon-lg" />
+              <span className="circle-btn-label">
+                {duplexMicEnabled ? '麦克风' : '已静音'}
+              </span>
+            </button>
+            <button
+              className={['circle-btn', duplexPauseState === 'active' ? '' : 'muted']
+                .filter(Boolean)
+                .join(' ')}
+              type="button"
+              onClick={() => {
+                duplexSessionRef.current?.pauseToggle()
+              }}
+              disabled={!duplexSessionRef.current}
+            >
+              {duplexPauseState === 'active' ? (
+                <PauseIcon className="app-icon app-icon-lg" />
+              ) : (
+                <PlayIcon className="app-icon app-icon-lg" />
+              )}
+              <span className="circle-btn-label">
+                {duplexPauseState === 'active' ? '暂停' : '继续'}
+              </span>
+            </button>
+            <button
+              className="circle-btn danger"
+              type="button"
+              onClick={() => {
+                stopDuplexSession()
+              }}
+            >
+              <CloseIcon className="app-icon app-icon-lg" />
+              <span className="circle-btn-label">退出</span>
             </button>
           </div>
         </div>
