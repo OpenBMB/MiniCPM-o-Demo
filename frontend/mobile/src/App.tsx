@@ -792,6 +792,86 @@ function playPcmBase64(base64Data: string, sampleRate = 16000) {
   })
 }
 
+type AudioPlayPillProps = {
+  url: string
+  className?: string
+  playLabel?: string
+  pauseLabel?: string
+}
+
+function AudioPlayPill({
+  url,
+  className,
+  playLabel = '播放',
+  pauseLabel = '暂停',
+}: AudioPlayPillProps) {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+
+  useEffect(() => {
+    const audio = new Audio(url)
+    audioRef.current = audio
+
+    const handlePlay = () => setIsPlaying(true)
+    const handlePause = () => setIsPlaying(false)
+    const handleEnded = () => setIsPlaying(false)
+
+    audio.addEventListener('play', handlePlay)
+    audio.addEventListener('pause', handlePause)
+    audio.addEventListener('ended', handleEnded)
+
+    return () => {
+      audio.removeEventListener('play', handlePlay)
+      audio.removeEventListener('pause', handlePause)
+      audio.removeEventListener('ended', handleEnded)
+      try {
+        audio.pause()
+      } catch {
+        /* ignore */
+      }
+      audioRef.current = null
+    }
+  }, [url])
+
+  const handleClick = () => {
+    const audio = audioRef.current
+    if (!audio) {
+      return
+    }
+
+    if (isPlaying) {
+      audio.pause()
+      return
+    }
+
+    try {
+      audio.currentTime = 0
+    } catch {
+      /* ignore: some browsers throw if not seekable yet */
+    }
+    void audio.play().catch(() => {
+      setIsPlaying(false)
+    })
+  }
+
+  return (
+    <button
+      className={['voice-pill', isPlaying ? 'is-playing' : '', className]
+        .filter(Boolean)
+        .join(' ')}
+      type="button"
+      onClick={handleClick}
+    >
+      {isPlaying ? (
+        <PauseIcon className="app-icon app-icon-sm" />
+      ) : (
+        <PlayIcon className="app-icon app-icon-sm" />
+      )}
+      <span>{isPlaying ? pauseLabel : playLabel}</span>
+    </button>
+  )
+}
+
 function MessageBubble({ entry }: { entry: ThreadEntry }) {
   if (entry.kind === 'pending') {
     return (
@@ -810,17 +890,7 @@ function MessageBubble({ entry }: { entry: ThreadEntry }) {
     return (
       <div className="msg user-voice">
         <div className="voice-row">
-          <button
-            className="voice-pill"
-            type="button"
-            onClick={() => {
-              const audio = new Audio(entry.previewUrl)
-              void audio.play()
-            }}
-          >
-            <PlayIcon className="app-icon app-icon-sm" />
-            <span>播放</span>
-          </button>
+          <AudioPlayPill url={entry.previewUrl} />
           <div className="voice-wave" />
           <div className="voice-time">{formatDurationMs(entry.durationMs)}</div>
         </div>
@@ -844,17 +914,12 @@ function MessageBubble({ entry }: { entry: ThreadEntry }) {
       ) : null}
       {entry.role === 'assistant' && entry.audioPreviewUrl ? (
         <div className="assistant-actions">
-          <button
+          <AudioPlayPill
+            url={entry.audioPreviewUrl}
             className="audio-replay"
-            type="button"
-            onClick={() => {
-              const audio = new Audio(entry.audioPreviewUrl ?? undefined)
-              void audio.play()
-            }}
-          >
-            <PlayIcon className="app-icon app-icon-sm" />
-            <span>收听</span>
-          </button>
+            playLabel="收听"
+            pauseLabel="暂停"
+          />
         </div>
       ) : null}
     </div>
