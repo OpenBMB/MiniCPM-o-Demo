@@ -2,6 +2,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
 } from 'react'
 import {
@@ -12,18 +13,32 @@ import {
 } from './mobile-duplex'
 import './App.css'
 
-type BackendMessage =
+type BackendContentItem =
   | {
-      role: 'assistant' | 'user'
-      content: string
+      type: 'text'
+      text: string
     }
   | {
-      role: 'user'
-      content: Array<{
-        type: 'audio'
-        data: string
-      }>
+      type: 'audio'
+      data: string
+      path?: string
+      name?: string
+      duration?: number
     }
+  | {
+      type: 'image'
+      data: string
+    }
+  | {
+      type: 'video'
+      data: string
+      duration?: number
+    }
+
+type BackendMessage = {
+  role: 'assistant' | 'user' | 'system'
+  content: string | BackendContentItem[]
+}
 
 type ConversationEntry =
   | {
@@ -93,8 +108,81 @@ type Screen = 'turn' | 'audio-duplex' | 'video-duplex'
 
 type DuplexMode = 'audio' | 'video'
 
+type PresetMode = 'turnbased' | 'audio_duplex' | 'omni'
+
+type RefAudioState = {
+  source: 'none' | 'default' | 'preset' | 'upload'
+  name: string
+  duration: number
+  base64: string | null
+}
+
+type PresetMetadata = {
+  id: string
+  order?: number
+  name: string
+  description?: string
+  system_prompt?: string
+  system_content?: BackendContentItem[]
+  ref_audio?: {
+    data?: string | null
+    path?: string
+    name?: string
+    duration?: number
+  }
+}
+
+type ModeSettings = {
+  presetId: string | null
+  systemPrompt: string
+  refAudio: RefAudioState
+}
+
+type SettingsState = {
+  turnbased: ModeSettings
+  audio_duplex: ModeSettings
+  omni: ModeSettings
+  maxNewTokens: number
+  turnLengthPenalty: number
+  audioDuplexLengthPenalty: number
+  videoDuplexLengthPenalty: number
+  turnTtsEnabled: boolean
+}
+
 type IconProps = {
   className?: string
+}
+
+const EMPTY_REF_AUDIO: RefAudioState = {
+  source: 'none',
+  name: '未设置',
+  duration: 0,
+  base64: null,
+}
+
+const DEFAULT_SETTINGS: SettingsState = {
+  turnbased: {
+    presetId: null,
+    systemPrompt:
+      '你的任务是作为一个助手认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。',
+    refAudio: EMPTY_REF_AUDIO,
+  },
+  audio_duplex: {
+    presetId: null,
+    systemPrompt:
+      '请作为一个自然、口语化的语音助手与用户实时对话。你处于音频双工模式，可以一边听一边说。',
+    refAudio: EMPTY_REF_AUDIO,
+  },
+  omni: {
+    presetId: null,
+    systemPrompt: 'Streaming Omni Conversation.',
+    refAudio: EMPTY_REF_AUDIO,
+  },
+  maxNewTokens: 256,
+  turnLengthPenalty: 1.1,
+  audioDuplexLengthPenalty: 1.05,
+  videoDuplexLengthPenalty: 1.1,
+  turnTtsEnabled: true,
 }
 
 function createId(prefix: string): string {
@@ -136,6 +224,109 @@ function getDuplexBadgeText(status: DuplexStatus, mode: DuplexMode): string {
     default:
       return '连接中'
   }
+}
+
+function getPresetModeForScreen(screen: Screen): PresetMode {
+  if (screen === 'turn') {
+    return 'turnbased'
+  }
+
+  return screen === 'audio-duplex' ? 'audio_duplex' : 'omni'
+}
+
+function getPresetModeLabel(mode: PresetMode): string {
+  if (mode === 'turnbased') {
+    return 'Turn-based'
+  }
+
+  return mode === 'audio_duplex' ? '音频双工' : '视频双工'
+}
+
+function getLengthPenaltyForMode(
+  settings: SettingsState,
+  presetMode: PresetMode,
+): number {
+  if (presetMode === 'turnbased') {
+    return settings.turnLengthPenalty
+  }
+
+  return presetMode === 'audio_duplex'
+    ? settings.audioDuplexLengthPenalty
+    : settings.videoDuplexLengthPenalty
+}
+
+function summarizePrompt(prompt: string): string {
+  const compact = prompt.replace(/\s+/g, ' ').trim()
+
+  if (!compact) {
+    return '未设置'
+  }
+
+  return compact.length > 48 ? `${compact.slice(0, 48)}...` : compact
+}
+
+function cloneRefAudio(refAudio: RefAudioState): RefAudioState {
+  return {
+    ...refAudio,
+  }
+}
+
+function buildModeSettings(
+  previous: ModeSettings,
+  next: Partial<ModeSettings>,
+): ModeSettings {
+  return {
+    ...previous,
+    ...next,
+    refAudio: next.refAudio ? cloneRefAudio(next.refAudio) : cloneRefAudio(previous.refAudio),
+  }
+}
+
+function extractPromptFromPreset(preset: PresetMetadata): string {
+  if (preset.system_prompt?.trim()) {
+    return preset.system_prompt.trim()
+  }
+
+  const textParts =
+    preset.system_content
+      ?.filter(
+        (
+          item,
+        ): item is Extract<BackendContentItem, { type: 'text'; text: string }> =>
+          item.type === 'text' && Boolean(item.text?.trim()),
+      )
+      .map((item) => item.text.trim()) ?? []
+
+  return textParts.join('\n\n').trim()
+}
+
+function extractRefAudioFromPreset(preset: PresetMetadata): RefAudioState {
+  if (preset.ref_audio?.data) {
+    return {
+      source: 'preset',
+      name: preset.ref_audio.name || '预设参考音频',
+      duration: preset.ref_audio.duration || 0,
+      base64: preset.ref_audio.data,
+    }
+  }
+
+  const systemAudio = preset.system_content?.find(
+    (
+      item,
+    ): item is Extract<BackendContentItem, { type: 'audio'; data: string }> =>
+      item.type === 'audio' && Boolean(item.data),
+  )
+
+  if (systemAudio?.data) {
+    return {
+      source: 'preset',
+      name: systemAudio.name || '预设参考音频',
+      duration: systemAudio.duration || 0,
+      base64: systemAudio.data,
+    }
+  }
+
+  return cloneRefAudio(EMPTY_REF_AUDIO)
 }
 
 function PhoneIcon({ className }: IconProps) {
@@ -388,8 +579,44 @@ function SendIcon({ className }: IconProps) {
   )
 }
 
-function buildRequestMessages(entries: ConversationEntry[]): BackendMessage[] {
-  return entries.map((entry) => {
+function SettingsIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M10.3 4.8h3.4l.5 2.1a5.8 5.8 0 0 1 1.5.9l2-.7 1.7 2.9-1.5 1.4a6 6 0 0 1 0 1.7l1.5 1.4-1.7 2.9-2-.7a5.8 5.8 0 0 1-1.5.9l-.5 2.1h-3.4l-.5-2.1a5.8 5.8 0 0 1-1.5-.9l-2 .7-1.7-2.9 1.5-1.4a6 6 0 0 1 0-1.7L4.6 10l1.7-2.9 2 .7a5.8 5.8 0 0 1 1.5-.9Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+      <circle cx="12" cy="12" r="2.5" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
+function buildRequestMessages(
+  entries: ConversationEntry[],
+  systemMessage?: string | BackendContentItem[] | null,
+): BackendMessage[] {
+  const messages: BackendMessage[] = []
+
+  if (typeof systemMessage === 'string' && systemMessage.trim()) {
+    messages.push({
+      role: 'system',
+      content: systemMessage.trim(),
+    })
+  } else if (Array.isArray(systemMessage) && systemMessage.length) {
+    messages.push({
+      role: 'system',
+      content: systemMessage,
+    })
+  }
+
+  const conversationMessages: BackendMessage[] = entries.map((entry): BackendMessage => {
     if (entry.role === 'assistant') {
       return {
         role: 'assistant',
@@ -414,6 +641,8 @@ function buildRequestMessages(entries: ConversationEntry[]): BackendMessage[] {
       ],
     }
   })
+
+  return [...messages, ...conversationMessages]
 }
 
 async function convertAudioBlobToFloat32Base64(blob: Blob): Promise<string> {
@@ -510,6 +739,22 @@ function float32Base64ToWavUrl(
   return URL.createObjectURL(new Blob([wavBuffer], { type: 'audio/wav' }))
 }
 
+function playPcmBase64(base64Data: string, sampleRate = 16000) {
+  const url = float32Base64ToWavUrl(base64Data, sampleRate)
+  const audio = new Audio(url)
+
+  audio.onended = () => {
+    URL.revokeObjectURL(url)
+  }
+  audio.onerror = () => {
+    URL.revokeObjectURL(url)
+  }
+
+  void audio.play().catch(() => {
+    URL.revokeObjectURL(url)
+  })
+}
+
 function MessageBubble({ entry }: { entry: ThreadEntry }) {
   if (entry.kind === 'pending') {
     return (
@@ -583,6 +828,262 @@ function DuplexLogBubble({ entry }: { entry: DuplexEntry }) {
   return <div className={['duplex-log', entry.role].join(' ')}>{entry.text}</div>
 }
 
+type SettingsSummaryProps = {
+  modeLabel: string
+  presetName: string
+  refAudio: RefAudioState
+  systemPrompt: string
+  lengthPenalty: number
+  maxNewTokens?: number
+  turnTtsEnabled?: boolean
+  onOpen: () => void
+}
+
+function SettingsSummary({
+  modeLabel,
+  presetName,
+  refAudio,
+  systemPrompt,
+  lengthPenalty,
+  maxNewTokens,
+  turnTtsEnabled,
+  onOpen,
+}: SettingsSummaryProps) {
+  return (
+    <div className="settings-summary-card">
+      <div className="settings-summary-head">
+        <div className="settings-summary-title">当前参数</div>
+        <button className="settings-link-button" type="button" onClick={onOpen}>
+          <SettingsIcon className="app-icon app-icon-sm" />
+          <span>设置</span>
+        </button>
+      </div>
+      <div className="settings-chip-row">
+        <span className="settings-chip">{modeLabel}</span>
+        <span className="settings-chip">Preset: {presetName}</span>
+        <span className="settings-chip">
+          Ref: {refAudio.base64 ? refAudio.name : '未设置'}
+        </span>
+        <span className="settings-chip">Len: {lengthPenalty.toFixed(2)}</span>
+        {typeof maxNewTokens === 'number' ? (
+          <span className="settings-chip">Tokens: {maxNewTokens}</span>
+        ) : null}
+        {typeof turnTtsEnabled === 'boolean' ? (
+          <span className="settings-chip">{turnTtsEnabled ? '语音回复开' : '语音回复关'}</span>
+        ) : null}
+      </div>
+      <div className="settings-summary-prompt">{summarizePrompt(systemPrompt)}</div>
+    </div>
+  )
+}
+
+type SettingsSheetProps = {
+  open: boolean
+  activeMode: PresetMode
+  activeLabel: string
+  activeSettings: ModeSettings
+  activePresets: PresetMetadata[]
+  defaultRefAudio: RefAudioState | null
+  lengthPenalty: number
+  maxNewTokens: number
+  turnTtsEnabled: boolean
+  onClose: () => void
+  onSelectPreset: (presetId: string) => void
+  onPromptChange: (value: string) => void
+  onLengthPenaltyChange: (value: number) => void
+  onMaxTokensChange: (value: number) => void
+  onTurnTtsEnabledChange: (value: boolean) => void
+  onUseDefaultRefAudio: () => void
+  onClearRefAudio: () => void
+  onUploadRefAudio: () => void
+  onPlayRefAudio: () => void
+}
+
+function SettingsSheet({
+  open,
+  activeMode,
+  activeLabel,
+  activeSettings,
+  activePresets,
+  defaultRefAudio,
+  lengthPenalty,
+  maxNewTokens,
+  turnTtsEnabled,
+  onClose,
+  onSelectPreset,
+  onPromptChange,
+  onLengthPenaltyChange,
+  onMaxTokensChange,
+  onTurnTtsEnabledChange,
+  onUseDefaultRefAudio,
+  onClearRefAudio,
+  onUploadRefAudio,
+  onPlayRefAudio,
+}: SettingsSheetProps) {
+  if (!open) {
+    return null
+  }
+
+  return (
+    <div className="settings-sheet-backdrop" onClick={onClose}>
+      <div
+        className="settings-sheet"
+        onClick={(event) => {
+          event.stopPropagation()
+        }}
+      >
+        <div className="settings-sheet-head">
+          <div>
+            <div className="settings-sheet-title">设置</div>
+            <div className="settings-sheet-subtitle">{activeLabel}</div>
+          </div>
+          <button className="settings-close-button" type="button" onClick={onClose}>
+            <CloseIcon className="app-icon app-icon-md" />
+          </button>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-title">Preset</div>
+          <div className="preset-chip-row">
+            {activePresets.length ? (
+              activePresets.map((preset) => (
+                <button
+                  key={preset.id}
+                  className={[
+                    'preset-chip',
+                    activeSettings.presetId === preset.id ? 'active' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  type="button"
+                  onClick={() => {
+                    onSelectPreset(preset.id)
+                  }}
+                >
+                  {preset.name}
+                </button>
+              ))
+            ) : (
+              <div className="settings-empty-copy">当前模式暂无可用 preset。</div>
+            )}
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-title">参考音频</div>
+          <div className="ref-audio-card">
+            <div className="ref-audio-title">
+              {activeSettings.refAudio.base64 ? activeSettings.refAudio.name : '未设置参考音频'}
+            </div>
+            <div className="ref-audio-meta">
+              来源：{activeSettings.refAudio.source}
+              {activeSettings.refAudio.duration
+                ? ` · ${activeSettings.refAudio.duration.toFixed(1)}s`
+                : ''}
+            </div>
+            <div className="ref-audio-actions">
+              <button
+                className="secondary-btn compact"
+                type="button"
+                onClick={onUseDefaultRefAudio}
+                disabled={!defaultRefAudio?.base64}
+              >
+                默认
+              </button>
+              <button
+                className="secondary-btn compact"
+                type="button"
+                onClick={onUploadRefAudio}
+              >
+                上传
+              </button>
+              <button
+                className="secondary-btn compact"
+                type="button"
+                onClick={onPlayRefAudio}
+                disabled={!activeSettings.refAudio.base64}
+              >
+                播放
+              </button>
+              <button
+                className="secondary-btn compact"
+                type="button"
+                onClick={onClearRefAudio}
+              >
+                清空
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <label className="settings-section-title" htmlFor="settings-system-prompt">
+            System Prompt
+          </label>
+          <textarea
+            id="settings-system-prompt"
+            className="settings-textarea"
+            value={activeSettings.systemPrompt}
+            onChange={(event) => {
+              onPromptChange(event.target.value)
+            }}
+          />
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-title">参数</div>
+          <div className="settings-grid">
+            <label className="settings-field">
+              <span>Length Penalty</span>
+              <input
+                className="settings-input"
+                type="number"
+                min="0.1"
+                max="5"
+                step="0.05"
+                value={lengthPenalty}
+                onChange={(event) => {
+                  onLengthPenaltyChange(Number(event.target.value))
+                }}
+              />
+            </label>
+
+            {activeMode === 'turnbased' ? (
+              <label className="settings-field">
+                <span>Max Tokens</span>
+                <input
+                  className="settings-input"
+                  type="number"
+                  min="1"
+                  max="2048"
+                  step="1"
+                  value={maxNewTokens}
+                  onChange={(event) => {
+                    onMaxTokensChange(Number(event.target.value))
+                  }}
+                />
+              </label>
+            ) : null}
+          </div>
+
+          {activeMode === 'turnbased' ? (
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={turnTtsEnabled}
+                onChange={(event) => {
+                  onTurnTtsEnabledChange(event.target.checked)
+                }}
+              />
+              <span>Turn-based 语音回复</span>
+            </label>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('turn')
   const [composeMode, setComposeMode] = useState<'voice' | 'text'>('voice')
@@ -593,6 +1094,19 @@ function App() {
   const [isRecording, setIsRecording] = useState(false)
   const [isPreparingRecording, setIsPreparingRecording] = useState(false)
   const [recordError, setRecordError] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [presetsByMode, setPresetsByMode] = useState<Record<PresetMode, PresetMetadata[]>>({
+    turnbased: [],
+    audio_duplex: [],
+    omni: [],
+  })
+  const [defaultRefAudio, setDefaultRefAudio] = useState<RefAudioState | null>(null)
+  const [settings, setSettings] = useState<SettingsState>({
+    ...DEFAULT_SETTINGS,
+    turnbased: buildModeSettings(DEFAULT_SETTINGS.turnbased, {}),
+    audio_duplex: buildModeSettings(DEFAULT_SETTINGS.audio_duplex, {}),
+    omni: buildModeSettings(DEFAULT_SETTINGS.omni, {}),
+  })
   const [serviceState, setServiceState] = useState<ServiceState>({
     phase: 'loading',
     summary: 'Checking backend',
@@ -618,6 +1132,7 @@ function App() {
   const audioChunksRef = useRef<Blob[]>([])
   const recordingStartRef = useRef<number>(0)
   const recordingActionRef = useRef<'send' | 'cancel'>('send')
+  const refAudioInputRef = useRef<HTMLInputElement | null>(null)
   const duplexVideoRef = useRef<HTMLVideoElement | null>(null)
   const duplexCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const duplexSessionRef = useRef<DuplexSessionLike | null>(null)
@@ -631,6 +1146,21 @@ function App() {
   const duplexBadgeText = getDuplexBadgeText(duplexStatus, duplexMode)
   const audioDuplexScreenOpen = screen === 'audio-duplex'
   const videoDuplexScreenOpen = screen === 'video-duplex'
+  const activePresetMode = getPresetModeForScreen(screen)
+  const activeModeSettings = settings[activePresetMode]
+  const activeModePresets = presetsByMode[activePresetMode]
+  const activeLengthPenalty = getLengthPenaltyForMode(settings, activePresetMode)
+  const activeModeLabel = getPresetModeLabel(activePresetMode)
+  const turnPresetName =
+    presetsByMode.turnbased.find((preset) => preset.id === settings.turnbased.presetId)
+      ?.name ?? '自定义'
+  const audioPresetName =
+    presetsByMode.audio_duplex.find(
+      (preset) => preset.id === settings.audio_duplex.presetId,
+    )?.name ?? '自定义'
+  const videoPresetName =
+    presetsByMode.omni.find((preset) => preset.id === settings.omni.presetId)?.name ??
+    '自定义'
 
   useEffect(() => {
     messagesRef.current = messages
@@ -692,6 +1222,187 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+
+    async function hydratePresetAudio(
+      mode: PresetMode,
+      preset: PresetMetadata,
+    ): Promise<PresetMetadata> {
+      const needsRefAudio = Boolean(preset.ref_audio?.path && !preset.ref_audio.data)
+      const needsSystemAudio = Boolean(
+        preset.system_content?.some(
+          (item) => item.type === 'audio' && !item.data && 'path' in item,
+        ),
+      )
+
+      if (!needsRefAudio && !needsSystemAudio) {
+        return preset
+      }
+
+      const response = await fetch(`/api/presets/${mode}/${preset.id}/audio`)
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      const payload = (await response.json()) as {
+        system_content_audio?: Array<{
+          data?: string | null
+          name?: string
+          duration?: number
+        }>
+        ref_audio?: {
+          data?: string | null
+          name?: string
+          duration?: number
+        }
+      }
+
+      const nextPreset: PresetMetadata = {
+        ...preset,
+        system_content: preset.system_content?.map((item) => ({ ...item })),
+        ref_audio: preset.ref_audio ? { ...preset.ref_audio } : undefined,
+      }
+
+      if (payload.system_content_audio && nextPreset.system_content) {
+        let audioIndex = 0
+
+        nextPreset.system_content = nextPreset.system_content.map((item) => {
+          if (item.type !== 'audio') {
+            return item
+          }
+
+          const loaded = payload.system_content_audio?.[audioIndex]
+
+          audioIndex += 1
+
+          return {
+            ...item,
+            data: loaded?.data || item.data,
+            name: loaded?.name || item.name,
+            duration: loaded?.duration || item.duration,
+          }
+        })
+      }
+
+      if (payload.ref_audio?.data && nextPreset.ref_audio) {
+        nextPreset.ref_audio = {
+          ...nextPreset.ref_audio,
+          data: payload.ref_audio.data,
+          name: payload.ref_audio.name || nextPreset.ref_audio.name,
+          duration: payload.ref_audio.duration || nextPreset.ref_audio.duration,
+        }
+      }
+
+      return nextPreset
+    }
+
+    async function loadSettingsData() {
+      try {
+        const [presetsResponse, defaultRefResponse] = await Promise.all([
+          fetch('/api/presets'),
+          fetch('/api/default_ref_audio'),
+        ])
+
+        const defaultRefPayload = defaultRefResponse.ok
+          ? ((await defaultRefResponse.json()) as {
+              name?: string
+              duration?: number
+              base64?: string | null
+            })
+          : null
+
+        const nextDefaultRefAudio: RefAudioState | null = defaultRefPayload?.base64
+          ? {
+              source: 'default',
+              name: defaultRefPayload.name || '默认参考音频',
+              duration: defaultRefPayload.duration || 0,
+              base64: defaultRefPayload.base64,
+            }
+          : null
+
+        const presetPayload = presetsResponse.ok
+          ? ((await presetsResponse.json()) as Partial<Record<PresetMode, PresetMetadata[]>>)
+          : {}
+
+        const hydratedPresets: Record<PresetMode, PresetMetadata[]> = {
+          turnbased: [...(presetPayload.turnbased ?? [])],
+          audio_duplex: [...(presetPayload.audio_duplex ?? [])],
+          omni: [...(presetPayload.omni ?? [])],
+        }
+
+        for (const mode of ['turnbased', 'audio_duplex', 'omni'] as PresetMode[]) {
+          const firstPreset = hydratedPresets[mode][0]
+
+          if (!firstPreset) {
+            continue
+          }
+
+          try {
+            hydratedPresets[mode][0] = await hydratePresetAudio(mode, firstPreset)
+          } catch (error) {
+            console.warn(`Failed to hydrate preset ${mode}/${firstPreset.id}`, error)
+          }
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        setPresetsByMode(hydratedPresets)
+        setDefaultRefAudio(nextDefaultRefAudio)
+        setSettings((previous) => {
+          const nextSettings: SettingsState = {
+            ...previous,
+            turnbased: buildModeSettings(previous.turnbased, {}),
+            audio_duplex: buildModeSettings(previous.audio_duplex, {}),
+            omni: buildModeSettings(previous.omni, {}),
+          }
+
+          for (const mode of ['turnbased', 'audio_duplex', 'omni'] as PresetMode[]) {
+            const firstPreset = hydratedPresets[mode][0]
+
+            if (!firstPreset) {
+              continue
+            }
+
+            const extractedRefAudio = extractRefAudioFromPreset(firstPreset)
+
+            nextSettings[mode] = buildModeSettings(nextSettings[mode], {
+              presetId: firstPreset.id,
+              systemPrompt:
+                extractPromptFromPreset(firstPreset) || nextSettings[mode].systemPrompt,
+              refAudio: extractedRefAudio.base64
+                ? extractedRefAudio
+                : cloneRefAudio(nextSettings[mode].refAudio),
+            })
+          }
+
+          if (
+            nextDefaultRefAudio?.base64 &&
+            !nextSettings.turnbased.refAudio.base64 &&
+            !nextSettings.turnbased.presetId
+          ) {
+            nextSettings.turnbased = buildModeSettings(nextSettings.turnbased, {
+              refAudio: nextDefaultRefAudio,
+            })
+          }
+
+          return nextSettings
+        })
+      } catch (error) {
+        console.warn('Failed to load mobile settings data', error)
+      }
+    }
+
+    void loadSettingsData()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     duplexMediaRef.current?.setMicEnabled(duplexMicEnabled)
   }, [duplexMicEnabled])
 
@@ -715,6 +1426,264 @@ function App() {
       }
     }
   }, [])
+
+  function reportSettingsMessage(text: string) {
+    if (screen === 'turn') {
+      setRecordError(text)
+      return
+    }
+
+    appendDuplexEntry('system', text)
+  }
+
+  function updateModeSettings(mode: PresetMode, patch: Partial<ModeSettings>) {
+    setSettings((previous) => ({
+      ...previous,
+      [mode]: buildModeSettings(previous[mode], patch),
+    }))
+  }
+
+  async function ensurePresetLoaded(
+    mode: PresetMode,
+    preset: PresetMetadata,
+  ): Promise<PresetMetadata> {
+    const needsRefAudio = Boolean(preset.ref_audio?.path && !preset.ref_audio.data)
+    const needsSystemAudio = Boolean(
+      preset.system_content?.some(
+        (item) => item.type === 'audio' && item.path && !item.data,
+      ),
+    )
+
+    if (!needsRefAudio && !needsSystemAudio) {
+      return preset
+    }
+
+    const response = await fetch(`/api/presets/${mode}/${preset.id}/audio`)
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    const payload = (await response.json()) as {
+      system_content_audio?: Array<{
+        data?: string | null
+        name?: string
+        duration?: number
+      }>
+      ref_audio?: {
+        data?: string | null
+        name?: string
+        duration?: number
+      }
+    }
+
+    const nextPreset: PresetMetadata = {
+      ...preset,
+      system_content: preset.system_content?.map((item) => ({ ...item })),
+      ref_audio: preset.ref_audio ? { ...preset.ref_audio } : undefined,
+    }
+
+    if (payload.system_content_audio && nextPreset.system_content) {
+      let audioIndex = 0
+
+      nextPreset.system_content = nextPreset.system_content.map((item) => {
+        if (item.type !== 'audio') {
+          return item
+        }
+
+        const loaded = payload.system_content_audio?.[audioIndex]
+
+        audioIndex += 1
+
+        return {
+          ...item,
+          data: loaded?.data || item.data,
+          name: loaded?.name || item.name,
+          duration: loaded?.duration || item.duration,
+        }
+      })
+    }
+
+    if (payload.ref_audio?.data && nextPreset.ref_audio) {
+      nextPreset.ref_audio = {
+        ...nextPreset.ref_audio,
+        data: payload.ref_audio.data,
+        name: payload.ref_audio.name || nextPreset.ref_audio.name,
+        duration: payload.ref_audio.duration || nextPreset.ref_audio.duration,
+      }
+    }
+
+    setPresetsByMode((previous) => ({
+      ...previous,
+      [mode]: previous[mode].map((item) =>
+        item.id === nextPreset.id ? nextPreset : item,
+      ),
+    }))
+
+    return nextPreset
+  }
+
+  async function handleSelectPreset(mode: PresetMode, presetId: string) {
+    const preset = presetsByMode[mode].find((item) => item.id === presetId)
+
+    if (!preset) {
+      return
+    }
+
+    try {
+      const loadedPreset = await ensurePresetLoaded(mode, preset)
+      const extractedRefAudio = extractRefAudioFromPreset(loadedPreset)
+
+      updateModeSettings(mode, {
+        presetId: loadedPreset.id,
+        systemPrompt:
+          extractPromptFromPreset(loadedPreset) || settings[mode].systemPrompt,
+        refAudio: extractedRefAudio.base64
+          ? extractedRefAudio
+          : cloneRefAudio(EMPTY_REF_AUDIO),
+      })
+    } catch (error) {
+      reportSettingsMessage(`加载 preset 失败：${getErrorMessage(error)}`)
+    }
+  }
+
+  function handleChangePrompt(mode: PresetMode, value: string) {
+    updateModeSettings(mode, {
+      presetId: null,
+      systemPrompt: value,
+    })
+  }
+
+  function handleUseDefaultRefAudio(mode: PresetMode) {
+    if (!defaultRefAudio?.base64) {
+      reportSettingsMessage('当前没有可用的默认参考音频。')
+      return
+    }
+
+    updateModeSettings(mode, {
+      presetId: null,
+      refAudio: defaultRefAudio,
+    })
+  }
+
+  function handleClearRefAudio(mode: PresetMode) {
+    updateModeSettings(mode, {
+      presetId: null,
+      refAudio: EMPTY_REF_AUDIO,
+    })
+  }
+
+  async function handleRefAudioInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+
+    if (!file) {
+      return
+    }
+
+    try {
+      const base64 = await convertAudioBlobToFloat32Base64(file)
+      const durationAudio = new Audio(URL.createObjectURL(file))
+
+      durationAudio.onloadedmetadata = () => {
+        updateModeSettings(activePresetMode, {
+          presetId: null,
+          refAudio: {
+            source: 'upload',
+            name: file.name,
+            duration: Number.isFinite(durationAudio.duration)
+              ? durationAudio.duration
+              : 0,
+            base64,
+          },
+        })
+        URL.revokeObjectURL(durationAudio.src)
+      }
+      durationAudio.onerror = () => {
+        updateModeSettings(activePresetMode, {
+          presetId: null,
+          refAudio: {
+            source: 'upload',
+            name: file.name,
+            duration: 0,
+            base64,
+          },
+        })
+        URL.revokeObjectURL(durationAudio.src)
+      }
+    } catch (error) {
+      reportSettingsMessage(`处理参考音频失败：${getErrorMessage(error)}`)
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  function buildTurnSystemMessage(): string | BackendContentItem[] | null {
+    const items: BackendContentItem[] = []
+    const prompt = settings.turnbased.systemPrompt.trim()
+    const refAudio = settings.turnbased.refAudio.base64
+
+    if (refAudio) {
+      items.push({
+        type: 'text',
+        text: '模仿音频样本的音色并生成新的内容。',
+      })
+      items.push({
+        type: 'audio',
+        data: refAudio,
+        name: settings.turnbased.refAudio.name,
+        duration: settings.turnbased.refAudio.duration,
+      })
+    }
+
+    if (prompt) {
+      items.push({
+        type: 'text',
+        text: prompt,
+      })
+    }
+
+    if (items.length === 0) {
+      return null
+    }
+
+    if (items.length === 1 && items[0]?.type === 'text') {
+      return items[0].text
+    }
+
+    return items
+  }
+
+  function handleLengthPenaltyChange(mode: PresetMode, value: number) {
+    const nextValue = Number.isFinite(value) ? value : 1.1
+
+    setSettings((previous) => {
+      if (mode === 'turnbased') {
+        return {
+          ...previous,
+          turnLengthPenalty: nextValue,
+        }
+      }
+
+      return mode === 'audio_duplex'
+        ? {
+            ...previous,
+            audioDuplexLengthPenalty: nextValue,
+          }
+        : {
+            ...previous,
+            videoDuplexLengthPenalty: nextValue,
+          }
+    })
+  }
+
+  function handlePlayActiveRefAudio() {
+    if (!activeModeSettings.refAudio.base64) {
+      reportSettingsMessage('当前没有可播放的参考音频。')
+      return
+    }
+
+    playPcmBase64(activeModeSettings.refAudio.base64, 16000)
+  }
 
   function resetRecorderResources() {
     mediaRecorderRef.current = null
@@ -799,6 +1768,7 @@ function App() {
 
     const modeLabel = getDuplexModeLabel(mode)
     const withVideo = mode === 'video'
+    const duplexSettings = withVideo ? settings.omni : settings.audio_duplex
 
     duplexStartInFlightRef.current = true
     duplexListenEntryIdRef.current = null
@@ -911,8 +1881,15 @@ function App() {
 
       const preparePayload: Record<string, unknown> = {
         config: {
-          length_penalty: withVideo ? 1.1 : 1.05,
+          length_penalty: withVideo
+            ? settings.videoDuplexLengthPenalty
+            : settings.audioDuplexLengthPenalty,
         },
+      }
+
+      if (duplexSettings.refAudio.base64) {
+        preparePayload.ref_audio_base64 = duplexSettings.refAudio.base64
+        preparePayload.tts_ref_audio_base64 = duplexSettings.refAudio.base64
       }
 
       if (withVideo) {
@@ -921,7 +1898,7 @@ function App() {
       }
 
       await session.start(
-        'You are a helpful assistant.',
+        duplexSettings.systemPrompt.trim() || 'You are a helpful assistant.',
         preparePayload,
         async () => {
           media.onChunk = (chunk) => {
@@ -957,6 +1934,8 @@ function App() {
   }
 
   async function submitConversation(nextMessages: ConversationEntry[]) {
+    const systemMessage = buildTurnSystemMessage()
+
     setPendingReply({
       id: createId('pending'),
       role: 'assistant',
@@ -976,13 +1955,28 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          messages: buildRequestMessages(nextMessages),
+          messages: buildRequestMessages(nextMessages, systemMessage),
           generation: {
-            max_new_tokens: 256,
-            length_penalty: 1.1,
+            max_new_tokens: settings.maxNewTokens,
+            length_penalty: settings.turnLengthPenalty,
           },
+          ...(settings.turnTtsEnabled
+            ? {
+                use_tts_template: true,
+              }
+            : {}),
           tts: {
-            enabled: false,
+            enabled: settings.turnTtsEnabled,
+            ...(settings.turnTtsEnabled && settings.turnbased.refAudio.base64
+              ? {
+                  mode: 'audio_assistant',
+                  ref_audio_data: settings.turnbased.refAudio.base64,
+                }
+              : settings.turnTtsEnabled
+                ? {
+                    mode: 'audio_assistant',
+                  }
+                : {}),
           },
         }),
         signal: controller.signal,
@@ -1226,6 +2220,58 @@ function App() {
 
   return (
     <div className="mobile-app">
+      <input
+        ref={refAudioInputRef}
+        className="hidden-file-input"
+        type="file"
+        accept="audio/*"
+        onChange={handleRefAudioInputChange}
+      />
+      <SettingsSheet
+        open={settingsOpen}
+        activeMode={activePresetMode}
+        activeLabel={activeModeLabel}
+        activeSettings={activeModeSettings}
+        activePresets={activeModePresets}
+        defaultRefAudio={defaultRefAudio}
+        lengthPenalty={activeLengthPenalty}
+        maxNewTokens={settings.maxNewTokens}
+        turnTtsEnabled={settings.turnTtsEnabled}
+        onClose={() => {
+          setSettingsOpen(false)
+        }}
+        onSelectPreset={(presetId) => {
+          void handleSelectPreset(activePresetMode, presetId)
+        }}
+        onPromptChange={(value) => {
+          handleChangePrompt(activePresetMode, value)
+        }}
+        onLengthPenaltyChange={(value) => {
+          handleLengthPenaltyChange(activePresetMode, value)
+        }}
+        onMaxTokensChange={(value) => {
+          setSettings((previous) => ({
+            ...previous,
+            maxNewTokens: Number.isFinite(value) ? value : previous.maxNewTokens,
+          }))
+        }}
+        onTurnTtsEnabledChange={(value) => {
+          setSettings((previous) => ({
+            ...previous,
+            turnTtsEnabled: value,
+          }))
+        }}
+        onUseDefaultRefAudio={() => {
+          handleUseDefaultRefAudio(activePresetMode)
+        }}
+        onClearRefAudio={() => {
+          handleClearRefAudio(activePresetMode)
+        }}
+        onUploadRefAudio={() => {
+          refAudioInputRef.current?.click()
+        }}
+        onPlayRefAudio={handlePlayActiveRefAudio}
+      />
       {screen === 'turn' ? (
         <div className="turn-screen">
           <div className="turn-topbar">
@@ -1259,6 +2305,21 @@ function App() {
                 <span className="button-inline-label">视频</span>
               </button>
             </div>
+          </div>
+
+          <div className="turn-settings-wrap">
+            <SettingsSummary
+              modeLabel="Turn-based"
+              presetName={turnPresetName}
+              refAudio={settings.turnbased.refAudio}
+              systemPrompt={settings.turnbased.systemPrompt}
+              lengthPenalty={settings.turnLengthPenalty}
+              maxNewTokens={settings.maxNewTokens}
+              turnTtsEnabled={settings.turnTtsEnabled}
+              onOpen={() => {
+                setSettingsOpen(true)
+              }}
+            />
           </div>
 
           <div className="thread-wrap">
@@ -1398,6 +2459,16 @@ function App() {
               className="top-action-button"
               type="button"
               onClick={() => {
+                setSettingsOpen(true)
+              }}
+            >
+              <SettingsIcon className="app-icon app-icon-md" />
+              <span className="button-inline-label">设置</span>
+            </button>
+            <button
+              className="top-action-button"
+              type="button"
+              onClick={() => {
                 setDuplexTextPanelOpen((previous) => !previous)
               }}
             >
@@ -1409,6 +2480,19 @@ function App() {
           <div className="duplex-badge-row">
             <div className={`duplex-badge ${duplexStatus}`}>{duplexBadgeText}</div>
             <div className="duplex-status-copy">{duplexStatusText}</div>
+          </div>
+
+          <div className="duplex-settings-wrap">
+            <SettingsSummary
+              modeLabel="音频双工"
+              presetName={audioPresetName}
+              refAudio={settings.audio_duplex.refAudio}
+              systemPrompt={settings.audio_duplex.systemPrompt}
+              lengthPenalty={settings.audioDuplexLengthPenalty}
+              onOpen={() => {
+                setSettingsOpen(true)
+              }}
+            />
           </div>
 
           <div className="duplex-stage audio-stage">
@@ -1500,6 +2584,16 @@ function App() {
               className="top-action-button"
               type="button"
               onClick={() => {
+                setSettingsOpen(true)
+              }}
+            >
+              <SettingsIcon className="app-icon app-icon-md" />
+              <span className="button-inline-label">设置</span>
+            </button>
+            <button
+              className="top-action-button"
+              type="button"
+              onClick={() => {
                 setDuplexTextPanelOpen((previous) => !previous)
               }}
             >
@@ -1530,6 +2624,19 @@ function App() {
           <div className="duplex-badge-row">
             <div className={`duplex-badge ${duplexStatus}`}>{duplexBadgeText}</div>
             <div className="duplex-status-copy">{duplexStatusText}</div>
+          </div>
+
+          <div className="duplex-settings-wrap">
+            <SettingsSummary
+              modeLabel="视频双工"
+              presetName={videoPresetName}
+              refAudio={settings.omni.refAudio}
+              systemPrompt={settings.omni.systemPrompt}
+              lengthPenalty={settings.videoDuplexLengthPenalty}
+              onOpen={() => {
+                setSettingsOpen(true)
+              }}
+            />
           </div>
 
           <div className="duplex-stage">
