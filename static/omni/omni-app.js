@@ -155,6 +155,7 @@ const settingsPersistence = new SettingsPersistence('omni_settings', [
     // Session
     { id: 'playbackDelay', type: 'number' },
     { id: 'maxKvTokens', type: 'number' },
+    { id: 'stopOnKvShrink', type: 'checkbox' },
     { id: 'omniLengthPenalty', type: 'number' },
     { id: 'visionHD', type: 'checkbox' },
     // Fullscreen subtitle
@@ -1454,6 +1455,7 @@ async function startSession() {
     session = new DuplexSession('omni', {
         getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
+        getStopOnSlidingWindow: () => !!document.getElementById('stopOnKvShrink')?.checked,
         outputSampleRate: SAMPLE_RATE_OUT,
     });
     session.onMetrics = (data) => metricsPanel.update(data);

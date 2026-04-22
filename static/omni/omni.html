@@ -213,6 +213,12 @@
                     <span style="font-size:10px;color:#888;">tok</span>
                     <span style="font-size:9px;color:#b08050;">≤ 8192 (max training length)</span>
                 </div>
+                <div class="cg-row inline" data-tip="Auto-stop the session when the C++ backend prunes the KV cache at a round boundary (sliding window). Useful when MaxKV is set above what the backend will actually allow, so the ceiling above never triggers.">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;">
+                        <input type="checkbox" id="stopOnKvShrink">
+                        Stop on KV pruning (sliding window)
+                    </label>
+                </div>
             </div>
         </details>
         <details class="config-group">
