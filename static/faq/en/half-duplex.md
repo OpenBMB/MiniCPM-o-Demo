@@ -4,7 +4,7 @@
 
 Half-Duplex mode supports voice conversation using VAD (Voice Activity Detection) to detect when the user finishes speaking, then triggers model inference. Only one party speaks at a time — the model listens while you speak, and you wait while the model replies. Interruption is not currently supported, but is theoretically feasible.
 
-The model's response accuracy, voice quality, and typo rate are at a satisfactory level. Suitable for scenarios that require high performance.
+The model's response accuracy, speech naturalness, and typo rate are at a satisfactory level. Suitable for scenarios that require high performance.
 
 ## How do I adjust the VAD parameters?
 
@@ -28,6 +28,10 @@ In the **Audio Devices** configuration area on the left panel:
 ## What is Length Penalty?
 
 Length Penalty controls the length of model responses. Values greater than 1 encourage longer responses, while values less than 1 favor shorter responses. The default value of 1.1 produces moderately-length responses. At 1.1, the model exhibits better empathy.
+
+## Can I replace the TTS voice from the web UI?
+
+No. The system prompt and preset still affect voice expression and style, but the web UI does not provide a separate control for replacing the C++ TTS synthesis cache. To fully replace the C++ TTS voice, follow the [voice guide](https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md) and replace `prompt_cache.gguf` plus the related assets yourself.
 
 ## What does Session Timeout mean?
 

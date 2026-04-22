@@ -165,16 +165,8 @@
                     <span class="cg-label">LLM Ref Audio (system prompt)</span>
                     <div id="refAudioPlayerDuplex"></div>
                 </div>
-                <div class="cg-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #f0ede8;">
-                    <span class="cg-label">TTS Ref Audio (voice cloning)</span>
-                    <div style="font-size:12px;">
-                        <div style="display:flex;gap:12px;align-items:center;margin-bottom:4px;">
-                            <label style="cursor:pointer;color:#555;"><input type="radio" name="duplexTtsRefMode" value="extract" checked> Same as LLM</label>
-                            <label style="cursor:pointer;color:#555;"><input type="radio" name="duplexTtsRefMode" value="independent"> Independent</label>
-                        </div>
-                        <div id="duplexTtsRefHint" style="font-size:11px;color:#aaa;"></div>
-                        <div id="duplexTtsRefUpload" style="display:none;margin-top:6px;"></div>
-                    </div>
+                <div style="font-size:11px;color:#888;line-height:1.5;">
+                    System prompt text and reference audio here still affect voice style. However, the current web UI cannot replace the C++ TTS cache (`prompt_cache.gguf`). For full TTS voice replacement, follow the <a href="https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md" target="_blank" rel="noopener">voice guide</a>.
                 </div>
             </div>
         </details>

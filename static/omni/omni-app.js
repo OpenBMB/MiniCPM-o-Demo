@@ -27,7 +27,6 @@ import {
     getMixerPanelHTML,
 } from '../duplex/ui/duplex-ui.js';
 import { startDingDongLoop, playAlarmBell, playSessionChime } from '../duplex/lib/queue-chimes.js';
-import { createTtsRefController } from '../duplex/ui/tts-ref-controller.js';
 import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
 
 // ============================================================================
@@ -164,8 +163,6 @@ const settingsPersistence = new SettingsPersistence('omni_settings', [
     { id: 'fsAlphaTop', type: 'number' },
     // System prompt
     { id: 'systemPrompt', type: 'textarea' },
-    // TTS ref mode
-    { type: 'radio', name: 'omniTtsRefMode' },
     // Recording
     { id: 'recCheckbox', type: 'checkbox' },
     // Mixer
@@ -207,11 +204,7 @@ document.getElementById('btnResetSettings')?.addEventListener('click', () => {
 // ============================================================================
 // Ref Audio Management (init before preset so preset can update it)
 // ============================================================================
-const omniTtsRef = createTtsRefController('omni', () => refAudio.getBase64());
-const refAudio = initRefAudio('omniRefAudioPlayer', {
-    onTtsHintUpdate: () => omniTtsRef.updateHint(),
-});
-omniTtsRef.init();
+const refAudio = initRefAudio('omniRefAudioPlayer');
 
 // ============================================================================
 // Preset Selector
@@ -1599,8 +1592,6 @@ async function startSession() {
     };
     const refBase64 = refAudio.getBase64();
     if (refBase64) preparePayload.ref_audio_base64 = refBase64;
-    const ttsRef = omniTtsRef.getBase64();
-    if (ttsRef && ttsRef !== refBase64) preparePayload.tts_ref_audio_base64 = ttsRef;
 
     try {
         // Wire AI audio recording hook
@@ -1772,11 +1763,6 @@ wireDuplexControls({
     onForceListen: toggleForceListen,
 });
 document.getElementById('btnHD')?.addEventListener('click', toggleHD);
-
-// TTS ref mode radios
-document.querySelectorAll('input[name="omniTtsRefMode"]').forEach(radio => {
-    radio.addEventListener('change', () => omniTtsRef.onModeChange());
-});
 
 // ============================================================================
 // Mixer Controller (shared module)
