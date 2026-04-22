@@ -818,8 +818,7 @@ class CppBackendWorker:
 
         for msg in prefill_msgs:
             content_list = msg.get("content", [])
-            if isinstance(content_list, str):
-                continue
+            # 纯文本消息会被 _convert_to_model_msgs 拍扁成裸字符串，统一包成列表。
             if not isinstance(content_list, list):
                 content_list = [content_list]
             for item in content_list:
@@ -827,6 +826,11 @@ class CppBackendWorker:
                     temp_audio = self._save_audio_to_temp(item, f"chat_pf_{cnt}")
                     self._call_prefill(temp_audio, "", cnt)
                     self._cleanup_temp_files(temp_audio)
+                    cnt += 1
+                elif isinstance(item, str):
+                    if not item:
+                        continue
+                    self._call_prefill("", "", cnt, text=item)
                     cnt += 1
                 elif hasattr(item, 'size'):
                     temp_img = self._save_pil_image_to_temp(item, f"chat_pf_{cnt}")
@@ -1070,7 +1074,7 @@ class CppBackendWorker:
         self._maybe_update_kv_cache_length(resp.json())
 
     def _call_prefill(self, audio_path: str, img_path: str, cnt: int,
-                      max_slice_nums: int = -1) -> None:
+                      max_slice_nums: int = -1, text: str = "") -> None:
         req_body: Dict[str, Any] = {
             "audio_path_prefix": audio_path,
             "img_path_prefix": img_path,
@@ -1078,6 +1082,10 @@ class CppBackendWorker:
         }
         if max_slice_nums > 0:
             req_body["max_slice_nums"] = max_slice_nums
+        if text:
+            # 文本走 llama-server 的 stream_prefill -> omni_embeds.user_text
+            # （turn-based 文字对话）。空串不传，保持向后兼容。
+            req_body["text"] = text
 
         resp = self._http_client.post(
             f"{self._cpp_server_url}/v1/stream/prefill",
