@@ -181,6 +181,7 @@ class CppBackendWorker:
         self._last_duplex_mode: Optional[bool] = None
         self._last_media_type: int = 2
         self._last_lang: str = "zh"
+        self._duplex_length_penalty: float = 1.1
 
         self._duplex_chunk_counter: int = 0
         self._current_session_id: Optional[str] = None
@@ -223,12 +224,14 @@ class CppBackendWorker:
         media_type: int = 2,
         lang: Optional[str] = None,
         system_content: Any = None,
+        length_penalty: float = 1.1,
     ) -> str:
         """Duplex 准备 → update_session_config"""
         self._reset_output_dir()
         self._duplex_chunk_counter = 0
         self._round_number = 0
         self._sent_wav_files = set()
+        self._duplex_length_penalty = float(length_penalty)
         voice_audio = ref_audio_path or self.ref_audio_path or ""
         # 前端未提供 system_content 时，回退到 system_prompt_text
         effective_system_content = system_content if system_content else system_prompt_text
@@ -283,7 +286,10 @@ class CppBackendWorker:
 
         resp = self._http_client.post(
             f"{self._cpp_server_url}/v1/stream/decode",
-            json={"stream": True},
+            json={
+                "stream": True,
+                "length_penalty": float(self._duplex_length_penalty),
+            },
             timeout=600.0,
         )
 
@@ -712,6 +718,9 @@ class CppBackendWorker:
         from core.schemas.chat import ChatResponse
         from core.processors.base import MiniCPMOProcessorMixin
 
+        generation = getattr(request, "generation", None)
+        length_penalty = float(getattr(generation, "length_penalty", 1.1) or 1.1)
+
         self._call_update_session_config(
             media_type=2,
             duplex_mode=False,
@@ -735,7 +744,11 @@ class CppBackendWorker:
 
         resp = self._http_client.post(
             f"{self._cpp_server_url}/v1/stream/decode",
-            json={"stream": True, "round_idx": self._round_number},
+            json={
+                "stream": True,
+                "round_idx": self._round_number,
+                "length_penalty": length_penalty,
+            },
             timeout=600.0,
         )
         self._round_number += 1
@@ -817,9 +830,14 @@ class CppBackendWorker:
     def chat_non_streaming_generate(self, session_id, **kwargs):
         """Chat 非流式生成"""
         cur_round = self._round_number
+        length_penalty = float(kwargs.get("length_penalty", 1.1) or 1.1)
         resp = self._http_client.post(
             f"{self._cpp_server_url}/v1/stream/decode",
-            json={"stream": True, "round_idx": cur_round},
+            json={
+                "stream": True,
+                "round_idx": cur_round,
+                "length_penalty": length_penalty,
+            },
             timeout=600.0,
         )
         self._round_number += 1
