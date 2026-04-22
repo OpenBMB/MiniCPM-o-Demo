@@ -5,12 +5,10 @@ import {
   type ChangeEvent,
   type FormEvent,
 } from 'react'
-import {
-  MobileLiveMediaProvider,
-  loadDuplexRuntime,
-  type DuplexResultLike,
-  type DuplexSessionLike,
-} from './mobile-duplex'
+import { AudioDuplexScreen } from './duplex/AudioDuplexScreen'
+import { VideoDuplexScreen } from './duplex/VideoDuplexScreen'
+import { useDuplexSession } from './duplex/useDuplexSession'
+import type { DuplexIcons } from './duplex/types'
 import { StreamingPcmPlayer, float32ToWavBlobUrl } from './streaming-player'
 import './App.css'
 
@@ -90,24 +88,7 @@ type ServiceState = {
   detail: string
 }
 
-type DuplexEntry = {
-  id: string
-  role: 'assistant' | 'user' | 'system'
-  text: string
-}
-
-type DuplexStatus =
-  | 'idle'
-  | 'starting'
-  | 'queueing'
-  | 'live'
-  | 'paused'
-  | 'stopped'
-  | 'error'
-
 type Screen = 'turn' | 'audio-duplex' | 'video-duplex'
-
-type DuplexMode = 'audio' | 'video'
 
 type PresetMode = 'turnbased' | 'audio_duplex' | 'omni'
 
@@ -204,29 +185,12 @@ function getErrorMessage(error: unknown): string {
   return 'Unknown error'
 }
 
-function getDuplexModeLabel(mode: DuplexMode): string {
-  return mode === 'audio' ? '音频双工' : '视频双工'
-}
-
-function getDuplexScreen(mode: DuplexMode): Screen {
-  return mode === 'audio' ? 'audio-duplex' : 'video-duplex'
-}
-
-function getDuplexBadgeText(status: DuplexStatus, mode: DuplexMode): string {
-  switch (status) {
-    case 'live':
-      return `${getDuplexModeLabel(mode)}进行中`
-    case 'queueing':
-      return '排队中'
-    case 'paused':
-      return '已暂停'
-    case 'error':
-      return '连接异常'
-    case 'stopped':
-      return '已结束'
-    default:
-      return '连接中'
-  }
+function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
+  if (!el) return
+  el.style.height = 'auto'
+  const max = 140
+  const next = Math.min(el.scrollHeight, max)
+  el.style.height = `${next}px`
 }
 
 function getPresetModeForScreen(screen: Screen): PresetMode {
@@ -582,6 +546,112 @@ function SendIcon({ className }: IconProps) {
   )
 }
 
+function CameraSnapIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M5 9.5A2.5 2.5 0 0 1 7.5 7h1.6l1.4-2h3l1.4 2h1.6A2.5 2.5 0 0 1 19 9.5v7A2.5 2.5 0 0 1 16.5 19h-9A2.5 2.5 0 0 1 5 16.5Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+      <circle cx="12" cy="13" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
+function HamburgerIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M4.5 7h15M4.5 12h15M4.5 17h15"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function CopyIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <rect
+        x="8.5"
+        y="8.5"
+        width="10"
+        height="11"
+        rx="2.2"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+      <path
+        d="M15.5 6h-7A2 2 0 0 0 6.5 8v9"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  )
+}
+
+function RefreshIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M5.5 12a6.5 6.5 0 0 1 11.2-4.5L19 10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.7"
+      />
+      <path
+        d="M19 5v5h-5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.7"
+      />
+      <path
+        d="M18.5 12a6.5 6.5 0 0 1-11.2 4.5L5 14"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.7"
+      />
+      <path
+        d="M5 19v-5h5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.7"
+      />
+    </svg>
+  )
+}
+
 function SettingsIcon({ className }: IconProps) {
   return (
     <svg
@@ -872,7 +942,19 @@ function AudioPlayPill({
   )
 }
 
-function MessageBubble({ entry }: { entry: ThreadEntry }) {
+type MessageBubbleProps = {
+  entry: ThreadEntry
+  isLastAssistant?: boolean
+  canRegenerate?: boolean
+  onRegenerate?: () => void
+}
+
+function MessageBubble({
+  entry,
+  isLastAssistant,
+  canRegenerate,
+  onRegenerate,
+}: MessageBubbleProps) {
   if (entry.kind === 'pending') {
     return (
       <div className="msg assistant pending">
@@ -898,36 +980,160 @@ function MessageBubble({ entry }: { entry: ThreadEntry }) {
     )
   }
 
+  const isAssistant = entry.role === 'assistant'
+  const audioUrl = isAssistant ? entry.audioPreviewUrl ?? null : null
+  const showActions = isAssistant && !entry.error
+
   return (
     <div
       className={[
         'msg',
-        entry.role === 'assistant' ? 'assistant' : 'user-text',
-        entry.role === 'assistant' && entry.error ? 'error' : '',
+        isAssistant ? 'assistant' : 'user-text',
+        isAssistant && entry.error ? 'error' : '',
       ]
         .filter(Boolean)
         .join(' ')}
     >
-      {entry.text}
-      {entry.role === 'assistant' && entry.recordingSessionId ? (
+      <div className="msg-text">{entry.text}</div>
+      {isAssistant && entry.recordingSessionId ? (
         <div className="msg-meta">session: {entry.recordingSessionId}</div>
       ) : null}
-      {entry.role === 'assistant' && entry.audioPreviewUrl ? (
-        <div className="assistant-actions">
-          <AudioPlayPill
-            url={entry.audioPreviewUrl}
-            className="audio-replay"
-            playLabel="收听"
-            pauseLabel="暂停"
-          />
+      {showActions ? (
+        <div className="msg-actions">
+          <AssistantPlayButton url={audioUrl} />
+          <CopyButton text={entry.text} />
+          {isLastAssistant ? (
+            <button
+              className="msg-action"
+              type="button"
+              onClick={onRegenerate}
+              disabled={!canRegenerate || !onRegenerate}
+              aria-label="重新生成"
+            >
+              <RefreshIcon className="app-icon app-icon-sm" />
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
   )
 }
 
-function DuplexLogBubble({ entry }: { entry: DuplexEntry }) {
-  return <div className={['duplex-log', entry.role].join(' ')}>{entry.text}</div>
+function AssistantPlayButton({ url }: { url: string | null }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+
+  useEffect(() => {
+    if (!url) {
+      setIsPlaying(false)
+      audioRef.current = null
+      return
+    }
+
+    const audio = new Audio(url)
+    audioRef.current = audio
+
+    const handlePlay = () => setIsPlaying(true)
+    const handlePause = () => setIsPlaying(false)
+    const handleEnded = () => setIsPlaying(false)
+
+    audio.addEventListener('play', handlePlay)
+    audio.addEventListener('pause', handlePause)
+    audio.addEventListener('ended', handleEnded)
+
+    return () => {
+      audio.removeEventListener('play', handlePlay)
+      audio.removeEventListener('pause', handlePause)
+      audio.removeEventListener('ended', handleEnded)
+      try {
+        audio.pause()
+      } catch {
+        /* ignore */
+      }
+      audioRef.current = null
+      setIsPlaying(false)
+    }
+  }, [url])
+
+  const disabled = !url
+
+  function handleClick() {
+    const audio = audioRef.current
+    if (!audio) return
+    if (isPlaying) {
+      audio.pause()
+      return
+    }
+    try {
+      audio.currentTime = 0
+    } catch {
+      /* ignore */
+    }
+    void audio.play().catch(() => setIsPlaying(false))
+  }
+
+  return (
+    <button
+      className={['msg-action', isPlaying ? 'is-playing' : ''].filter(Boolean).join(' ')}
+      type="button"
+      onClick={handleClick}
+      disabled={disabled}
+      aria-label={isPlaying ? '暂停播放' : '朗读'}
+    >
+      {isPlaying ? (
+        <PauseIcon className="app-icon app-icon-sm" />
+      ) : (
+        <PlayIcon className="app-icon app-icon-sm" />
+      )}
+    </button>
+  )
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 1200)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
+  async function handleClick() {
+    if (!text) return
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        try {
+          document.execCommand('copy')
+        } finally {
+          document.body.removeChild(ta)
+        }
+      }
+      setCopied(true)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <button
+      className={['msg-action', copied ? 'is-copied' : ''].filter(Boolean).join(' ')}
+      type="button"
+      onClick={() => {
+        void handleClick()
+      }}
+      aria-label={copied ? '已复制' : '复制'}
+    >
+      <CopyIcon className="app-icon app-icon-sm" />
+    </button>
+  )
 }
 
 type SettingsSummaryProps = {
@@ -1209,6 +1415,17 @@ function SettingsSheet({
   )
 }
 
+const duplexIcons: DuplexIcons = {
+  Settings: SettingsIcon,
+  Transcript: TranscriptIcon,
+  Mic: MicIcon,
+  Pause: PauseIcon,
+  Play: PlayIcon,
+  Close: CloseIcon,
+  Wave: WaveIcon,
+  FlipCamera: FlipCameraIcon,
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('turn')
   const [composeMode, setComposeMode] = useState<'voice' | 'text'>('voice')
@@ -1238,15 +1455,6 @@ function App() {
     detail: 'Polling /status...',
   })
   const [lastSessionId, setLastSessionId] = useState<string | null>(null)
-  const [duplexEntries, setDuplexEntries] = useState<DuplexEntry[]>([])
-  const [duplexStatus, setDuplexStatus] = useState<DuplexStatus>('idle')
-  const [duplexStatusText, setDuplexStatusText] = useState('等待进入全双工')
-  const [duplexMode, setDuplexMode] = useState<DuplexMode>('audio')
-  const [duplexMicEnabled, setDuplexMicEnabled] = useState(true)
-  const [duplexTextPanelOpen, setDuplexTextPanelOpen] = useState(true)
-  const [duplexPauseState, setDuplexPauseState] = useState<
-    'active' | 'pausing' | 'paused'
-  >('active')
 
   const messagesRef = useRef<ConversationEntry[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -1254,34 +1462,28 @@ function App() {
   const streamingPlayerRef = useRef<StreamingPcmPlayer | null>(null)
   const streamingStopRef = useRef<(() => void) | null>(null)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
-  const duplexEndRef = useRef<HTMLDivElement | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const recordingStartRef = useRef<number>(0)
   const recordingActionRef = useRef<'send' | 'cancel'>('send')
   const refAudioInputRef = useRef<HTMLInputElement | null>(null)
-  const duplexVideoRef = useRef<HTMLVideoElement | null>(null)
-  const duplexCanvasRef = useRef<HTMLCanvasElement | null>(null)
-  const duplexSessionRef = useRef<DuplexSessionLike | null>(null)
-  const duplexMediaRef = useRef<MobileLiveMediaProvider | null>(null)
-  const duplexStartInFlightRef = useRef(false)
-  const duplexListenEntryIdRef = useRef<string | null>(null)
+
+  const duplex = useDuplexSession({
+    screen,
+    setScreen,
+    settings,
+    setLastSessionId,
+  })
 
   const threadEntries: ThreadEntry[] = pendingReply
     ? [...messages, pendingReply]
     : messages
-  const duplexBadgeText = getDuplexBadgeText(duplexStatus, duplexMode)
-  const audioDuplexScreenOpen = screen === 'audio-duplex'
-  const videoDuplexScreenOpen = screen === 'video-duplex'
   const activePresetMode = getPresetModeForScreen(screen)
   const activeModeSettings = settings[activePresetMode]
   const activeModePresets = presetsByMode[activePresetMode]
   const activeLengthPenalty = getLengthPenaltyForMode(settings, activePresetMode)
   const activeModeLabel = getPresetModeLabel(activePresetMode)
-  const turnPresetName =
-    presetsByMode.turnbased.find((preset) => preset.id === settings.turnbased.presetId)
-      ?.name ?? '自定义'
   const audioPresetName =
     presetsByMode.audio_duplex.find(
       (preset) => preset.id === settings.audio_duplex.presetId,
@@ -1297,10 +1499,6 @@ function App() {
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [threadEntries.length])
-
-  useEffect(() => {
-    duplexEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [duplexEntries.length])
 
   useEffect(() => {
     let cancelled = false
@@ -1531,14 +1729,8 @@ function App() {
   }, [])
 
   useEffect(() => {
-    duplexMediaRef.current?.setMicEnabled(duplexMicEnabled)
-  }, [duplexMicEnabled])
-
-  useEffect(() => {
     return () => {
       abortRef.current?.abort()
-      duplexSessionRef.current?.stop()
-      duplexMediaRef.current?.stop()
       mediaRecorderRef.current?.stream
         .getTracks()
         .forEach((track) => track.stop())
@@ -1561,7 +1753,7 @@ function App() {
       return
     }
 
-    appendDuplexEntry('system', text)
+    duplex.appendEntry('system', text)
   }
 
   function updateModeSettings(mode: PresetMode, patch: Partial<ModeSettings>) {
@@ -1828,242 +2020,6 @@ function App() {
     if (stop) {
       streamingStopRef.current = null
       stop()
-    }
-  }
-
-  function appendDuplexEntry(role: DuplexEntry['role'], text: string): string {
-    const id = createId(`duplex-${role}`)
-
-    setDuplexEntries((previous) => [
-      ...previous,
-      {
-        id,
-        role,
-        text,
-      },
-    ])
-
-    return id
-  }
-
-  function updateDuplexEntry(id: string, text: string) {
-    setDuplexEntries((previous) =>
-      previous.map((entry) =>
-        entry.id === id
-          ? {
-              ...entry,
-              text,
-            }
-          : entry,
-      ),
-    )
-  }
-
-  function stopDuplexSession(options?: { preserveScreen?: boolean }) {
-    const modeLabel = getDuplexModeLabel(duplexMode)
-
-    duplexStartInFlightRef.current = false
-    duplexListenEntryIdRef.current = null
-    duplexMediaRef.current?.stop()
-    duplexMediaRef.current = null
-
-    if (duplexSessionRef.current) {
-      duplexSessionRef.current.stop()
-      duplexSessionRef.current = null
-    }
-
-    setDuplexStatus('stopped')
-    setDuplexStatusText(`${modeLabel}会话已结束`)
-    setDuplexPauseState('active')
-
-    if (!options?.preserveScreen) {
-      setScreen('turn')
-    }
-  }
-
-  function openDuplexScreen(mode: DuplexMode) {
-    setDuplexMode(mode)
-    setScreen(getDuplexScreen(mode))
-
-    requestAnimationFrame(() => {
-      void startDuplexSession(mode)
-    })
-  }
-
-  async function startDuplexSession(mode: DuplexMode) {
-    if (
-      duplexStartInFlightRef.current ||
-      duplexSessionRef.current ||
-      !duplexVideoRef.current ||
-      !duplexCanvasRef.current
-    ) {
-      return
-    }
-
-    const modeLabel = getDuplexModeLabel(mode)
-    const withVideo = mode === 'video'
-    const duplexSettings = withVideo ? settings.omni : settings.audio_duplex
-
-    duplexStartInFlightRef.current = true
-    duplexListenEntryIdRef.current = null
-    setDuplexMode(mode)
-    setDuplexEntries([])
-    setDuplexMicEnabled(true)
-    setDuplexPauseState('active')
-    setDuplexStatus('starting')
-    setDuplexStatusText(
-      withVideo ? '正在请求摄像头和麦克风...' : '正在请求麦克风...',
-    )
-
-    try {
-      const runtime = await loadDuplexRuntime()
-      const media = new MobileLiveMediaProvider({
-        videoEl: duplexVideoRef.current,
-        canvasEl: duplexCanvasRef.current,
-      })
-      const session = new runtime.DuplexSession(withVideo ? 'omni' : 'adx', {
-        getMaxKvTokens: () => 8192,
-        getPlaybackDelayMs: () => 200,
-        outputSampleRate: 24000,
-      })
-
-      duplexMediaRef.current = media
-      duplexSessionRef.current = session
-
-      media.setMicEnabled(true)
-      await media.setCameraEnabled(withVideo)
-
-      session.onSystemLog = (text) => {
-        appendDuplexEntry('system', text)
-      }
-      session.onQueueUpdate = (data) => {
-        if (data) {
-          setDuplexStatus('queueing')
-          setDuplexStatusText(
-            `排队 ${data.position ?? '?'} / ${data.queue_length ?? '?'}，预计 ${Math.round(
-              data.estimated_wait_s ?? 0,
-            )}s`,
-          )
-        }
-      }
-      session.onQueueDone = () => {
-        setDuplexStatus('starting')
-        setDuplexStatusText(`Worker 已分配，正在准备${modeLabel}会话...`)
-      }
-      session.onPrepared = () => {
-        setDuplexStatusText(`会话已准备，开始${modeLabel}推流...`)
-      }
-      session.onRunningChange = (running) => {
-        setDuplexStatus(running ? 'live' : 'stopped')
-        setDuplexStatusText(running ? `${modeLabel}进行中` : `${modeLabel}会话已停止`)
-      }
-      session.onPauseStateChange = (state) => {
-        setDuplexPauseState(state)
-        setDuplexStatus(state === 'active' ? 'live' : 'paused')
-        setDuplexStatusText(
-          state === 'active'
-            ? `${modeLabel}进行中`
-            : state === 'pausing'
-              ? `正在暂停${modeLabel}...`
-              : `${modeLabel}已暂停`,
-        )
-      }
-      session.onMetrics = (data) => {
-        if (data.type === 'result') {
-          setDuplexStatusText(
-            `${data.modelState ?? 'live'} · ${Math.round(
-              data.latencyMs ?? 0,
-            )}ms · KV ${data.kvCacheLength ?? '-'}`,
-          )
-        }
-      }
-      session.onListenResult = (result: DuplexResultLike) => {
-        const listenText = result.text?.trim()
-
-        if (!listenText) {
-          return
-        }
-
-        if (!duplexListenEntryIdRef.current) {
-          duplexListenEntryIdRef.current = appendDuplexEntry('user', listenText)
-        } else {
-          updateDuplexEntry(duplexListenEntryIdRef.current, listenText)
-        }
-      }
-      session.onSpeakStart = (text) => {
-        duplexListenEntryIdRef.current = null
-        return appendDuplexEntry('assistant', text)
-      }
-      session.onSpeakUpdate = (handle, text) => {
-        if (typeof handle === 'string') {
-          updateDuplexEntry(handle, text)
-        }
-      }
-      session.onSpeakEnd = () => {
-        duplexListenEntryIdRef.current = null
-      }
-      session.onCleanup = () => {
-        duplexStartInFlightRef.current = false
-        duplexListenEntryIdRef.current = null
-        duplexMediaRef.current?.stop()
-        duplexMediaRef.current = null
-        duplexSessionRef.current = null
-        setDuplexPauseState('active')
-        setDuplexStatus('stopped')
-        setDuplexStatusText(`${modeLabel}会话已结束`)
-      }
-
-      const preparePayload: Record<string, unknown> = {
-        config: {
-          length_penalty: withVideo
-            ? settings.videoDuplexLengthPenalty
-            : settings.audioDuplexLengthPenalty,
-        },
-      }
-
-      if (duplexSettings.refAudio.base64) {
-        preparePayload.ref_audio_base64 = duplexSettings.refAudio.base64
-        preparePayload.tts_ref_audio_base64 = duplexSettings.refAudio.base64
-      }
-
-      if (withVideo) {
-        preparePayload.max_slice_nums = 1
-        preparePayload.deferred_finalize = true
-      }
-
-      await session.start(
-        duplexSettings.systemPrompt.trim() || 'You are a helpful assistant.',
-        preparePayload,
-        async () => {
-          media.onChunk = (chunk) => {
-            const message: Record<string, unknown> = {
-              type: 'audio_chunk',
-              audio_base64: runtime.arrayBufferToBase64(chunk.audio.buffer),
-            }
-
-            if (withVideo && chunk.frameBase64) {
-              message.frame_base64_list = [chunk.frameBase64]
-            }
-
-            session.sendChunk(message)
-          }
-
-          await media.start()
-        },
-      )
-
-      if (session.recordingSessionId) {
-        setLastSessionId(session.recordingSessionId)
-      }
-    } catch (error) {
-      duplexMediaRef.current?.stop()
-      duplexMediaRef.current = null
-      duplexSessionRef.current = null
-      setDuplexStatus('error')
-      setDuplexStatusText(`启动失败：${getErrorMessage(error)}`)
-      appendDuplexEntry('system', `启动失败：${getErrorMessage(error)}`)
-    } finally {
-      duplexStartInFlightRef.current = false
     }
   }
 
@@ -2504,6 +2460,30 @@ function App() {
     await submitConversation(nextMessages)
   }
 
+  async function regenerateLastReply() {
+    if (isGenerating || isPreparingRecording) {
+      return
+    }
+
+    const current = messagesRef.current
+    let lastUserIndex = -1
+    for (let i = current.length - 1; i >= 0; i -= 1) {
+      if (current[i].role === 'user') {
+        lastUserIndex = i
+        break
+      }
+    }
+
+    if (lastUserIndex < 0) {
+      return
+    }
+
+    const trimmed = current.slice(0, lastUserIndex + 1)
+    setMessages(trimmed)
+    setRecordError(null)
+    await submitConversation(trimmed)
+  }
+
   async function startRecording() {
     if (
       isGenerating ||
@@ -2623,25 +2603,6 @@ function App() {
         ? 'AI 回复中...'
         : '按住说话'
 
-  const voiceSubLabel = isRecording
-    ? '继续按住保持录音'
-    : isPreparingRecording
-      ? '正在把录音转成 16k 音频'
-      : '录完后自动发给模型'
-
-  const secondaryLabel = isGenerating
-    ? '停止'
-    : composeMode === 'voice'
-      ? '文字'
-      : '语音'
-
-  const talkVisualIcon =
-    isRecording || isPreparingRecording ? (
-      <WaveIcon className="app-icon app-icon-xl talk-icon" />
-    ) : (
-      <MicIcon className="app-icon app-icon-xl talk-icon" />
-    )
-
   return (
     <div className="mobile-app">
       <input
@@ -2705,66 +2666,65 @@ function App() {
       />
       {screen === 'turn' ? (
         <div className="turn-screen">
-          <div className="turn-topbar">
-            <div className={`service-chip ${serviceState.phase}`}>
-              <span className="service-dot" />
-              <span>{serviceState.summary}</span>
+          <header className="turn-topbar">
+            <button
+              className="topbar-icon-btn"
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="打开菜单"
+            >
+              <HamburgerIcon className="app-icon app-icon-md" />
+            </button>
+
+            <div className="topbar-title" aria-live="polite">
+              <div className="topbar-title-main">对话</div>
+              <div className={`topbar-title-sub ${serviceState.phase}`}>
+                <span className="service-tiny-dot" aria-hidden="true" />
+                <span>{serviceState.summary}</span>
+              </div>
             </div>
-            <div className="turn-top-actions">
+
+            <div className="topbar-actions">
               <button
-                className="entry-action audio"
+                className="topbar-icon-btn"
                 type="button"
-                onClick={() => {
-                  openDuplexScreen('audio')
-                }}
+                onClick={() => duplex.openScreen('audio')}
                 disabled={isGenerating || isRecording || isPreparingRecording}
                 aria-label="进入音频双工"
               >
                 <PhoneIcon className="app-icon app-icon-md" />
-                <span className="button-inline-label">音频</span>
               </button>
               <button
-                className="entry-action video"
+                className="topbar-icon-btn"
                 type="button"
-                onClick={() => {
-                  openDuplexScreen('video')
-                }}
+                onClick={() => duplex.openScreen('video')}
                 disabled={isGenerating || isRecording || isPreparingRecording}
                 aria-label="进入视频双工"
               >
                 <VideoCallIcon className="app-icon app-icon-md" />
-                <span className="button-inline-label">视频</span>
               </button>
             </div>
-          </div>
-
-          <div className="turn-settings-wrap">
-            <SettingsSummary
-              modeLabel="Turn-based"
-              presetName={turnPresetName}
-              refAudio={settings.turnbased.refAudio}
-              systemPrompt={settings.turnbased.systemPrompt}
-              lengthPenalty={settings.turnLengthPenalty}
-              maxNewTokens={settings.maxNewTokens}
-              turnTtsEnabled={settings.turnTtsEnabled}
-              turnStreamingEnabled={settings.turnStreamingEnabled}
-              onOpen={() => {
-                setSettingsOpen(true)
-              }}
-            />
-          </div>
+          </header>
 
           <div className="thread-wrap">
-            {!messages.length && !pendingReply ? (
-              <div className="empty-hint">
-                你好，这里已经接上真实 turn-based 后端。你可以先发一条文字消息，也可以按住说话试一下。
-              </div>
-            ) : null}
-
             <div className="thread">
-              {threadEntries.map((entry) => (
-                <MessageBubble key={entry.id} entry={entry} />
-              ))}
+              {threadEntries.map((entry, index) => {
+                const isLastAssistant =
+                  entry.kind === 'assistant' &&
+                  entry.role === 'assistant' &&
+                  index === threadEntries.length - 1
+                return (
+                  <MessageBubble
+                    key={entry.id}
+                    entry={entry}
+                    isLastAssistant={isLastAssistant}
+                    canRegenerate={!isGenerating && !isPreparingRecording}
+                    onRegenerate={() => {
+                      void regenerateLastReply()
+                    }}
+                  />
+                )
+              })}
               <div ref={threadEndRef} />
             </div>
           </div>
@@ -2772,67 +2732,52 @@ function App() {
           <div className="composer">
             {recordError ? <div className="helper-error">{recordError}</div> : null}
 
-            {composeMode === 'text' ? (
-              <form className="text-composer" onSubmit={handleComposerSubmit}>
-                <textarea
-                  className="text-input"
-                  placeholder="输入文字后发送..."
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      void sendTextMessage()
-                    }
-                  }}
-                  disabled={isGenerating || isPreparingRecording}
-                />
-                <div className="text-actions">
-                  <button
-                    className="send-btn"
-                    type={isGenerating ? 'button' : 'submit'}
-                    onClick={isGenerating ? stopCurrentReply : undefined}
-                  >
-                    {isGenerating ? (
-                      <StopIcon className="app-icon app-icon-md" />
-                    ) : (
-                      <SendIcon className="app-icon app-icon-md" />
-                    )}
-                    <span className="button-inline-label">
-                      {isGenerating ? '停止' : '发送'}
-                    </span>
-                  </button>
-                  <button
-                    className="secondary-btn"
-                    type="button"
-                    onClick={() => {
-                      if (isGenerating) {
-                        stopCurrentReply()
-                        return
-                      }
+            <div
+              className={[
+                'pill-bar',
+                composeMode === 'voice' ? 'voice-mode' : 'text-mode',
+                isRecording ? 'recording' : '',
+                isGenerating ? 'generating' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              <button
+                className="pill-side"
+                type="button"
+                disabled
+                aria-label="附件（待实现）"
+              >
+                <CameraSnapIcon className="app-icon app-icon-md" />
+              </button>
 
-                      setComposeMode('voice')
+              {composeMode === 'text' ? (
+                <form
+                  className="pill-main pill-main-text"
+                  onSubmit={handleComposerSubmit}
+                >
+                  <textarea
+                    className="pill-input"
+                    placeholder="发消息…"
+                    rows={1}
+                    value={draft}
+                    onChange={(event) => {
+                      setDraft(event.target.value)
+                      autoGrowTextarea(event.target)
                     }}
-                  >
-                    {isGenerating ? (
-                      <StopIcon className="app-icon app-icon-md" />
-                    ) : (
-                      <MicIcon className="app-icon app-icon-md" />
-                    )}
-                    <span className="button-inline-label">{secondaryLabel}</span>
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div className="talk-row">
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        void sendTextMessage()
+                      }
+                    }}
+                    disabled={isGenerating || isPreparingRecording}
+                  />
+                  <button type="submit" className="pill-form-submit" aria-hidden="true" tabIndex={-1} />
+                </form>
+              ) : (
                 <button
-                  className={[
-                    'talk-bar',
-                    isRecording ? 'recording' : '',
-                    isGenerating || isPreparingRecording ? 'disabled' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
+                  className="pill-main pill-talk"
                   type="button"
                   onPointerDown={() => {
                     void startRecording()
@@ -2846,305 +2791,91 @@ function App() {
                   onPointerCancel={() => stopRecording('cancel')}
                   disabled={isGenerating || isPreparingRecording}
                 >
-                  <div className="talk-visual" aria-hidden="true">
-                    <div className="talk-orb">{talkVisualIcon}</div>
-                  </div>
-                  <div className="talk-copy">
-                    <div className="talk-main">{voiceMainLabel}</div>
-                    <div className="talk-sub">{voiceSubLabel}</div>
-                  </div>
+                  <span className="pill-talk-label">{voiceMainLabel}</span>
                 </button>
+              )}
+
+              <button
+                className="pill-side"
+                type="button"
+                onClick={() => {
+                  if (isGenerating) {
+                    stopCurrentReply()
+                    return
+                  }
+                  setComposeMode(composeMode === 'voice' ? 'text' : 'voice')
+                }}
+                aria-label={composeMode === 'voice' ? '切换到键盘' : '切换到语音'}
+              >
+                {composeMode === 'voice' ? (
+                  <KeyboardIcon className="app-icon app-icon-md" />
+                ) : (
+                  <WaveIcon className="app-icon app-icon-md" />
+                )}
+              </button>
+
+              {isGenerating || (composeMode === 'text' && draft.trim()) ? (
                 <button
-                  className="text-side-btn"
+                  className={['pill-send', isGenerating ? 'is-stop' : 'is-active']
+                    .filter(Boolean)
+                    .join(' ')}
                   type="button"
                   onClick={() => {
                     if (isGenerating) {
                       stopCurrentReply()
                       return
                     }
-
-                    setComposeMode('text')
+                    void sendTextMessage()
                   }}
+                  disabled={!isGenerating && isPreparingRecording}
+                  aria-label={isGenerating ? '停止' : '发送'}
                 >
                   {isGenerating ? (
-                    <StopIcon className="app-icon app-icon-lg" />
+                    <StopIcon className="app-icon app-icon-md" />
                   ) : (
-                    <KeyboardIcon className="app-icon app-icon-lg" />
+                    <SendIcon className="app-icon app-icon-md" />
                   )}
-                  <span className="button-stack-label">{secondaryLabel}</span>
                 </button>
-              </div>
-            )}
-
-            <div className="helper-row">
-              <span className="helper-text">{serviceState.detail}</span>
-              {lastSessionId ? (
-                <span className="helper-text helper-text-strong">{lastSessionId}</span>
               ) : null}
             </div>
-          </div>
-        </div>
-      ) : audioDuplexScreenOpen ? (
-        <div className="duplex-screen audio-mode">
-          <div className="top-actions">
-            <button
-              className="top-action-button"
-              type="button"
-              onClick={() => {
-                setSettingsOpen(true)
-              }}
-            >
-              <SettingsIcon className="app-icon app-icon-md" />
-              <span className="button-inline-label">设置</span>
-            </button>
-            <button
-              className="top-action-button"
-              type="button"
-              onClick={() => {
-                setDuplexTextPanelOpen((previous) => !previous)
-              }}
-            >
-              <TranscriptIcon className="app-icon app-icon-md" />
-              <span className="button-inline-label">字幕</span>
-            </button>
-          </div>
 
-          <div className="duplex-badge-row">
-            <div className={`duplex-badge ${duplexStatus}`}>{duplexBadgeText}</div>
-            <div className="duplex-status-copy">{duplexStatusText}</div>
-          </div>
-
-          <div className="duplex-settings-wrap">
-            <SettingsSummary
-              modeLabel="音频双工"
-              presetName={audioPresetName}
-              refAudio={settings.audio_duplex.refAudio}
-              systemPrompt={settings.audio_duplex.systemPrompt}
-              lengthPenalty={settings.audioDuplexLengthPenalty}
-              onOpen={() => {
-                setSettingsOpen(true)
-              }}
-            />
-          </div>
-
-          <div className="duplex-stage audio-stage">
-            <video
-              ref={duplexVideoRef}
-              className="duplex-video hidden"
-              autoPlay
-              muted
-              playsInline
-            />
-            <canvas ref={duplexCanvasRef} className="duplex-capture-canvas" />
-
-            <div className="audio-stage-core">
-              <div className="audio-stage-orb" aria-hidden="true">
-                <WaveIcon className="app-icon app-icon-xl" />
-              </div>
-              <div className="audio-stage-title">纯音频双工</div>
-              <div className="audio-stage-copy">
-                这一页只上传麦克风音频，不发送摄像头画面，适合耳机或通话场景。
-              </div>
-            </div>
-
-            {duplexTextPanelOpen ? (
-              <div className="duplex-transcript">
-                {duplexEntries.length ? (
-                  duplexEntries.map((entry) => (
-                    <DuplexLogBubble key={entry.id} entry={entry} />
-                  ))
-                ) : (
-                  <div className="duplex-transcript-empty">
-                    进入后会在这里显示系统状态、用户转写和模型回复。
-                  </div>
-                )}
-                <div ref={duplexEndRef} />
+            {lastSessionId ? (
+              <div className="helper-row">
+                <span className="helper-text helper-text-strong">{lastSessionId}</span>
               </div>
             ) : null}
           </div>
-
-          <div className="control-strip">
-            <button
-              className={['circle-btn', duplexMicEnabled ? '' : 'muted']
-                .filter(Boolean)
-                .join(' ')}
-              type="button"
-              onClick={() => {
-                setDuplexMicEnabled((previous) => !previous)
-              }}
-            >
-              <MicIcon className="app-icon app-icon-lg" />
-              <span className="circle-btn-label">
-                {duplexMicEnabled ? '麦克风' : '已静音'}
-              </span>
-            </button>
-            <button
-              className={['circle-btn', duplexPauseState === 'active' ? '' : 'muted']
-                .filter(Boolean)
-                .join(' ')}
-              type="button"
-              onClick={() => {
-                duplexSessionRef.current?.pauseToggle()
-              }}
-              disabled={!duplexSessionRef.current}
-            >
-              {duplexPauseState === 'active' ? (
-                <PauseIcon className="app-icon app-icon-lg" />
-              ) : (
-                <PlayIcon className="app-icon app-icon-lg" />
-              )}
-              <span className="circle-btn-label">
-                {duplexPauseState === 'active' ? '暂停' : '继续'}
-              </span>
-            </button>
-            <button
-              className="circle-btn danger"
-              type="button"
-              onClick={() => {
-                stopDuplexSession()
-              }}
-            >
-              <CloseIcon className="app-icon app-icon-lg" />
-              <span className="circle-btn-label">退出</span>
-            </button>
-          </div>
         </div>
+      ) : duplex.audioScreenOpen ? (
+        <AudioDuplexScreen
+          duplex={duplex}
+          icons={duplexIcons}
+          settingsSummary={{
+            Component: SettingsSummary,
+            presetName: audioPresetName,
+            refAudio: settings.audio_duplex.refAudio,
+            systemPrompt: settings.audio_duplex.systemPrompt,
+            lengthPenalty: settings.audioDuplexLengthPenalty,
+          }}
+          onOpenSettings={() => {
+            setSettingsOpen(true)
+          }}
+        />
       ) : (
-        <div className="duplex-screen">
-          <div className="top-actions">
-            <button
-              className="top-action-button"
-              type="button"
-              onClick={() => {
-                setSettingsOpen(true)
-              }}
-            >
-              <SettingsIcon className="app-icon app-icon-md" />
-              <span className="button-inline-label">设置</span>
-            </button>
-            <button
-              className="top-action-button"
-              type="button"
-              onClick={() => {
-                setDuplexTextPanelOpen((previous) => !previous)
-              }}
-            >
-              <TranscriptIcon className="app-icon app-icon-md" />
-              <span className="button-inline-label">字幕</span>
-            </button>
-            <button
-              className="top-action-button"
-              type="button"
-              onClick={() => {
-                const action = duplexMediaRef.current?.flipCamera()
-
-                if (action) {
-                  void action.catch((error: unknown) => {
-                    appendDuplexEntry(
-                      'system',
-                      `翻转摄像头失败：${getErrorMessage(error)}`,
-                    )
-                  })
-                }
-              }}
-            >
-              <FlipCameraIcon className="app-icon app-icon-md" />
-              <span className="button-inline-label">翻转</span>
-            </button>
-          </div>
-
-          <div className="duplex-badge-row">
-            <div className={`duplex-badge ${duplexStatus}`}>{duplexBadgeText}</div>
-            <div className="duplex-status-copy">{duplexStatusText}</div>
-          </div>
-
-          <div className="duplex-settings-wrap">
-            <SettingsSummary
-              modeLabel="视频双工"
-              presetName={videoPresetName}
-              refAudio={settings.omni.refAudio}
-              systemPrompt={settings.omni.systemPrompt}
-              lengthPenalty={settings.videoDuplexLengthPenalty}
-              onOpen={() => {
-                setSettingsOpen(true)
-              }}
-            />
-          </div>
-
-          <div className="duplex-stage">
-            <video
-              ref={duplexVideoRef}
-              className={['duplex-video', videoDuplexScreenOpen ? 'visible' : 'hidden']
-                .filter(Boolean)
-                .join(' ')}
-              autoPlay
-              muted
-              playsInline
-            />
-            <canvas ref={duplexCanvasRef} className="duplex-capture-canvas" />
-
-            {duplexTextPanelOpen ? (
-              <div className="duplex-transcript">
-                {duplexEntries.length ? (
-                  duplexEntries.map((entry) => (
-                    <DuplexLogBubble key={entry.id} entry={entry} />
-                  ))
-                ) : (
-                  <div className="duplex-transcript-empty">
-                    进入后会在这里显示系统状态、用户转写和模型回复。
-                  </div>
-                )}
-                <div ref={duplexEndRef} />
-              </div>
-            ) : null}
-          </div>
-
-          <div className="control-strip">
-            <button
-              className={['circle-btn', duplexMicEnabled ? '' : 'muted']
-                .filter(Boolean)
-                .join(' ')}
-              type="button"
-              onClick={() => {
-                setDuplexMicEnabled((previous) => !previous)
-              }}
-            >
-              <MicIcon className="app-icon app-icon-lg" />
-              <span className="circle-btn-label">
-                {duplexMicEnabled ? '麦克风' : '已静音'}
-              </span>
-            </button>
-            <button
-              className={['circle-btn', duplexPauseState === 'active' ? '' : 'muted']
-                .filter(Boolean)
-                .join(' ')}
-              type="button"
-              onClick={() => {
-                duplexSessionRef.current?.pauseToggle()
-              }}
-              disabled={!duplexSessionRef.current}
-            >
-              {duplexPauseState === 'active' ? (
-                <PauseIcon className="app-icon app-icon-lg" />
-              ) : (
-                <PlayIcon className="app-icon app-icon-lg" />
-              )}
-              <span className="circle-btn-label">
-                {duplexPauseState === 'active' ? '暂停' : '继续'}
-              </span>
-            </button>
-            <button
-              className="circle-btn danger"
-              type="button"
-              onClick={() => {
-                stopDuplexSession()
-              }}
-            >
-              <CloseIcon className="app-icon app-icon-lg" />
-              <span className="circle-btn-label">退出</span>
-            </button>
-          </div>
-        </div>
+        <VideoDuplexScreen
+          duplex={duplex}
+          icons={duplexIcons}
+          settingsSummary={{
+            Component: SettingsSummary,
+            presetName: videoPresetName,
+            refAudio: settings.omni.refAudio,
+            systemPrompt: settings.omni.systemPrompt,
+            lengthPenalty: settings.videoDuplexLengthPenalty,
+          }}
+          onOpenSettings={() => {
+            setSettingsOpen(true)
+          }}
+        />
       )}
     </div>
   )
