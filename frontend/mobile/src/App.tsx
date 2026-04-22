@@ -4,6 +4,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { AudioDuplexScreen } from './duplex/AudioDuplexScreen'
 import { VideoDuplexScreen } from './duplex/VideoDuplexScreen'
@@ -184,6 +185,8 @@ function getErrorMessage(error: unknown): string {
 
   return 'Unknown error'
 }
+
+const CANCEL_DRAG_PX = 80
 
 function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
   if (!el) return
@@ -1136,6 +1139,28 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+function RecordingOverlay({ willCancel }: { willCancel: boolean }) {
+  return (
+    <div
+      className={['recording-overlay', willCancel ? 'will-cancel' : ''].filter(Boolean).join(' ')}
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <div className="recording-overlay-bg" aria-hidden="true" />
+      <div className="recording-overlay-inner">
+        <div className="recording-overlay-text">
+          {willCancel ? '松手取消' : '松手发送，上移取消'}
+        </div>
+        <div className="recording-waveform" aria-hidden="true">
+          {Array.from({ length: 28 }).map((_, i) => (
+            <span key={i} style={{ animationDelay: `${(i % 14) * 60}ms` }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 type SettingsSummaryProps = {
   modeLabel: string
   presetName: string
@@ -1435,6 +1460,10 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isPreparingRecording, setIsPreparingRecording] = useState(false)
+  const [recordingWillCancel, setRecordingWillCancel] = useState(false)
+  const recordingPointerStartYRef = useRef<number | null>(null)
+  const recordingPointerIdRef = useRef<number | null>(null)
+  const recordingWillCancelRef = useRef(false)
   const [recordError, setRecordError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [presetsByMode, setPresetsByMode] = useState<Record<PresetMode, PresetMetadata[]>>({
@@ -2588,6 +2617,51 @@ function App() {
     }
 
     setIsRecording(false)
+    setRecordingWillCancel(false)
+    recordingWillCancelRef.current = false
+    recordingPointerStartYRef.current = null
+    recordingPointerIdRef.current = null
+  }
+
+  function handleTalkPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (isGenerating || isPreparingRecording || isRecording) return
+    recordingPointerStartYRef.current = event.clientY
+    recordingPointerIdRef.current = event.pointerId
+    recordingWillCancelRef.current = false
+    setRecordingWillCancel(false)
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      /* ignore */
+    }
+    void startRecording()
+  }
+
+  function handleTalkPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (recordingPointerIdRef.current !== event.pointerId) return
+    const startY = recordingPointerStartYRef.current
+    if (startY === null) return
+    const deltaY = startY - event.clientY
+    const cancel = deltaY > CANCEL_DRAG_PX
+    if (cancel !== recordingWillCancelRef.current) {
+      recordingWillCancelRef.current = cancel
+      setRecordingWillCancel(cancel)
+    }
+  }
+
+  function handleTalkPointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (recordingPointerIdRef.current !== event.pointerId && recordingPointerIdRef.current !== null) return
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    } catch {
+      /* ignore */
+    }
+    if (!isRecording && !isPreparingRecording) {
+      recordingPointerStartYRef.current = null
+      recordingPointerIdRef.current = null
+      return
+    }
+    stopRecording(recordingWillCancelRef.current ? 'cancel' : 'send')
   }
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
@@ -2612,6 +2686,7 @@ function App() {
         accept="audio/*"
         onChange={handleRefAudioInputChange}
       />
+      {isRecording ? <RecordingOverlay willCancel={recordingWillCancel} /> : null}
       <SettingsSheet
         open={settingsOpen}
         activeMode={activePresetMode}
@@ -2779,19 +2854,15 @@ function App() {
                 <button
                   className="pill-main pill-talk"
                   type="button"
-                  onPointerDown={() => {
-                    void startRecording()
-                  }}
-                  onPointerUp={() => stopRecording('send')}
-                  onPointerLeave={() => {
-                    if (isRecording) {
-                      stopRecording('send')
-                    }
-                  }}
+                  onPointerDown={handleTalkPointerDown}
+                  onPointerMove={handleTalkPointerMove}
+                  onPointerUp={handleTalkPointerUp}
                   onPointerCancel={() => stopRecording('cancel')}
                   disabled={isGenerating || isPreparingRecording}
                 >
-                  <span className="pill-talk-label">{voiceMainLabel}</span>
+                  <span className="pill-talk-label">
+                    {isRecording ? '说话中…' : voiceMainLabel}
+                  </span>
                 </button>
               )}
 
