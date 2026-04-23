@@ -1916,7 +1916,7 @@
   background: radial-gradient(120% 80% at 50% 0%, #0f1c3a 0%, #060a1a 60%, #03050d 100%);
   color: #e6ecff;
   overflow: hidden;
-  z-index: 50;
+  z-index: 20;
 }
 
 .halfduplex-topbar {
