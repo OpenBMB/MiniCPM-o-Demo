@@ -53,17 +53,21 @@ export type UseDuplexSessionApi = {
   micEnabled: boolean
   textPanelOpen: boolean
   pauseState: DuplexPauseState
+  forceListen: boolean
   badgeText: string
   audioScreenOpen: boolean
   videoScreenOpen: boolean
   hasSession: boolean
   openScreen: (mode: DuplexMode) => void
+  startCurrent: () => void
   stop: (options?: { preserveScreen?: boolean }) => void
   toggleMic: () => void
   togglePause: () => void
+  toggleForceListen: () => void
   toggleTextPanel: () => void
   flipCamera: () => void
   appendEntry: (role: DuplexEntry['role'], text: string) => string
+  getAnalyser: () => AnalyserNode | null
 }
 
 export function useDuplexSession(
@@ -78,6 +82,7 @@ export function useDuplexSession(
   const [micEnabled, setMicEnabled] = useState(true)
   const [textPanelOpen, setTextPanelOpen] = useState(true)
   const [pauseState, setPauseState] = useState<DuplexPauseState>('active')
+  const [forceListen, setForceListen] = useState(false)
   const [hasSession, setHasSession] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -137,6 +142,7 @@ export function useDuplexSession(
     setStatus('stopped')
     setStatusText(`${modeLabel}会话已结束`)
     setPauseState('active')
+    setForceListen(false)
 
     if (!options?.preserveScreen) {
       setScreen('turn')
@@ -233,6 +239,9 @@ export function useDuplexSession(
               : `${modeLabel}已暂停`,
         )
       }
+      session.onForceListenChange = (active) => {
+        setForceListen(active)
+      }
       session.onMetrics = (data) => {
         if (data.type === 'result') {
           setStatusText(
@@ -275,6 +284,7 @@ export function useDuplexSession(
         sessionRef.current = null
         setHasSession(false)
         setPauseState('active')
+        setForceListen(false)
         setStatus('stopped')
         setStatusText(`${modeLabel}会话已结束`)
       }
@@ -342,6 +352,18 @@ export function useDuplexSession(
     sessionRef.current?.pauseToggle()
   }
 
+  function toggleForceListen() {
+    sessionRef.current?.toggleForceListen()
+  }
+
+  function startCurrent() {
+    void start(mode)
+  }
+
+  function getAnalyser(): AnalyserNode | null {
+    return mediaRef.current?.getAnalyser() ?? null
+  }
+
   function toggleTextPanel() {
     setTextPanelOpen((previous) => !previous)
   }
@@ -382,16 +404,20 @@ export function useDuplexSession(
     micEnabled,
     textPanelOpen,
     pauseState,
+    forceListen,
     badgeText,
     audioScreenOpen,
     videoScreenOpen,
     hasSession,
     openScreen,
+    startCurrent,
     stop,
     toggleMic,
     togglePause,
+    toggleForceListen,
     toggleTextPanel,
     flipCamera,
     appendEntry,
+    getAnalyser,
   }
 }
