@@ -450,6 +450,13 @@
   color: #94a3b8;
 }
 
+.msg-interrupted {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+  letter-spacing: 0.2px;
+}
+
 .msg-actions {
   display: flex;
   align-items: center;

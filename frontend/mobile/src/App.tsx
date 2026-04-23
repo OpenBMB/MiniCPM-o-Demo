@@ -72,6 +72,7 @@ type ConversationEntry =
       kind: 'assistant'
       text: string
       error?: boolean
+      interrupted?: boolean
       audioPreviewUrl?: string | null
       recordingSessionId?: string | null
     }
@@ -1701,6 +1702,9 @@ function MessageBubble({
         </div>
       ) : null}
       {entry.text ? <div className="msg-text">{entry.text}</div> : null}
+      {isAssistant && entry.interrupted ? (
+        <div className="msg-interrupted">已中断</div>
+      ) : null}
       {showActions ? (
         <div className="msg-actions">
           <CopyButton text={entry.text} />
@@ -3096,6 +3100,39 @@ function App() {
     }
   }
 
+  function persistEntryToSession(
+    sessionId: string,
+    finalMessages: ConversationEntry[],
+  ) {
+    if (!sessionId) return
+    const now = Date.now()
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === sessionId)
+      const title = deriveSessionTitle(finalMessages)
+      if (idx === -1) {
+        const created: ChatSession = {
+          id: sessionId,
+          title: title || '新对话',
+          createdAt: now,
+          updatedAt: now,
+          messages: finalMessages,
+        }
+        void idbPutSession(created)
+        return [created, ...prev]
+      }
+      const updated: ChatSession = {
+        ...prev[idx],
+          title: title || prev[idx].title,
+        messages: finalMessages,
+        updatedAt: now,
+      }
+      const next = prev.slice()
+      next[idx] = updated
+      void idbPutSession(updated)
+      return next
+    })
+  }
+
   function buildChatRequestBody(
     nextMessages: ConversationEntry[],
     systemMessage: string | BackendContentItem[] | null | undefined,
@@ -3221,6 +3258,14 @@ function App() {
       if (isStillActive()) {
         setMessages([...nextMessages, assistantEntry])
         setLastSessionId(payload.recording_session_id ?? null)
+      } else {
+        // Reply landed after the user already switched away. Save it
+        // back into the originating session marked as interrupted so
+        // the partial / completed response is not lost on switch-back.
+        persistEntryToSession(submissionSessionId, [
+          ...nextMessages,
+          { ...assistantEntry, interrupted: true },
+        ])
       }
     } catch (error) {
       const errorText =
@@ -3365,6 +3410,18 @@ function App() {
         }
         setPendingReply(null)
         setIsGenerating(false)
+      } else if (resolvedEntry && resolvedEntry.kind === 'assistant') {
+        // User switched away from this session before the reply finished.
+        // Save what we got back into the originating session so they can
+        // come back to it instead of losing the partial response.
+        const interruptedEntry: ConversationEntry = {
+          ...resolvedEntry,
+          interrupted: true,
+        }
+        persistEntryToSession(submissionSessionId, [
+          ...nextMessages,
+          interruptedEntry,
+        ])
       }
 
       if (streamingWsRef.current === ws) {
