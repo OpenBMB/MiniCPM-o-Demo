@@ -1520,104 +1520,6 @@ function AudioPlayPill({
   )
 }
 
-const CAMERA_QUICK_PROMPTS = [
-  '这是什么？',
-  '描述图中的场景',
-  '提取图中文字',
-  '图里的内容讲给我听',
-] as const
-
-type CameraReviewOverlayProps = {
-  attachment: Attachment
-  draft: string
-  onDraftChange: (v: string) => void
-  onClose: () => void
-  onRetake: () => void
-  onSend: (text: string) => void
-  disabled: boolean
-}
-
-function CameraReviewOverlay({
-  attachment,
-  draft,
-  onDraftChange,
-  onClose,
-  onRetake,
-  onSend,
-  disabled,
-}: CameraReviewOverlayProps) {
-  return (
-    <div className="camera-review">
-      <div className="camera-review-topbar">
-        <button
-          type="button"
-          className="camera-review-icon-btn"
-          onClick={onClose}
-          aria-label="放弃"
-        >
-          <CloseIcon className="app-icon app-icon-md" />
-        </button>
-        <div className="camera-review-topbar-spacer" />
-        <button
-          type="button"
-          className="camera-review-icon-btn"
-          onClick={onRetake}
-          aria-label="重拍"
-        >
-          <RefreshIcon className="app-icon app-icon-md" />
-        </button>
-      </div>
-
-      <div className="camera-review-stage">
-        <img src={attachment.previewUrl} alt="拍摄的照片" />
-      </div>
-
-      <div className="camera-review-bottom">
-        <div className="camera-review-chips">
-          {CAMERA_QUICK_PROMPTS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className="camera-review-chip"
-              disabled={disabled}
-              onClick={() => onSend(p)}
-            >
-              {p}
-              <span className="camera-review-chip-arrow">→</span>
-            </button>
-          ))}
-        </div>
-
-        <form
-          className="camera-review-composer"
-          onSubmit={(e) => {
-            e.preventDefault()
-            onSend(draft)
-          }}
-        >
-          <input
-            className="camera-review-input"
-            type="text"
-            value={draft}
-            placeholder="问点关于这张图的…"
-            onChange={(e) => onDraftChange(e.target.value)}
-            disabled={disabled}
-            autoFocus
-          />
-          <button
-            type="submit"
-            className="camera-review-send"
-            disabled={disabled}
-            aria-label="发送"
-          >
-            <SendIcon className="app-icon app-icon-md" />
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 function MessageAttachment({ attachment }: { attachment: Attachment }) {
   if (attachment.kind === 'image') {
     return (
@@ -2298,8 +2200,6 @@ function App() {
   const [recordError, setRecordError] = useState<string | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
-  const [cameraReview, setCameraReview] = useState<Attachment | null>(null)
-  const [reviewDraft, setReviewDraft] = useState('')
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
   const albumInputRef = useRef<HTMLInputElement | null>(null)
   const audioInputRef = useRef<HTMLInputElement | null>(null)
@@ -3646,6 +3546,9 @@ function App() {
     }
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
+      textInputAutoFocusRef.current = true
+      setComposeMode('text')
+      setAttachMenuOpen(false)
     }
   }
 
@@ -3671,6 +3574,9 @@ function App() {
     }
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
+      textInputAutoFocusRef.current = true
+      setComposeMode('text')
+      setAttachMenuOpen(false)
     }
   }
 
@@ -3694,32 +3600,17 @@ function App() {
     if (!f) return
     try {
       const att = await downscaleImageToAttachment(f)
-      setReviewDraft('')
-      setCameraReview(att)
+      setPendingAttachments((prev) => [...prev, att])
+      // Drop the user back into the main composer in text mode so they
+      // can either type a question or hold-to-talk on top of the photo,
+      // matching Doubao behaviour. Mark autofocus so iOS pops the
+      // keyboard inside the same user-gesture stack.
+      textInputAutoFocusRef.current = true
+      setComposeMode('text')
+      setAttachMenuOpen(false)
     } catch (err) {
       console.warn('camera capture failed', err)
     }
-  }
-
-  async function sendCameraReview(text: string) {
-    const att = cameraReview
-    if (!att || isGenerating || isPreparingRecording) return
-    setCameraReview(null)
-    setReviewDraft('')
-    setRecordError(null)
-    const trimmed = text.trim()
-    const nextMessages: ConversationEntry[] = [
-      ...messagesRef.current,
-      {
-        id: createId('user'),
-        role: 'user',
-        kind: 'text',
-        text: trimmed,
-        attachments: [att],
-      },
-    ]
-    setMessages(nextMessages)
-    await submitConversation(nextMessages)
   }
 
   async function regenerateLastReply() {
@@ -4018,26 +3909,6 @@ function App() {
         }}
       />
       {isRecording ? <RecordingOverlay willCancel={recordingWillCancel} /> : null}
-      {cameraReview ? (
-        <CameraReviewOverlay
-          attachment={cameraReview}
-          draft={reviewDraft}
-          onDraftChange={setReviewDraft}
-          onClose={() => {
-            setCameraReview(null)
-            setReviewDraft('')
-          }}
-          onRetake={() => {
-            setCameraReview(null)
-            setReviewDraft('')
-            setTimeout(() => cameraInputRef.current?.click(), 0)
-          }}
-          onSend={(text) => {
-            void sendCameraReview(text)
-          }}
-          disabled={isGenerating || isPreparingRecording}
-        />
-      ) : null}
       <SettingsSheet
         open={settingsOpen}
         activeMode={activePresetMode}
