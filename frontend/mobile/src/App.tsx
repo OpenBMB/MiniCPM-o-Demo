@@ -215,8 +215,10 @@ function getErrorMessage(error: unknown): string {
 }
 
 const CANCEL_DRAG_PX = 80
-const MIN_HOLD_MS = 320
-const TAP_HINT_MS = 1200
+// Below this duration, a press is silently discarded (no message is sent
+// and no error is shown). Treats accidental taps and too-short presses
+// as a no-op while keeping the visual feedback (overlay + haptic).
+const SILENT_DISCARD_MS = 280
 
 const ACTIVE_SESSION_STORAGE_KEY = 'mobile.turn.activeSessionId.v1'
 const SESSIONS_DB_NAME = 'mobile-turn-db'
@@ -2247,15 +2249,11 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isPreparingRecording, setIsPreparingRecording] = useState(false)
-  const [isArmingHold, setIsArmingHold] = useState(false)
   const [recordingWillCancel, setRecordingWillCancel] = useState(false)
   const recordingPointerStartYRef = useRef<number | null>(null)
   const recordingPointerIdRef = useRef<number | null>(null)
   const recordingWillCancelRef = useRef(false)
-  const holdArmTimerRef = useRef<number | null>(null)
-  const tapHintTimerRef = useRef<number | null>(null)
   const wasGeneratingAtDownRef = useRef(false)
-  const [showTapHint, setShowTapHint] = useState(false)
   const [recordError, setRecordError] = useState<string | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
@@ -3755,83 +3753,6 @@ function App() {
     await submitConversation(trimmed)
   }
 
-  async function startRecording(options?: { skipGenerationCheck?: boolean }) {
-    if (
-      (!options?.skipGenerationCheck && isGenerating) ||
-      isRecording ||
-      isPreparingRecording ||
-      composeMode !== 'voice' ||
-      screen !== 'turn'
-    ) {
-      return
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setRecordError('当前浏览器不支持麦克风录音。')
-      return
-    }
-    if (!getAudioContextCtor()) {
-      setRecordError('当前浏览器不支持 AudioContext，无法录音。')
-      return
-    }
-
-    setRecordError(null)
-    setIsPreparingRecording(true)
-
-    // Capture the pointer id at entry. If the user releases (or the press
-    // gets cancelled) while we are awaiting prewarm or ctx.resume(), the
-    // pointerup/cancel handler will null this ref and we must abort instead
-    // of bringing up an unattended recording session.
-    const initiatingPointerId = recordingPointerIdRef.current
-    const userStillHolding = () =>
-      initiatingPointerId !== null
-        ? recordingPointerIdRef.current === initiatingPointerId
-        : true
-
-    // The mic was (most likely) prewarmed in handleTalkPointerDown while the
-    // 320ms hold-arm timer was running. If prewarm is still in flight (slow
-    // device / first-time permission prompt), wait for it. If prewarm hasn't
-    // been kicked off at all (e.g. startRecording called from somewhere
-    // other than the press-to-talk path), kick it off here as a fallback.
-    let warm = audioCaptureCtxRef.current !== null && mediaStreamRef.current !== null
-    if (!warm) {
-      warm = await prewarmMic()
-    }
-    if (!userStillHolding()) {
-      coldDownMic()
-      setIsPreparingRecording(false)
-      return
-    }
-    if (!warm || !audioCaptureCtxRef.current || !mediaStreamRef.current) {
-      setRecordError('无法开始录音：麦克风初始化失败。')
-      coldDownMic()
-      setIsPreparingRecording(false)
-      return
-    }
-
-    // Some browsers re-suspend the context between gestures; nudge it.
-    const ctx = audioCaptureCtxRef.current
-    if (ctx.state === 'suspended') {
-      try {
-        await ctx.resume()
-      } catch {
-        // ignore
-      }
-    }
-
-    if (!userStillHolding()) {
-      coldDownMic()
-      setIsPreparingRecording(false)
-      return
-    }
-
-    audioCaptureChunksRef.current = []
-    recordingActionRef.current = 'send'
-    recordingStartRef.current = performance.now()
-    isCapturingRef.current = true
-    setIsRecording(true)
-  }
-
   async function finalizeRecording() {
     const durationMs = Math.max(0, performance.now() - recordingStartRef.current)
     const shouldSend = recordingActionRef.current === 'send'
@@ -3845,14 +3766,14 @@ function App() {
         return
       }
 
-      if (durationMs < 300 || chunks.length === 0) {
-        setRecordError('录音太短了，请再试一次。')
+      if (durationMs < SILENT_DISCARD_MS || chunks.length === 0) {
+        // Defensive: pointer-up handler should have already discarded
+        // anything this short. Stay silent regardless.
         return
       }
 
       const merged = concatFloat32(chunks)
       if (merged.length === 0) {
-        setRecordError('未采集到音频，请重试。')
         return
       }
 
@@ -3908,52 +3829,92 @@ function App() {
     recordingPointerIdRef.current = null
   }
 
-  function clearHoldArmTimer() {
-    if (holdArmTimerRef.current !== null) {
-      window.clearTimeout(holdArmTimerRef.current)
-      holdArmTimerRef.current = null
-    }
-  }
+  function discardRecordingState() {
+    isCapturingRef.current = false
+    setIsRecording(false)
+    setIsPreparingRecording(false)
+    setRecordingWillCancel(false)
+    recordingWillCancelRef.current = false
+    recordingPointerStartYRef.current = null
+    recordingPointerIdRef.current = null
 
-  function flashTapHint() {
-    if (tapHintTimerRef.current !== null) {
-      window.clearTimeout(tapHintTimerRef.current)
+    const release = () => {
+      if (!isCapturingRef.current) coldDownMic()
     }
-    setShowTapHint(true)
-    tapHintTimerRef.current = window.setTimeout(() => {
-      tapHintTimerRef.current = null
-      setShowTapHint(false)
-    }, TAP_HINT_MS)
+    if (prewarmInflightRef.current) {
+      void prewarmInflightRef.current.finally(release)
+    } else {
+      release()
+    }
   }
 
   function handleTalkPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (isPreparingRecording || isRecording) return
+    if (isRecording || isPreparingRecording) return
+
     recordingPointerStartYRef.current = event.clientY
     recordingPointerIdRef.current = event.pointerId
     recordingWillCancelRef.current = false
     wasGeneratingAtDownRef.current = isGenerating
     setRecordingWillCancel(false)
-    setShowTapHint(false)
-    setIsArmingHold(true)
+    setRecordError(null)
+
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
       /* ignore */
     }
-    // Kick off mic prewarm in parallel with the hold-arm timer so that by
-    // the time the timer fires (320ms later) the MediaStream and AudioContext
-    // are usually already up and we can flip into "recording" instantly.
-    void prewarmMic()
-    clearHoldArmTimer()
-    holdArmTimerRef.current = window.setTimeout(() => {
-      holdArmTimerRef.current = null
-      setIsArmingHold(false)
-      const wasGenerating = wasGeneratingAtDownRef.current
-      if (wasGenerating) {
-        stopCurrentReply()
+
+    // Haptic feedback (Android / some Desktop). iOS Safari ignores.
+    try {
+      navigator.vibrate?.(15)
+    } catch {
+      /* ignore */
+    }
+
+    // Pressing during an AI reply interrupts it immediately. If the user
+    // ends up only tapping (under SILENT_DISCARD_MS) we still keep the
+    // interrupt — that matches the semantics of "tap to stop reply".
+    if (isGenerating) {
+      stopCurrentReply()
+    }
+
+    // Show the overlay and arm the recording state synchronously so the
+    // user gets immediate visual confirmation. The actual mic open happens
+    // asynchronously below; chunks only start filling once isCapturingRef
+    // is flipped to true. If the user releases before we get that far,
+    // pointer-up will silent-discard.
+    recordingActionRef.current = 'send'
+    audioCaptureChunksRef.current = []
+    recordingStartRef.current = performance.now()
+    setIsRecording(true)
+
+    void beginRecordingCapture(event.pointerId)
+  }
+
+  async function beginRecordingCapture(initiatingPointerId: number) {
+    const stillHolding = () => recordingPointerIdRef.current === initiatingPointerId
+
+    let warm = audioCaptureCtxRef.current !== null && mediaStreamRef.current !== null
+    if (!warm) warm = await prewarmMic()
+    if (!stillHolding()) return
+
+    if (!warm || !audioCaptureCtxRef.current || !mediaStreamRef.current) {
+      setRecordError('无法开始录音：麦克风初始化失败。')
+      discardRecordingState()
+      return
+    }
+
+    const ctx = audioCaptureCtxRef.current
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+      } catch {
+        /* ignore */
       }
-      void startRecording({ skipGenerationCheck: wasGenerating })
-    }, MIN_HOLD_MS)
+    }
+    if (!stillHolding()) return
+
+    isCapturingRef.current = true
   }
 
   function handleTalkPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -3969,68 +3930,47 @@ function App() {
   }
 
   function handleTalkPointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (recordingPointerIdRef.current !== event.pointerId && recordingPointerIdRef.current !== null) return
+    if (
+      recordingPointerIdRef.current !== event.pointerId &&
+      recordingPointerIdRef.current !== null
+    )
+      return
     try {
       event.currentTarget.releasePointerCapture(event.pointerId)
     } catch {
       /* ignore */
     }
 
-    const wasArming = holdArmTimerRef.current !== null
-    const wasGeneratingAtDown = wasGeneratingAtDownRef.current
-    clearHoldArmTimer()
-    setIsArmingHold(false)
+    const duration = performance.now() - recordingStartRef.current
+    const willCancel = recordingWillCancelRef.current
 
-    if (wasArming) {
-      recordingPointerStartYRef.current = null
-      recordingPointerIdRef.current = null
-      // We may have started prewarming the mic; release it so the browser
-      // recording indicator turns off and we don't keep a live stream open
-      // for what turned out to be a tap. We schedule a microtask later so
-      // that any in-flight prewarm promise can resolve and write into the
-      // refs before we tear it down.
-      const releaseWarm = () => {
-        if (!isCapturingRef.current) coldDownMic()
-      }
-      if (prewarmInflightRef.current) {
-        void prewarmInflightRef.current.finally(releaseWarm)
-      } else {
-        releaseWarm()
-      }
-      if (wasGeneratingAtDown) {
-        stopCurrentReply()
-      } else {
-        flashTapHint()
-      }
+    if (!isRecording) {
+      // Defensive: shouldn't normally reach here, but make sure we don't
+      // leak a half-warm mic.
+      discardRecordingState()
       return
     }
 
-    if (!isRecording && !isPreparingRecording) {
-      recordingPointerStartYRef.current = null
-      recordingPointerIdRef.current = null
-      coldDownMic()
+    if (willCancel || duration < SILENT_DISCARD_MS) {
+      // Silent discard: no error, no tooltip, no message.
+      discardRecordingState()
       return
     }
-    stopRecording(recordingWillCancelRef.current ? 'cancel' : 'send')
+
+    stopRecording('send')
   }
 
   function handleTalkPointerCancel(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (recordingPointerIdRef.current !== event.pointerId && recordingPointerIdRef.current !== null) return
-    clearHoldArmTimer()
-    setIsArmingHold(false)
+    if (
+      recordingPointerIdRef.current !== event.pointerId &&
+      recordingPointerIdRef.current !== null
+    )
+      return
     if (isRecording || isPreparingRecording) {
-      stopRecording('cancel')
+      discardRecordingState()
     } else {
       recordingPointerStartYRef.current = null
       recordingPointerIdRef.current = null
-      const releaseWarm = () => {
-        if (!isCapturingRef.current) coldDownMic()
-      }
-      if (prewarmInflightRef.current) {
-        void prewarmInflightRef.current.finally(releaseWarm)
-      } else {
-        releaseWarm()
-      }
     }
   }
 
@@ -4339,7 +4279,6 @@ function App() {
                   className={[
                     'pill-main',
                     'pill-talk',
-                    isArmingHold ? 'is-armed' : '',
                     isRecording || isPreparingRecording ? 'is-recording' : '',
                   ]
                     .filter(Boolean)
@@ -4353,11 +4292,6 @@ function App() {
                   <span className="pill-talk-label">
                     {isRecording ? '说话中…' : voiceMainLabel}
                   </span>
-                  {showTapHint ? (
-                    <span className="pill-talk-hint" role="status">
-                      按住才能说话
-                    </span>
-                  ) : null}
                 </button>
               )}
 
