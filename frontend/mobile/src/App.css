@@ -196,6 +196,10 @@
   color: #0f172a;
   line-height: 1.2;
   letter-spacing: 0.2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar-title-sub {

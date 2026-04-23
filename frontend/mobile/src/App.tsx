@@ -4034,7 +4034,12 @@ function App() {
             </button>
 
             <div className="topbar-title" aria-live="polite">
-              <div className="topbar-title-main">对话</div>
+              <div className="topbar-title-main">
+                {sessions.find((s) => s.id === activeSessionId)?.title ||
+                  (messages.length > 0
+                    ? deriveSessionTitle(messages)
+                    : '新对话')}
+              </div>
               <div className={`topbar-title-sub ${serviceState.phase}`}>
                 <span className="service-tiny-dot" aria-hidden="true" />
                 <span>{serviceState.summary}</span>
