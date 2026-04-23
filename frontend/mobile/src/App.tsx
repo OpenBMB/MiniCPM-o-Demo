@@ -3976,9 +3976,7 @@ function App() {
     ? '松开发送'
     : isPreparingRecording
       ? '处理中...'
-      : isGenerating
-        ? '点击停止 / 按住打断'
-        : '按住说话'
+      : '按住说话'
 
   return (
     <div className="mobile-app">
