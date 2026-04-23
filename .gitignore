@@ -50,3 +50,4 @@ AutoAWQ/
 dev_tools/
 
 benchmark.json
+.run-logs/

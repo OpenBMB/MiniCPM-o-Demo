@@ -40,6 +40,31 @@ type BackendMessage = {
   content: string | BackendContentItem[]
 }
 
+type Attachment =
+  | {
+      id: string
+      kind: 'image'
+      previewUrl: string
+      base64: string
+      name: string
+    }
+  | {
+      id: string
+      kind: 'audio'
+      previewUrl: string
+      base64: string
+      name: string
+      duration?: number
+    }
+  | {
+      id: string
+      kind: 'video'
+      previewUrl: string
+      base64: string
+      name: string
+      duration?: number
+    }
+
 type ConversationEntry =
   | {
       id: string
@@ -55,6 +80,7 @@ type ConversationEntry =
       role: 'user'
       kind: 'text'
       text: string
+      attachments?: Attachment[]
     }
   | {
       id: string
@@ -674,6 +700,103 @@ function SettingsIcon({ className }: IconProps) {
   )
 }
 
+function PlusIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle cx="12" cy="12" r="9.2" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M12 8v8M8 12h8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function PhotoIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <rect
+        x="3.5"
+        y="5.5"
+        width="17"
+        height="13"
+        rx="2.2"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+      <circle cx="9" cy="10.5" r="1.6" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M3.7 16.5 9 12l4 3.5 3-2.5 4.3 4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  )
+}
+
+function MusicIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M9 17V6.5l9-1.7v10.4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+      <ellipse cx="7" cy="17.5" rx="2.5" ry="2" stroke="currentColor" strokeWidth="1.6" />
+      <ellipse cx="16" cy="15.5" rx="2.5" ry="2" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
+function FilmIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <rect
+        x="3.5"
+        y="5.5"
+        width="17"
+        height="13"
+        rx="1.8"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+      <path
+        d="M3.5 9h17M3.5 15h17M8 5.5v13M16 5.5v13"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+    </svg>
+  )
+}
+
 function buildRequestMessages(
   entries: ConversationEntry[],
   systemMessage?: string | BackendContentItem[] | null,
@@ -701,9 +824,29 @@ function buildRequestMessages(
     }
 
     if (entry.kind === 'text') {
+      const atts = entry.attachments ?? []
+      if (atts.length === 0) {
+        return {
+          role: 'user',
+          content: entry.text,
+        }
+      }
+      const items: BackendContentItem[] = []
+      for (const a of atts) {
+        if (a.kind === 'image') {
+          items.push({ type: 'image', data: a.base64 })
+        } else if (a.kind === 'audio') {
+          items.push({ type: 'audio', data: a.base64, name: a.name, duration: a.duration })
+        } else {
+          items.push({ type: 'video', data: a.base64, duration: a.duration })
+        }
+      }
+      if (entry.text) {
+        items.push({ type: 'text', text: entry.text })
+      }
       return {
         role: 'user',
-        content: entry.text,
+        content: items,
       }
     }
 
@@ -719,6 +862,103 @@ function buildRequestMessages(
   })
 
   return [...messages, ...conversationMessages]
+}
+
+async function fileToBase64Stripped(file: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result ?? '')
+      const i = result.indexOf(',')
+      resolve(i >= 0 ? result.slice(i + 1) : result)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function readFileAsDataUrl(file: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function downscaleImageToAttachment(
+  file: File,
+  maxEdge = 1280,
+  quality = 0.85,
+): Promise<Attachment> {
+  const dataUrl = await readFileAsDataUrl(file)
+  const img: HTMLImageElement = await new Promise((resolve, reject) => {
+    const i = new Image()
+    i.onload = () => resolve(i)
+    i.onerror = () => reject(new Error('image load failed'))
+    i.src = dataUrl
+  })
+
+  let w = img.naturalWidth
+  let h = img.naturalHeight
+  const longEdge = Math.max(w, h)
+  if (longEdge > maxEdge) {
+    const scale = maxEdge / longEdge
+    w = Math.round(w * scale)
+    h = Math.round(h * scale)
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    throw new Error('canvas 2d unavailable')
+  }
+  ctx.drawImage(img, 0, 0, w, h)
+  const outDataUrl = canvas.toDataURL('image/jpeg', quality)
+  const base64 = outDataUrl.slice(outDataUrl.indexOf(',') + 1)
+  return {
+    id: createId('att'),
+    kind: 'image',
+    previewUrl: outDataUrl,
+    base64,
+    name: file.name || 'photo.jpg',
+  }
+}
+
+async function mediaFileToAttachment(
+  file: File,
+  kind: 'audio' | 'video',
+): Promise<Attachment> {
+  const base64 = await fileToBase64Stripped(file)
+  const previewUrl = URL.createObjectURL(file)
+  let duration: number | undefined
+  try {
+    duration = await new Promise<number>((resolve) => {
+      const el = document.createElement(kind === 'audio' ? 'audio' : 'video') as
+        | HTMLAudioElement
+        | HTMLVideoElement
+      el.preload = 'metadata'
+      const onLoaded = () => {
+        const d = Number.isFinite(el.duration) ? el.duration : 0
+        resolve(d)
+      }
+      el.addEventListener('loadedmetadata', onLoaded, { once: true })
+      el.addEventListener('error', () => resolve(0), { once: true })
+      el.src = previewUrl
+    })
+  } catch {
+    duration = undefined
+  }
+  return {
+    id: createId('att'),
+    kind,
+    previewUrl,
+    base64,
+    name: file.name || (kind === 'audio' ? 'audio' : 'video'),
+    duration,
+  }
 }
 
 async function convertAudioBlobToFloat32Base64(blob: Blob): Promise<string> {
@@ -945,6 +1185,126 @@ function AudioPlayPill({
   )
 }
 
+const CAMERA_QUICK_PROMPTS = [
+  '这是什么？',
+  '描述图中的场景',
+  '提取图中文字',
+  '图里的内容讲给我听',
+] as const
+
+type CameraReviewOverlayProps = {
+  attachment: Attachment
+  draft: string
+  onDraftChange: (v: string) => void
+  onClose: () => void
+  onRetake: () => void
+  onSend: (text: string) => void
+  disabled: boolean
+}
+
+function CameraReviewOverlay({
+  attachment,
+  draft,
+  onDraftChange,
+  onClose,
+  onRetake,
+  onSend,
+  disabled,
+}: CameraReviewOverlayProps) {
+  return (
+    <div className="camera-review">
+      <div className="camera-review-topbar">
+        <button
+          type="button"
+          className="camera-review-icon-btn"
+          onClick={onClose}
+          aria-label="放弃"
+        >
+          <CloseIcon className="app-icon app-icon-md" />
+        </button>
+        <div className="camera-review-topbar-spacer" />
+        <button
+          type="button"
+          className="camera-review-icon-btn"
+          onClick={onRetake}
+          aria-label="重拍"
+        >
+          <RefreshIcon className="app-icon app-icon-md" />
+        </button>
+      </div>
+
+      <div className="camera-review-stage">
+        <img src={attachment.previewUrl} alt="拍摄的照片" />
+      </div>
+
+      <div className="camera-review-bottom">
+        <div className="camera-review-chips">
+          {CAMERA_QUICK_PROMPTS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="camera-review-chip"
+              disabled={disabled}
+              onClick={() => onSend(p)}
+            >
+              {p}
+              <span className="camera-review-chip-arrow">→</span>
+            </button>
+          ))}
+        </div>
+
+        <form
+          className="camera-review-composer"
+          onSubmit={(e) => {
+            e.preventDefault()
+            onSend(draft)
+          }}
+        >
+          <input
+            className="camera-review-input"
+            type="text"
+            value={draft}
+            placeholder="问点关于这张图的…"
+            onChange={(e) => onDraftChange(e.target.value)}
+            disabled={disabled}
+            autoFocus
+          />
+          <button
+            type="submit"
+            className="camera-review-send"
+            disabled={disabled}
+            aria-label="发送"
+          >
+            <SendIcon className="app-icon app-icon-md" />
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function MessageAttachment({ attachment }: { attachment: Attachment }) {
+  if (attachment.kind === 'image') {
+    return (
+      <div className="msg-att msg-att-image">
+        <img src={attachment.previewUrl} alt={attachment.name} />
+      </div>
+    )
+  }
+  if (attachment.kind === 'audio') {
+    return (
+      <div className="msg-att msg-att-audio">
+        <AudioPlayPill url={attachment.previewUrl} />
+      </div>
+    )
+  }
+  return (
+    <div className="msg-att msg-att-video">
+      <video src={attachment.previewUrl} controls preload="metadata" playsInline />
+    </div>
+  )
+}
+
 type MessageBubbleProps = {
   entry: ThreadEntry
   isLastAssistant?: boolean
@@ -986,6 +1346,8 @@ function MessageBubble({
   const isAssistant = entry.role === 'assistant'
   const audioUrl = isAssistant ? entry.audioPreviewUrl ?? null : null
   const showActions = isAssistant && !entry.error
+  const attachments =
+    !isAssistant && entry.kind === 'text' ? entry.attachments ?? [] : []
 
   return (
     <div
@@ -997,23 +1359,27 @@ function MessageBubble({
         .filter(Boolean)
         .join(' ')}
     >
-      <div className="msg-text">{entry.text}</div>
-      {isAssistant && entry.recordingSessionId ? (
-        <div className="msg-meta">session: {entry.recordingSessionId}</div>
+      {attachments.length > 0 ? (
+        <div className="msg-attachments">
+          {attachments.map((a) => (
+            <MessageAttachment key={a.id} attachment={a} />
+          ))}
+        </div>
       ) : null}
+      {entry.text ? <div className="msg-text">{entry.text}</div> : null}
       {showActions ? (
         <div className="msg-actions">
-          <AssistantPlayButton url={audioUrl} />
           <CopyButton text={entry.text} />
+          <AssistantPlayButton url={audioUrl} />
           {isLastAssistant ? (
             <button
-              className="msg-action"
+              className="msg-action msg-action-trailing"
               type="button"
               onClick={onRegenerate}
               disabled={!canRegenerate || !onRegenerate}
               aria-label="重新生成"
             >
-              <RefreshIcon className="app-icon app-icon-sm" />
+              <RefreshIcon className="app-icon app-icon-md" />
             </button>
           ) : null}
         </div>
@@ -1084,9 +1450,9 @@ function AssistantPlayButton({ url }: { url: string | null }) {
       aria-label={isPlaying ? '暂停播放' : '朗读'}
     >
       {isPlaying ? (
-        <PauseIcon className="app-icon app-icon-sm" />
+        <PauseIcon className="app-icon app-icon-md" />
       ) : (
-        <PlayIcon className="app-icon app-icon-sm" />
+        <PlayIcon className="app-icon app-icon-md" />
       )}
     </button>
   )
@@ -1134,7 +1500,7 @@ function CopyButton({ text }: { text: string }) {
       }}
       aria-label={copied ? '已复制' : '复制'}
     >
-      <CopyIcon className="app-icon app-icon-sm" />
+      <CopyIcon className="app-icon app-icon-md" />
     </button>
   )
 }
@@ -1465,6 +1831,14 @@ function App() {
   const recordingPointerIdRef = useRef<number | null>(null)
   const recordingWillCancelRef = useRef(false)
   const [recordError, setRecordError] = useState<string | null>(null)
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false)
+  const [cameraReview, setCameraReview] = useState<Attachment | null>(null)
+  const [reviewDraft, setReviewDraft] = useState('')
+  const cameraInputRef = useRef<HTMLInputElement | null>(null)
+  const albumInputRef = useRef<HTMLInputElement | null>(null)
+  const audioInputRef = useRef<HTMLInputElement | null>(null)
+  const videoInputRef = useRef<HTMLInputElement | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [presetsByMode, setPresetsByMode] = useState<Record<PresetMode, PresetMetadata[]>>({
     turnbased: [],
@@ -1483,7 +1857,7 @@ function App() {
     summary: 'Checking backend',
     detail: 'Polling /status...',
   })
-  const [lastSessionId, setLastSessionId] = useState<string | null>(null)
+  const [, setLastSessionId] = useState<string | null>(null)
 
   const messagesRef = useRef<ConversationEntry[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -2467,12 +2841,14 @@ function App() {
 
   async function sendTextMessage() {
     const text = draft.trim()
+    const atts = pendingAttachments
 
-    if (!text || isGenerating || isPreparingRecording) {
+    if ((!text && atts.length === 0) || isGenerating || isPreparingRecording) {
       return
     }
 
     setDraft('')
+    setPendingAttachments([])
     setRecordError(null)
 
     const nextMessages: ConversationEntry[] = [
@@ -2482,9 +2858,81 @@ function App() {
         role: 'user',
         kind: 'text',
         text,
+        attachments: atts.length > 0 ? atts : undefined,
       },
     ]
 
+    setMessages(nextMessages)
+    await submitConversation(nextMessages)
+  }
+
+  async function handleAttachFiles(
+    files: FileList | null,
+    kind: 'image' | 'audio' | 'video',
+  ) {
+    if (!files || files.length === 0) return
+    const list = Array.from(files)
+    const built: Attachment[] = []
+    for (const f of list) {
+      try {
+        if (kind === 'image') {
+          built.push(await downscaleImageToAttachment(f))
+        } else {
+          built.push(await mediaFileToAttachment(f, kind))
+        }
+      } catch (err) {
+        console.warn('attach failed', f.name, err)
+      }
+    }
+    if (built.length > 0) {
+      setPendingAttachments((prev) => [...prev, ...built])
+    }
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments((prev) => {
+      const target = prev.find((a) => a.id === id)
+      if (target && target.kind !== 'image') {
+        try {
+          URL.revokeObjectURL(target.previewUrl)
+        } catch {
+          /* ignore */
+        }
+      }
+      return prev.filter((a) => a.id !== id)
+    })
+  }
+
+  async function handleCameraCapture(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const f = files[0]
+    if (!f) return
+    try {
+      const att = await downscaleImageToAttachment(f)
+      setReviewDraft('')
+      setCameraReview(att)
+    } catch (err) {
+      console.warn('camera capture failed', err)
+    }
+  }
+
+  async function sendCameraReview(text: string) {
+    const att = cameraReview
+    if (!att || isGenerating || isPreparingRecording) return
+    setCameraReview(null)
+    setReviewDraft('')
+    setRecordError(null)
+    const trimmed = text.trim()
+    const nextMessages: ConversationEntry[] = [
+      ...messagesRef.current,
+      {
+        id: createId('user'),
+        role: 'user',
+        kind: 'text',
+        text: trimmed,
+        attachments: [att],
+      },
+    ]
     setMessages(nextMessages)
     await submitConversation(nextMessages)
   }
@@ -2687,6 +3135,26 @@ function App() {
         onChange={handleRefAudioInputChange}
       />
       {isRecording ? <RecordingOverlay willCancel={recordingWillCancel} /> : null}
+      {cameraReview ? (
+        <CameraReviewOverlay
+          attachment={cameraReview}
+          draft={reviewDraft}
+          onDraftChange={setReviewDraft}
+          onClose={() => {
+            setCameraReview(null)
+            setReviewDraft('')
+          }}
+          onRetake={() => {
+            setCameraReview(null)
+            setReviewDraft('')
+            setTimeout(() => cameraInputRef.current?.click(), 0)
+          }}
+          onSend={(text) => {
+            void sendCameraReview(text)
+          }}
+          disabled={isGenerating || isPreparingRecording}
+        />
+      ) : null}
       <SettingsSheet
         open={settingsOpen}
         activeMode={activePresetMode}
@@ -2807,6 +3275,37 @@ function App() {
           <div className="composer">
             {recordError ? <div className="helper-error">{recordError}</div> : null}
 
+            {pendingAttachments.length > 0 ? (
+              <div className="attach-strip">
+                {pendingAttachments.map((a) => (
+                  <div
+                    key={a.id}
+                    className={`attach-chip attach-chip-${a.kind}`}
+                    title={a.name}
+                  >
+                    {a.kind === 'image' ? (
+                      <img src={a.previewUrl} alt={a.name} />
+                    ) : a.kind === 'video' ? (
+                      <FilmIcon className="app-icon app-icon-md attach-chip-icon" />
+                    ) : (
+                      <MusicIcon className="app-icon app-icon-md attach-chip-icon" />
+                    )}
+                    {a.kind !== 'image' ? (
+                      <span className="attach-chip-name">{a.name}</span>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="attach-chip-remove"
+                      onClick={() => removePendingAttachment(a.id)}
+                      aria-label="移除附件"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
             <div
               className={[
                 'pill-bar',
@@ -2817,11 +3316,57 @@ function App() {
                 .filter(Boolean)
                 .join(' ')}
             >
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                hidden
+                onChange={(e) => {
+                  void handleCameraCapture(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+              <input
+                ref={albumInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  void handleAttachFiles(e.target.files, 'image')
+                  e.target.value = ''
+                }}
+              />
+              <input
+                ref={audioInputRef}
+                type="file"
+                accept="audio/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  void handleAttachFiles(e.target.files, 'audio')
+                  e.target.value = ''
+                }}
+              />
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  void handleAttachFiles(e.target.files, 'video')
+                  e.target.value = ''
+                }}
+              />
+
               <button
                 className="pill-side"
                 type="button"
-                disabled
-                aria-label="附件（待实现）"
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={isGenerating || isPreparingRecording}
+                aria-label="拍照"
               >
                 <CameraSnapIcon className="app-icon app-icon-md" />
               </button>
@@ -2885,7 +3430,19 @@ function App() {
                 )}
               </button>
 
-              {isGenerating || (composeMode === 'text' && draft.trim()) ? (
+              <button
+                className={['pill-side', attachMenuOpen ? 'is-open' : ''].filter(Boolean).join(' ')}
+                type="button"
+                onClick={() => setAttachMenuOpen((v) => !v)}
+                disabled={isGenerating || isPreparingRecording}
+                aria-label="附件"
+              >
+                <PlusIcon className="app-icon app-icon-md" />
+              </button>
+
+              {isGenerating ||
+              (composeMode === 'text' && draft.trim()) ||
+              pendingAttachments.length > 0 ? (
                 <button
                   className={['pill-send', isGenerating ? 'is-stop' : 'is-active']
                     .filter(Boolean)
@@ -2910,11 +3467,60 @@ function App() {
               ) : null}
             </div>
 
-            {lastSessionId ? (
-              <div className="helper-row">
-                <span className="helper-text helper-text-strong">{lastSessionId}</span>
+            {attachMenuOpen ? (
+              <div
+                className="attach-sheet-backdrop"
+                onClick={() => setAttachMenuOpen(false)}
+              >
+                <div
+                  className="attach-sheet"
+                  onClick={(e) => e.stopPropagation()}
+                  role="dialog"
+                  aria-label="选择附件"
+                >
+                  <button
+                    type="button"
+                    className="attach-sheet-item"
+                    onClick={() => {
+                      setAttachMenuOpen(false)
+                      albumInputRef.current?.click()
+                    }}
+                  >
+                    <span className="attach-sheet-icon attach-sheet-icon-image">
+                      <PhotoIcon className="app-icon app-icon-lg" />
+                    </span>
+                    <span className="attach-sheet-label">相册</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="attach-sheet-item"
+                    onClick={() => {
+                      setAttachMenuOpen(false)
+                      audioInputRef.current?.click()
+                    }}
+                  >
+                    <span className="attach-sheet-icon attach-sheet-icon-audio">
+                      <MusicIcon className="app-icon app-icon-lg" />
+                    </span>
+                    <span className="attach-sheet-label">音频</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="attach-sheet-item"
+                    onClick={() => {
+                      setAttachMenuOpen(false)
+                      videoInputRef.current?.click()
+                    }}
+                  >
+                    <span className="attach-sheet-icon attach-sheet-icon-video">
+                      <FilmIcon className="app-icon app-icon-lg" />
+                    </span>
+                    <span className="attach-sheet-label">视频</span>
+                  </button>
+                </div>
               </div>
             ) : null}
+
           </div>
         </div>
       ) : duplex.audioScreenOpen ? (
