@@ -121,41 +121,6 @@
             color: #999;
             margin-bottom: 4px;
         }
-        /* TTS Ref Audio 控件 */
-        .tts-ref-wrap {
-            padding: 8px 10px;
-            background: #fafaf8;
-            border: 1px solid #e8e6e0;
-            border-radius: 8px;
-            font-size: 12px;
-        }
-        .tts-ref-wrap .tts-ref-header {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            margin-bottom: 6px;
-            color: #666;
-            font-weight: 500;
-        }
-        .tts-ref-wrap .tts-ref-options {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-            margin-bottom: 4px;
-        }
-        .tts-ref-wrap .tts-ref-options label {
-            display: inline;
-            margin-bottom: 0;
-            cursor: pointer;
-            color: #555;
-        }
-        .tts-ref-wrap .tts-ref-hint {
-            font-size: 11px;
-            color: #aaa;
-            margin-top: 2px;
-        }
-        .tts-ref-wrap .tts-ref-hint.warning { color: #d4a017; }
-        .tts-ref-wrap .tts-ref-upload { margin-top: 6px; }
         .sc-field textarea {
             width: 100%;
             border: 1px solid #e5e5e0;
@@ -904,16 +869,8 @@
                     <div class="sc-field">
                         <label>System Content (text + audio, reorderable)</label>
                         <div id="sysContentEditorInit"></div>
-                    </div>
-                    <div class="sc-field">
-                        <div class="tts-ref-wrap" id="ttsRefWrapInit">
-                            <div class="tts-ref-header">TTS Ref Audio (voice cloning)</div>
-                            <div class="tts-ref-options">
-                                <label><input type="radio" name="ttsRefModeInit" value="extract" checked onchange="onTtsRefModeChange()"> Extract from System</label>
-                                <label><input type="radio" name="ttsRefModeInit" value="independent" onchange="onTtsRefModeChange()"> Independent</label>
-                            </div>
-                            <div class="tts-ref-hint" id="ttsRefHintInit"></div>
-                            <div class="tts-ref-upload" id="ttsRefUploadInit" style="display:none;"></div>
+                        <div style="margin-top:6px;font-size:11px;color:#888;line-height:1.5;">
+                            System prompt audio and text here still affect voice style. However, the current web UI cannot replace the C++ TTS cache (`prompt_cache.gguf`). For full TTS voice replacement, follow the <a href="https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md" target="_blank" rel="noopener">voice guide</a>.
                         </div>
                     </div>
                 </div>
@@ -981,16 +938,8 @@
                 <div class="sc-field">
                     <label>System Content</label>
                     <div id="sysContentEditorChat"></div>
-                </div>
-                <div class="sc-field">
-                    <div class="tts-ref-wrap" id="ttsRefWrapChat">
-                        <div class="tts-ref-header">TTS Ref Audio</div>
-                        <div class="tts-ref-options">
-                            <label><input type="radio" name="ttsRefModeChat" value="extract" checked onchange="onTtsRefModeChange()"> Extract from System</label>
-                            <label><input type="radio" name="ttsRefModeChat" value="independent" onchange="onTtsRefModeChange()"> Independent</label>
-                        </div>
-                        <div class="tts-ref-hint" id="ttsRefHintChat"></div>
-                        <div class="tts-ref-upload" id="ttsRefUploadChat" style="display:none;"></div>
+                    <div style="margin-top:6px;font-size:11px;color:#888;line-height:1.5;">
+                        System prompt audio and text here still affect voice style. However, the current web UI cannot replace the C++ TTS cache (`prompt_cache.gguf`). For full TTS voice replacement, follow the <a href="https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md" target="_blank" rel="noopener">voice guide</a>.
                     </div>
                 </div>
             </div>
@@ -1085,11 +1034,6 @@ const state = {
     composeEditorChat: null, // UserContentEditor 实例（对话视图）
     currentView: 'initial', // 'initial' | 'conversation'
     editingIndex: -1,   // 正在编辑的消息索引
-    // TTS Ref Audio（独立于系统 prompt 中的 LLM ref audio）
-    ttsRefAudioMode: 'extract',     // 'extract' | 'independent'
-    ttsRefAudioData: null,          // 独立上传时的 base64 数据
-    ttsRefAudioName: '',            // 独立上传时的文件名
-    ttsRefAudioDuration: 0,         // 独立上传时的时长
 };
 
 const API_BASE = window.location.origin;
@@ -1254,14 +1198,12 @@ function initSystemContentEditors() {
         if (_sceChat) _sceChat.setItems(items);
         state.requestId = 'req_' + Date.now();
         updateSysConfigBarSummary();
-        updateTtsRefHints();  // 系统内容变更时更新 TTS 提取验证
     };
     const onChangeFromChat = (items) => {
         state.systemContentList = items;
         if (_sceInit) _sceInit.setItems(items);
         state.requestId = 'req_' + Date.now();
         updateSysConfigBarSummary();
-        updateTtsRefHints();
     };
 
     _sceInit = new SystemContentEditor(document.getElementById('sysContentEditorInit'), {
@@ -1274,9 +1216,6 @@ function initSystemContentEditors() {
     // 设置默认内容
     _sceInit.setItems(state.systemContentList);
     _sceChat.setItems(state.systemContentList);
-
-    // 初始化 TTS Ref Audio 独立上传控件
-    initTtsRefAudioControls();
 
     // 加载默认 ref audio 并填充到 audio items
     fetchDefaultRefAudio();
@@ -1303,7 +1242,6 @@ function _applyTurnbasedPreset(preset, { audioLoaded } = {}) {
     if (_sceChat) _sceChat.setItems(items);
     state.requestId = 'req_' + Date.now();
     updateSysConfigBarSummary();
-    updateTtsRefHints();
 }
 
 let _presetInit = null, _presetChat = null;
@@ -1352,7 +1290,6 @@ async function fetchDefaultRefAudio() {
         if (_sceInit) _sceInit.setItems(state.systemContentList);
         if (_sceChat) _sceChat.setItems(state.systemContentList);
         updateSysConfigBarSummary();
-        updateTtsRefHints();  // 默认 ref audio 加载后更新 TTS 提取验证
         console.log(`Default ref audio loaded: ${data.name} (${data.duration}s)`);
     } catch (e) {
         console.warn('Failed to load default ref audio:', e);
@@ -2203,10 +2140,6 @@ function buildRequestMessages() {
     return msgs;
 }
 
-// ============ TTS Ref Audio 管理 ============
-
-let _ttsRapInit = null, _ttsRapChat = null;
-
 /**
  * 验证是否可以从系统轮提取 TTS ref audio。
  * 条件：恰好 1 个有数据的 audio item 且时长 < 20s。
@@ -2229,85 +2162,8 @@ function canExtractTtsRefFromSystem() {
 
 /** 获取当前 TTS ref audio base64 数据 */
 function getTtsRefAudioBase64() {
-    if (state.ttsRefAudioMode === 'extract') {
-        const result = canExtractTtsRefFromSystem();
-        return result.ok ? result.data : null;
-    }
-    return state.ttsRefAudioData;
-}
-
-/** 更新两个视图的 TTS 提取验证提示 */
-function updateTtsRefHints() {
     const result = canExtractTtsRefFromSystem();
-    for (const suffix of ['Init', 'Chat']) {
-        const hintEl = document.getElementById('ttsRefHint' + suffix);
-        if (!hintEl) continue;
-        if (state.ttsRefAudioMode === 'extract') {
-            if (result.ok) {
-                hintEl.textContent = 'Will use the audio from System Content';
-                hintEl.className = 'tts-ref-hint';
-            } else {
-                hintEl.textContent = result.reason + ' — please upload independently';
-                hintEl.className = 'tts-ref-hint warning';
-            }
-        } else {
-            hintEl.textContent = state.ttsRefAudioData
-                ? `Independent: ${state.ttsRefAudioName || 'uploaded'}`
-                : 'Please upload a TTS reference audio';
-            hintEl.className = 'tts-ref-hint' + (state.ttsRefAudioData ? '' : ' warning');
-        }
-    }
-}
-
-/** radio 切换回调 */
-function onTtsRefModeChange() {
-    // 读取当前选中的 mode（两个 radio group 同步）
-    const initRadio = document.querySelector('input[name="ttsRefModeInit"]:checked');
-    const chatRadio = document.querySelector('input[name="ttsRefModeChat"]:checked');
-    const mode = (initRadio || chatRadio)?.value || 'extract';
-    state.ttsRefAudioMode = mode;
-
-    // 同步两组 radio
-    for (const name of ['ttsRefModeInit', 'ttsRefModeChat']) {
-        const radio = document.querySelector(`input[name="${name}"][value="${mode}"]`);
-        if (radio) radio.checked = true;
-    }
-
-    // 显示/隐藏独立上传控件
-    for (const suffix of ['Init', 'Chat']) {
-        const uploadEl = document.getElementById('ttsRefUpload' + suffix);
-        if (uploadEl) uploadEl.style.display = mode === 'independent' ? '' : 'none';
-    }
-
-    updateTtsRefHints();
-}
-
-/** 初始化 TTS Ref Audio 独立上传控件（两个 RefAudioPlayer 实例） */
-function initTtsRefAudioControls() {
-    const onUpload = (base64, name, duration) => {
-        state.ttsRefAudioData = base64;
-        state.ttsRefAudioName = name;
-        state.ttsRefAudioDuration = duration;
-        // 同步两个 player 的显示
-        if (_ttsRapInit) _ttsRapInit.setAudio(base64, name, duration);
-        if (_ttsRapChat) _ttsRapChat.setAudio(base64, name, duration);
-        updateTtsRefHints();
-    };
-    const onRemove = () => {
-        state.ttsRefAudioData = null;
-        state.ttsRefAudioName = '';
-        state.ttsRefAudioDuration = 0;
-        if (_ttsRapInit) _ttsRapInit.clear();
-        if (_ttsRapChat) _ttsRapChat.clear();
-        updateTtsRefHints();
-    };
-
-    const rapOpts = { theme: 'light', onUpload, onRemove };
-    _ttsRapInit = new RefAudioPlayer(document.getElementById('ttsRefUploadInit'), rapOpts);
-    _ttsRapChat = new RefAudioPlayer(document.getElementById('ttsRefUploadChat'), rapOpts);
-
-    // 初始验证提示
-    updateTtsRefHints();
+    return result.ok ? result.data : null;
 }
 
 // ============ 发送首条消息 ============

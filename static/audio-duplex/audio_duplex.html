@@ -118,6 +118,12 @@
                     <input type="number" class="cg-input-sm" id="maxKvTokens" value="8192" min="512" max="131072" step="512">
                     <span style="font-size:10px;color:#888;">tok</span>
                 </div>
+                <div class="cg-row inline" data-tip="Auto-stop the session when the C++ backend prunes the KV cache at a round boundary (sliding window). Useful when MaxKV is set above what the backend will actually allow, so the ceiling above never triggers.">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;">
+                        <input type="checkbox" id="stopOnKvShrink" checked>
+                        Stop on KV pruning (sliding window)
+                    </label>
+                </div>
                 <div class="cg-row inline" data-tip="Controls AI response length, >1 = longer responses">
                     <span class="cg-label" style="flex:none;">Length Penalty</span>
                     <input type="number" class="cg-input-sm" id="duplexLengthPenalty" value="1.05" min="0.1" max="5.0" step="0.05">
@@ -165,16 +171,8 @@
                     <span class="cg-label">LLM Ref Audio (system prompt)</span>
                     <div id="refAudioPlayerDuplex"></div>
                 </div>
-                <div class="cg-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #f0ede8;">
-                    <span class="cg-label">TTS Ref Audio (voice cloning)</span>
-                    <div style="font-size:12px;">
-                        <div style="display:flex;gap:12px;align-items:center;margin-bottom:4px;">
-                            <label style="cursor:pointer;color:#555;"><input type="radio" name="duplexTtsRefMode" value="extract" checked> Same as LLM</label>
-                            <label style="cursor:pointer;color:#555;"><input type="radio" name="duplexTtsRefMode" value="independent"> Independent</label>
-                        </div>
-                        <div id="duplexTtsRefHint" style="font-size:11px;color:#aaa;"></div>
-                        <div id="duplexTtsRefUpload" style="display:none;margin-top:6px;"></div>
-                    </div>
+                <div style="font-size:11px;color:#888;line-height:1.5;">
+                    System prompt text and reference audio here still affect voice style. However, the current web UI cannot replace the C++ TTS cache (`prompt_cache.gguf`). For full TTS voice replacement, follow the <a href="https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md" target="_blank" rel="noopener">voice guide</a>.
                 </div>
             </div>
         </details>

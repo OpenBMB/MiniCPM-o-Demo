@@ -339,9 +339,18 @@ class MiniCPMOWorker:
         lang: Optional[str] = None,
         reset_context: bool = True,
         ref_audio_path: Optional[str] = None,
+        system_content: Any = None,
+        sampling: Optional[Dict[str, Any]] = None,  # noqa: ARG002 — pytorch view 不消费
     ) -> str:
-        """Chat prefill：一次性 prefill 所有消息到 KV cache"""
+        """Chat prefill：一次性 prefill 所有消息到 KV cache
+
+        Args:
+            system_content: 前端原始 system 段（list of {type, text/data, ...}）。
+                C++ backend 会用它构造 voice_clone_prompt / assistant_prompt；
+                pytorch backend 不识别该参数时通过 TypeError 逐级 fallback。
+        """
         chat_view = self.processor.set_chat_mode()
+        # C++ backend 接受 system_content；pytorch backend 不一定，逐级 fallback
         try:
             prompt = chat_view.prefill(
                 session_id=session_id,
@@ -353,16 +362,30 @@ class MiniCPMOWorker:
                 lang=lang,
                 reset_context=reset_context,
                 ref_audio_path=ref_audio_path,
+                system_content=system_content,
             )
         except TypeError:
-            prompt = chat_view.prefill(
-                session_id=session_id,
-                msgs=msgs,
-                omni_mode=omni_mode,
-                max_slice_nums=max_slice_nums,
-                use_tts_template=use_tts_template,
-                enable_thinking=enable_thinking,
-            )
+            try:
+                prompt = chat_view.prefill(
+                    session_id=session_id,
+                    msgs=msgs,
+                    omni_mode=omni_mode,
+                    max_slice_nums=max_slice_nums,
+                    use_tts_template=use_tts_template,
+                    enable_thinking=enable_thinking,
+                    lang=lang,
+                    reset_context=reset_context,
+                    ref_audio_path=ref_audio_path,
+                )
+            except TypeError:
+                prompt = chat_view.prefill(
+                    session_id=session_id,
+                    msgs=msgs,
+                    omni_mode=omni_mode,
+                    max_slice_nums=max_slice_nums,
+                    use_tts_template=use_tts_template,
+                    enable_thinking=enable_thinking,
+                )
         return prompt
 
     def chat_non_streaming_generate(
@@ -470,6 +493,7 @@ class MiniCPMOWorker:
         lang: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         system_content: Any = None,
+        sampling: Optional[Dict[str, Any]] = None,  # noqa: ARG002 — pytorch view 不消费
     ) -> None:
         """重置 Half-Duplex 模型 session（清除 KV cache）"""
         half_duplex_view = self.processor.set_half_duplex_mode()
@@ -533,6 +557,8 @@ class MiniCPMOWorker:
         media_type: int = 2,
         lang: Optional[str] = None,
         system_content: Any = None,
+        length_penalty: Optional[float] = None,
+        sampling: Optional[Dict[str, Any]] = None,  # noqa: ARG002 — pytorch view 不消费
     ) -> str:
         """Duplex 准备
 
@@ -544,6 +570,8 @@ class MiniCPMOWorker:
                 若不提供则 fallback 到 ref_audio_path。
         """
         duplex_view = self.processor.set_duplex_mode()
+        if length_penalty is not None and getattr(duplex_view, "config", None) is not None:
+            duplex_view.config.length_penalty = float(length_penalty)
         kwargs = {
             "system_prompt_text": system_prompt_text,
             "ref_audio_path": ref_audio_path or self.ref_audio_path,
@@ -770,7 +798,7 @@ async def health():
             logger.warning("health check: C++ llama-server is not responding")
         else:
             model_loaded = True
-        kv_len = getattr(worker, 'kv_cache_length', 0)
+            kv_len = getattr(worker, 'kv_cache_length', 0)
 
     status = "healthy" if model_loaded else "error"
     worker_status = worker.state.status
@@ -972,6 +1000,31 @@ def _ref_audio_path_for_lang(lang: Optional[str]) -> str:
     return _LANG_REF_AUDIO_PATHS["zh"]
 
 
+# 当前 C++ /v1/stream/update_session_config 能识别的 sampling 字段。
+# 与 cpp_backend._CPP_SAMPLING_KEYS 对齐，但这里手动列出以避免在 PyTorch backend
+# 启动路径上意外 import cpp_backend（cpp_backend 会带上 llama-server 子进程相关副作用）。
+_CPP_SAMPLING_KEYS = (
+    "listen_prob_scale",
+    "force_listen_count",
+    "max_new_speak_tokens_per_chunk",
+    "tts_temperature",
+)
+
+
+def _build_cpp_sampling(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """从前端 config dict（DuplexConfig / GenerationConfig 序列化形式）抽出
+    C++ backend 能识别的 sampling 字段。pytorch backend 用不到，
+    传给 cpp backend 时按需透传。"""
+    if not cfg:
+        return {}
+    out: Dict[str, Any] = {}
+    for key in _CPP_SAMPLING_KEYS:
+        val = cfg.get(key)
+        if val is not None:
+            out[key] = val
+    return out
+
+
 def _extract_ref_audio_from_content(
     system_content_items: List[dict],
     fallback_path: str,
@@ -1102,6 +1155,7 @@ async def chat_ws(ws: WebSocket):
             gen_cfg = msg.get("generation", {})
             max_new_tokens = gen_cfg.get("max_new_tokens", 256)
             length_penalty = gen_cfg.get("length_penalty", 1.1)
+            chat_sampling = _build_cpp_sampling(gen_cfg)
 
             max_slice_nums = None
             img_cfg = msg.get("image", {})
@@ -1158,10 +1212,12 @@ async def chat_ws(ws: WebSocket):
                     lang=session_lang,
                     reset_context=reset_context,
                     ref_audio_path=session_ref_audio_path,
+                    system_content=_sys_content_items or None,
+                    sampling=chat_sampling or None,
                 )
 
             await asyncio.to_thread(_do_prefill)
-            pre_kv = worker.processor.kv_cache_length if worker.processor else 0
+            pre_kv = worker.processor.kv_cache_length if worker.processor else getattr(worker, "kv_cache_length", 0)
             await ws.send_json({"type": "prefill_done", "input_tokens": pre_kv})
 
             # 3. TTS init (PyTorch only; C++ handles TTS internally via omni_init)
@@ -1518,10 +1574,12 @@ async def half_duplex_ws(ws: WebSocket):
                     system_content_items, default_ref_audio, prefix="hdx_ref"
                 )
                 logger.info(f"[HalfDuplex] lang={session_lang} ref_audio_path={session_ref_audio_path}")
+                hd_sampling = _build_cpp_sampling(gen_cfg)
                 worker.reset_half_duplex_session(
                     lang=session_lang,
                     ref_audio_path=session_ref_audio_path,
                     system_content=system_content_items,
+                    sampling=hd_sampling or None,
                 )
                 content_items: List[ContentItem] = []
                 for item in system_content_items:
@@ -1856,10 +1914,12 @@ async def half_duplex_omni_ws(ws: WebSocket):
                     system_content_items, default_ref_audio, prefix="hdomni_ref"
                 )
                 logger.info(f"[HalfDuplexOmni] lang={session_lang} ref_audio_path={session_ref_audio_path}")
+                hdomni_sampling = _build_cpp_sampling(gen_cfg)
                 worker.reset_half_duplex_session(
                     lang=session_lang,
                     ref_audio_path=session_ref_audio_path,
                     system_content=system_content_items,
+                    sampling=hdomni_sampling or None,
                 )
 
                 content_items: List[ContentItem] = []
@@ -2169,7 +2229,7 @@ async def duplex_ws(ws: WebSocket):
                 t_gen = time.perf_counter()
 
                 prefill_ms = (t_prefill - t0) * 1000
-                kv_len = worker.processor.kv_cache_length if worker.processor else 0
+                kv_len = worker.processor.kv_cache_length if worker.processor else getattr(worker, "kv_cache_length", 0)
                 return gen_result, prefill_ms, prefill_result, kv_len
 
             result, prefill_ms, prefill_cost, kv_cache_len = await asyncio.to_thread(_duplex_step)
@@ -2319,6 +2379,10 @@ async def duplex_ws(ws: WebSocket):
                 if config_dict and worker.processor is not None:
                     duplex_view = worker.processor.set_duplex_mode()
                     duplex_view.config = DuplexConfig(**config_dict)
+                duplex_length_penalty_value = (config_dict or {}).get("length_penalty", 1.1)
+                duplex_length_penalty = float(
+                    duplex_length_penalty_value if duplex_length_penalty_value is not None else 1.1
+                )
 
                 # LLM ref audio → ref_audio_path（嵌入 system prompt）
                 # TTS ref audio → prompt_wav_path（初始化 vocoder）
@@ -2384,6 +2448,7 @@ async def duplex_ws(ws: WebSocket):
 
                     # 双工目前前端只传 system_prompt 字符串，直接作为 system_content 下发
                     duplex_system_content = msg.get("system_content") or system_prompt
+                    duplex_sampling = _build_cpp_sampling(config_dict)
                     prompt = await asyncio.to_thread(
                         worker.duplex_prepare,
                         system_prompt_text=system_prompt,
@@ -2392,6 +2457,8 @@ async def duplex_ws(ws: WebSocket):
                         media_type=duplex_media_type,
                         lang=_infer_lang_from_texts([system_prompt]),
                         system_content=duplex_system_content,
+                        length_penalty=duplex_length_penalty,
+                        sampling=duplex_sampling or None,
                     )
                     logger.info(f"Duplex prepared ({duplex_type}, media_type={duplex_media_type}, deferred_finalize={use_deferred_finalize})")
                     from config import get_config
@@ -2600,9 +2667,10 @@ async def cache_info():
     if worker is None:
         raise HTTPException(status_code=503, detail="Worker not ready")
 
+    kv_len = worker.processor.kv_cache_length if worker.processor else getattr(worker, "kv_cache_length", 0)
     return {
         "status": worker.state.status.value,
-        "note": "KV cache state is now tracked by Gateway (cached_hash on WorkerConnection)",
+        "kv_cache_length": kv_len,
     }
 
 
