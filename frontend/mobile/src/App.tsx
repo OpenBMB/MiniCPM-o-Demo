@@ -1247,14 +1247,69 @@ async function mediaFileToAttachment(
   }
 }
 
-async function convertAudioBlobToFloat32Base64(blob: Blob): Promise<string> {
-  const AudioContextCtor =
+function getAudioContextCtor(): typeof AudioContext | null {
+  return (
     window.AudioContext ??
     (
       window as Window & {
         webkitAudioContext?: typeof AudioContext
       }
-    ).webkitAudioContext
+    ).webkitAudioContext ??
+    null
+  )
+}
+
+function float32ToBase64(samples: Float32Array): string {
+  const bytes = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength)
+  const chunkSize = 0x8000
+  let binary = ''
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const slice = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length))
+    binary += String.fromCharCode.apply(null, Array.from(slice) as number[])
+  }
+
+  return btoa(binary)
+}
+
+function concatFloat32(chunks: Float32Array[]): Float32Array {
+  let total = 0
+  for (const chunk of chunks) {
+    total += chunk.length
+  }
+  const out = new Float32Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
+}
+
+function resampleLinear(
+  input: Float32Array,
+  fromRate: number,
+  toRate: number,
+): Float32Array {
+  if (fromRate === toRate || input.length === 0) {
+    return input
+  }
+  const ratio = fromRate / toRate
+  const outLength = Math.max(1, Math.floor(input.length / ratio))
+  const out = new Float32Array(outLength)
+  for (let i = 0; i < outLength; i += 1) {
+    const srcPos = i * ratio
+    const idx = Math.floor(srcPos)
+    const frac = srcPos - idx
+    const a = input[idx] ?? 0
+    const b = input[idx + 1] ?? a
+    out[i] = a + (b - a) * frac
+  }
+  return out
+}
+
+async function convertAudioBlobToFloat32Base64(blob: Blob): Promise<string> {
+  const AudioContextCtor = getAudioContextCtor()
 
   if (!AudioContextCtor) {
     throw new Error('This browser does not support AudioContext.')
@@ -1278,14 +1333,7 @@ async function convertAudioBlobToFloat32Base64(blob: Blob): Promise<string> {
 
     const rendered = await offlineContext.startRendering()
     const pcm = rendered.getChannelData(0)
-    const bytes = new Uint8Array(pcm.buffer)
-    let binary = ''
-
-    for (let index = 0; index < bytes.length; index += 1) {
-      binary += String.fromCharCode(bytes[index] ?? 0)
-    }
-
-    return btoa(binary)
+    return float32ToBase64(pcm)
   } finally {
     await audioContext.close()
   }
@@ -2278,9 +2326,12 @@ function App() {
   const streamingPlayerRef = useRef<StreamingPcmPlayer | null>(null)
   const streamingStopRef = useRef<(() => void) | null>(null)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
+  const audioCaptureCtxRef = useRef<AudioContext | null>(null)
+  const audioCaptureSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const audioCaptureProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const audioCaptureChunksRef = useRef<Float32Array[]>([])
+  const audioCaptureSampleRateRef = useRef<number>(16000)
   const recordingStartRef = useRef<number>(0)
   const recordingActionRef = useRef<'send' | 'cancel'>('send')
   const refAudioInputRef = useRef<HTMLInputElement | null>(null)
@@ -2642,9 +2693,20 @@ function App() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
-      mediaRecorderRef.current?.stream
-        .getTracks()
-        .forEach((track) => track.stop())
+      try {
+        audioCaptureProcessorRef.current?.disconnect()
+      } catch {
+        // ignore
+      }
+      try {
+        audioCaptureSourceRef.current?.disconnect()
+      } catch {
+        // ignore
+      }
+      const ctx = audioCaptureCtxRef.current
+      if (ctx && ctx.state !== 'closed') {
+        void ctx.close().catch(() => {})
+      }
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
 
       for (const entry of messagesRef.current) {
@@ -2917,20 +2979,38 @@ function App() {
   }
 
   function resetRecorderResources() {
-    mediaRecorderRef.current = null
-    audioChunksRef.current = []
+    try {
+      audioCaptureProcessorRef.current?.disconnect()
+    } catch {
+      // ignore
+    }
+    try {
+      audioCaptureSourceRef.current?.disconnect()
+    } catch {
+      // ignore
+    }
+    audioCaptureProcessorRef.current = null
+    audioCaptureSourceRef.current = null
+    const ctx = audioCaptureCtxRef.current
+    if (ctx && ctx.state !== 'closed') {
+      void ctx.close().catch(() => {})
+    }
+    audioCaptureCtxRef.current = null
+    audioCaptureChunksRef.current = []
     recordingStartRef.current = 0
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
     mediaStreamRef.current = null
   }
 
   function startNewSession() {
-    stopCurrentReply()
     const newId = createId('session')
+    activeSessionIdRef.current = newId
+    stopCurrentReply()
     setActiveSessionId(newId)
     setMessages([])
     setDraft('')
     setPendingReply(null)
+    setIsGenerating(false)
     setRecordError(null)
     setHistoryOpen(false)
   }
@@ -2940,13 +3020,15 @@ function App() {
       setHistoryOpen(false)
       return
     }
-    stopCurrentReply()
     const target = sessions.find((s) => s.id === id)
     if (!target) return
+    activeSessionIdRef.current = id
+    stopCurrentReply()
     setActiveSessionId(id)
     setMessages(rehydrateMessages(target.messages))
     setDraft('')
     setPendingReply(null)
+    setIsGenerating(false)
     setRecordError(null)
     setHistoryOpen(false)
   }
@@ -2964,20 +3046,27 @@ function App() {
         .sort((a, b) => b.updatedAt - a.updatedAt)
       if (remaining.length > 0) {
         const top = remaining[0]
+        activeSessionIdRef.current = top.id
+        stopCurrentReply()
         setActiveSessionId(top.id)
         setMessages(rehydrateMessages(top.messages))
       } else {
         const newId = createId('session')
+        activeSessionIdRef.current = newId
+        stopCurrentReply()
         setActiveSessionId(newId)
         setMessages([])
       }
       setDraft('')
       setPendingReply(null)
+      setIsGenerating(false)
       setRecordError(null)
     }
   }
 
   async function clearAllData() {
+    const newId = createId('session')
+    activeSessionIdRef.current = newId
     stopCurrentReply()
     await idbClearAll()
     if (typeof localStorage !== 'undefined') {
@@ -2988,11 +3077,11 @@ function App() {
       }
     }
     setSessions([])
-    const newId = createId('session')
     setActiveSessionId(newId)
     setMessages([])
     setDraft('')
     setPendingReply(null)
+    setIsGenerating(false)
     setRecordError(null)
     setHistoryOpen(false)
   }
@@ -3152,9 +3241,13 @@ function App() {
         ])
       }
     } finally {
-      abortRef.current = null
-      setPendingReply(null)
-      setIsGenerating(false)
+      if (abortRef.current === controller) {
+        abortRef.current = null
+      }
+      if (isStillActive()) {
+        setPendingReply(null)
+        setIsGenerating(false)
+      }
     }
   }
 
@@ -3270,10 +3363,9 @@ function App() {
             },
           ])
         }
+        setPendingReply(null)
+        setIsGenerating(false)
       }
-
-      setPendingReply(null)
-      setIsGenerating(false)
 
       if (streamingWsRef.current === ws) {
         streamingWsRef.current = null
@@ -3599,8 +3691,9 @@ function App() {
       return
     }
 
-    if (typeof MediaRecorder === 'undefined') {
-      setRecordError('当前浏览器不支持 MediaRecorder。')
+    const AudioContextCtor = getAudioContextCtor()
+    if (!AudioContextCtor) {
+      setRecordError('当前浏览器不支持 AudioContext，无法录音。')
       return
     }
 
@@ -3609,62 +3702,42 @@ function App() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream)
+      const audioContext = new AudioContextCtor()
+      // Some browsers (iOS Safari) start the context suspended.
+      if (audioContext.state === 'suspended') {
+        try {
+          await audioContext.resume()
+        } catch {
+          // ignore
+        }
+      }
+      const source = audioContext.createMediaStreamSource(stream)
+      const processor = audioContext.createScriptProcessor(4096, 1, 1)
 
       mediaStreamRef.current = stream
-      mediaRecorderRef.current = recorder
-      audioChunksRef.current = []
+      audioCaptureCtxRef.current = audioContext
+      audioCaptureSourceRef.current = source
+      audioCaptureProcessorRef.current = processor
+      audioCaptureChunksRef.current = []
+      audioCaptureSampleRateRef.current = audioContext.sampleRate
       recordingActionRef.current = 'send'
 
-      recorder.ondataavailable = (event: BlobEvent) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
+      processor.onaudioprocess = (event: AudioProcessingEvent) => {
+        const input = event.inputBuffer.getChannelData(0)
+        // Copy because the underlying buffer is reused by the audio thread.
+        const copy = new Float32Array(input.length)
+        copy.set(input)
+        audioCaptureChunksRef.current.push(copy)
       }
 
-      recorder.onstop = async () => {
-        const blob = new Blob(audioChunksRef.current, {
-          type: recorder.mimeType || 'audio/webm',
-        })
-        const durationMs = Math.max(0, performance.now() - recordingStartRef.current)
-        const shouldSend = recordingActionRef.current === 'send'
+      source.connect(processor)
+      // ScriptProcessor will not fire onaudioprocess unless connected
+      // somewhere; route to destination at zero gain to keep it silent.
+      const muteGain = audioContext.createGain()
+      muteGain.gain.value = 0
+      processor.connect(muteGain)
+      muteGain.connect(audioContext.destination)
 
-        resetRecorderResources()
-
-        try {
-          if (!shouldSend) {
-            return
-          }
-
-          if (durationMs < 300 || blob.size === 0) {
-            setRecordError('录音太短了，请再试一次。')
-            return
-          }
-
-          const audioBase64 = await convertAudioBlobToFloat32Base64(blob)
-          const previewUrl = URL.createObjectURL(blob)
-          const nextMessages: ConversationEntry[] = [
-            ...messagesRef.current,
-            {
-              id: createId('voice'),
-              role: 'user',
-              kind: 'voice',
-              audioBase64,
-              durationMs,
-              previewUrl,
-            },
-          ]
-
-          setMessages(nextMessages)
-          await submitConversation(nextMessages)
-        } catch (error) {
-          setRecordError(`录音处理失败：${getErrorMessage(error)}`)
-        } finally {
-          setIsPreparingRecording(false)
-        }
-      }
-
-      recorder.start()
       recordingStartRef.current = performance.now()
       setIsRecording(true)
     } catch (error) {
@@ -3674,13 +3747,61 @@ function App() {
     }
   }
 
+  async function finalizeRecording() {
+    const durationMs = Math.max(0, performance.now() - recordingStartRef.current)
+    const shouldSend = recordingActionRef.current === 'send'
+    const chunks = audioCaptureChunksRef.current
+    const sampleRate = audioCaptureSampleRateRef.current
+
+    resetRecorderResources()
+
+    try {
+      if (!shouldSend) {
+        return
+      }
+
+      if (durationMs < 300 || chunks.length === 0) {
+        setRecordError('录音太短了，请再试一次。')
+        return
+      }
+
+      const merged = concatFloat32(chunks)
+      if (merged.length === 0) {
+        setRecordError('未采集到音频，请重试。')
+        return
+      }
+
+      const resampled = resampleLinear(merged, sampleRate, 16000)
+      const audioBase64 = float32ToBase64(resampled)
+      const previewUrl = float32ToWavBlobUrl(resampled, 16000)
+      const nextMessages: ConversationEntry[] = [
+        ...messagesRef.current,
+        {
+          id: createId('voice'),
+          role: 'user',
+          kind: 'voice',
+          audioBase64,
+          durationMs,
+          previewUrl,
+        },
+      ]
+
+      setMessages(nextMessages)
+      await submitConversation(nextMessages)
+    } catch (error) {
+      setRecordError(`录音处理失败：${getErrorMessage(error)}`)
+    } finally {
+      setIsPreparingRecording(false)
+    }
+  }
+
   function stopRecording(action: 'send' | 'cancel') {
     recordingActionRef.current = action
 
-    const recorder = mediaRecorderRef.current
+    const wasCapturing = audioCaptureCtxRef.current !== null
 
-    if (recorder && recorder.state === 'recording') {
-      recorder.stop()
+    if (wasCapturing) {
+      void finalizeRecording()
     } else {
       resetRecorderResources()
       setIsPreparingRecording(false)
