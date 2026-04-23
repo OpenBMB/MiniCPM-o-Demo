@@ -3814,12 +3814,21 @@ function App() {
     // With prewarm, audioCaptureCtxRef can be set even before recording starts.
     // The real "we are collecting audio" flag is isCapturingRef.
     const wasCapturing = isCapturingRef.current
+    const heldMs = performance.now() - recordingStartRef.current
 
     if (wasCapturing) {
       void finalizeRecording()
     } else {
       coldDownMic()
       setIsPreparingRecording(false)
+      // If the user actually held long enough to "really mean it" but we
+      // still hadn't started capturing, the mic pipeline failed to come
+      // up in time (slow getUserMedia, suspended ctx, etc). Surface a
+      // small error so the press doesn't silently vanish.
+      if (action === 'send' && heldMs >= SILENT_DISCARD_MS) {
+        console.warn('[record] long hold but never captured', { heldMs })
+        setRecordError('麦克风还没准备好，请稍后再试。')
+      }
     }
 
     setIsRecording(false)
@@ -3839,7 +3848,14 @@ function App() {
     recordingPointerIdRef.current = null
 
     const release = () => {
-      if (!isCapturingRef.current) coldDownMic()
+      // Don't tear down the mic if a brand-new press has already taken
+      // over (recordingPointerIdRef set again), or if a prewarm finished
+      // and the new press already flipped capturing on. Otherwise we'd
+      // race-wipe a working mic right after the user starts holding
+      // again following a quick tap.
+      if (recordingPointerIdRef.current !== null) return
+      if (isCapturingRef.current) return
+      coldDownMic()
     }
     if (prewarmInflightRef.current) {
       void prewarmInflightRef.current.finally(release)
@@ -3878,6 +3894,17 @@ function App() {
       stopCurrentReply()
     }
 
+    // If the mic is already warm from a previous press, kick the
+    // AudioContext awake while we are still inside the user gesture
+    // stack. iOS Safari requires resume() to be called inside a real
+    // user gesture; calling it later (after an `await`) silently leaves
+    // the context suspended, which means onaudioprocess never fires and
+    // the user gets a long blue overlay with zero recorded audio.
+    const warmCtx = audioCaptureCtxRef.current
+    if (warmCtx && warmCtx.state === 'suspended') {
+      void warmCtx.resume().catch(() => {})
+    }
+
     // Show the overlay and arm the recording state synchronously so the
     // user gets immediate visual confirmation. The actual mic open happens
     // asynchronously below; chunks only start filling once isCapturingRef
@@ -3899,6 +3926,7 @@ function App() {
     if (!stillHolding()) return
 
     if (!warm || !audioCaptureCtxRef.current || !mediaStreamRef.current) {
+      console.warn('[record] mic init failed', { warm })
       setRecordError('无法开始录音：麦克风初始化失败。')
       discardRecordingState()
       return
@@ -3908,11 +3936,25 @@ function App() {
     if (ctx.state === 'suspended') {
       try {
         await ctx.resume()
-      } catch {
-        /* ignore */
+      } catch (err) {
+        console.warn('[record] ctx.resume threw', err)
       }
     }
     if (!stillHolding()) return
+
+    // Verify the audio graph is actually live. iOS Safari can leave the
+    // context suspended when resume() runs outside a user gesture; in
+    // that case onaudioprocess will never fire and we'd silently
+    // accumulate zero chunks. Fail loudly instead so the user knows to
+    // try again rather than holding for nothing.
+    if (ctx.state !== 'running') {
+      console.warn('[record] AudioContext not running after resume', {
+        state: ctx.state,
+      })
+      setRecordError('音频通道未启动，请重试。')
+      discardRecordingState()
+      return
+    }
 
     isCapturingRef.current = true
   }
