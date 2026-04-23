@@ -90,6 +90,7 @@ type ConversationEntry =
       audioBase64: string
       durationMs: number
       previewUrl: string
+      attachments?: Attachment[]
     }
 
 type PendingReply = {
@@ -251,7 +252,13 @@ function deriveSessionTitle(messages: ConversationEntry[]): string {
 function stripBlobUrls(messages: ConversationEntry[]): ConversationEntry[] {
   return messages.map((m) => {
     if (m.role === 'user' && m.kind === 'voice') {
-      return { ...m, previewUrl: '' }
+      return {
+        ...m,
+        previewUrl: '',
+        attachments: m.attachments
+          ? m.attachments.map((a) => ({ ...a, previewUrl: '' }))
+          : undefined,
+      }
     }
     if (m.role === 'user' && m.kind === 'text' && m.attachments) {
       return {
@@ -278,22 +285,48 @@ function base64ToBlob(base64: string, mime: string): Blob | null {
   }
 }
 
+function hydrateAttachments(attachments: Attachment[]): Attachment[] {
+  return attachments.map((a) => {
+    if (a.previewUrl) return a
+    let mime = 'application/octet-stream'
+    if (a.kind === 'image') mime = 'image/jpeg'
+    else if (a.kind === 'audio') mime = 'audio/webm'
+    else if (a.kind === 'video') mime = 'video/mp4'
+    const blob = base64ToBlob(a.base64, mime)
+    return blob ? { ...a, previewUrl: URL.createObjectURL(blob) } : a
+  })
+}
+
 function rehydrateMessages(messages: ConversationEntry[]): ConversationEntry[] {
   return messages.map((m) => {
     if (m.role === 'user' && m.kind === 'text' && m.attachments) {
+      return { ...m, attachments: hydrateAttachments(m.attachments) }
+    }
+    if (m.role === 'user' && m.kind === 'voice') {
+      // Recreate WAV preview from the stored Float32 PCM base64 plus
+      // attachment previews if any rode along with the voice message.
+      let previewUrl = m.previewUrl
+      if (!previewUrl && m.audioBase64) {
+        try {
+          const bin = atob(m.audioBase64)
+          const bytes = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+          const float32 = new Float32Array(
+            bytes.buffer,
+            bytes.byteOffset,
+            bytes.byteLength / 4,
+          )
+          previewUrl = float32ToWavBlobUrl(float32, 16000)
+        } catch {
+          previewUrl = ''
+        }
+      }
       return {
         ...m,
-        attachments: m.attachments.map((a) => {
-          if (a.previewUrl) return a
-          let mime = 'application/octet-stream'
-          if (a.kind === 'image') mime = 'image/jpeg'
-          else if (a.kind === 'audio') mime = 'audio/webm'
-          else if (a.kind === 'video') mime = 'video/mp4'
-          const blob = base64ToBlob(a.base64, mime)
-          return blob
-            ? { ...a, previewUrl: URL.createObjectURL(blob) }
-            : a
-        }),
+        previewUrl,
+        attachments: m.attachments
+          ? hydrateAttachments(m.attachments)
+          : undefined,
       }
     }
     return m
@@ -1137,14 +1170,32 @@ function buildRequestMessages(
       }
     }
 
+    const voiceAtts = entry.attachments ?? []
+    if (voiceAtts.length === 0) {
+      return {
+        role: 'user',
+        content: [
+          {
+            type: 'audio',
+            data: entry.audioBase64,
+          },
+        ],
+      }
+    }
+    const items: BackendContentItem[] = []
+    for (const a of voiceAtts) {
+      if (a.kind === 'image') {
+        items.push({ type: 'image', data: a.base64 })
+      } else if (a.kind === 'audio') {
+        items.push({ type: 'audio', data: a.base64, name: a.name, duration: a.duration })
+      } else {
+        items.push({ type: 'video', data: a.base64, duration: a.duration })
+      }
+    }
+    items.push({ type: 'audio', data: entry.audioBase64 })
     return {
       role: 'user',
-      content: [
-        {
-          type: 'audio',
-          data: entry.audioBase64,
-        },
-      ],
+      content: items,
     }
   })
 
@@ -1569,8 +1620,16 @@ function MessageBubble({
   }
 
   if (entry.role === 'user' && entry.kind === 'voice') {
+    const voiceAtts = entry.attachments ?? []
     return (
       <div className="msg user-voice">
+        {voiceAtts.length > 0 ? (
+          <div className="msg-attachments">
+            {voiceAtts.map((a) => (
+              <MessageAttachment key={a.id} attachment={a} />
+            ))}
+          </div>
+        ) : null}
         <div className="voice-row">
           <AudioPlayPill url={entry.previewUrl} />
           <div className="voice-wave" />
@@ -3736,6 +3795,10 @@ function App() {
       const resampled = resampleLinear(merged, sampleRate, 16000)
       const audioBase64 = float32ToBase64(resampled)
       const previewUrl = float32ToWavBlobUrl(resampled, 16000)
+      const carriedAttachments = pendingAttachments
+      if (carriedAttachments.length > 0) {
+        setPendingAttachments([])
+      }
       const nextMessages: ConversationEntry[] = [
         ...messagesRef.current,
         {
@@ -3745,6 +3808,9 @@ function App() {
           audioBase64,
           durationMs,
           previewUrl,
+          ...(carriedAttachments.length > 0
+            ? { attachments: carriedAttachments }
+            : {}),
         },
       ]
 
