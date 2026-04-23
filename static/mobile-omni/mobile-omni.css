@@ -7,19 +7,16 @@
  * ===================================================================== */
 
 html, body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background: #000;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    background: #000 !important;
+    overflow: hidden !important;
     -webkit-tap-highlight-color: transparent;
 }
 
 body.mobile-omni {
-    /* desktop omni assumes a desktop layout for non-fullscreen elements;
-       hide them defensively even if .video-fullscreen rules drop later */
-    background: #000;
     color: #fff;
     overscroll-behavior: none;
 }
@@ -47,14 +44,25 @@ body.mobile-omni .app-nav {
     display: none !important;
 }
 
-/* Fullscreen video panel should fill the viewport, no bottom strip
- * reservation since the controls live inside the panel itself */
+/* Kill the green "listening" border overlay; it covers the whole stage
+ * on mobile and looks like a stray frame instead of a tasteful indicator. */
+body.mobile-omni .video-border-overlay,
+body.mobile-omni #videoBorderOverlay {
+    display: none !important;
+}
+
+/* Fullscreen video panel should fill the viewport */
 body.mobile-omni .main {
     margin: 0 !important;
     padding: 0 !important;
     border: 0 !important;
     box-shadow: none !important;
     background: #000 !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: 100% !important;
+    display: block !important;
+    gap: 0 !important;
 }
 
 body.mobile-omni.video-fullscreen .panel-media {
@@ -67,14 +75,20 @@ body.mobile-omni.video-fullscreen .panel-media {
     border: 0 !important;
     border-radius: 0 !important;
     background: #000 !important;
+    /* dvh covers the dynamic viewport on iOS/Android browsers that resize
+     * the URL bar; vh fallback for older engines */
     height: 100vh !important;
+    height: 100dvh !important;
     width: 100vw !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 body.mobile-omni .video-container {
     width: 100% !important;
     height: 100% !important;
     background: #000;
+    position: relative;
 }
 
 body.mobile-omni #videoEl {
@@ -84,24 +98,24 @@ body.mobile-omni #videoEl {
     background: #000;
 }
 
-/* The bottom-right fullscreen-btn is repurposed as "back to mobile".
- * Force it visible so users always have an exit. */
+/* Bottom-right fullscreen-btn is repurposed as "back to mobile". */
 body.mobile-omni .fullscreen-btn {
     display: flex !important;
+    position: absolute !important;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 70px) !important;
     right: 12px !important;
     z-index: 200 !important;
 }
 
-/* Subtitle toggle stays in the bottom-left; lift above safe area */
+/* Subtitle toggle stays in the bottom-left */
 body.mobile-omni .subtitle-toggle-btn {
+    position: absolute !important;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 70px) !important;
     left: 12px !important;
     z-index: 200 !important;
 }
 
-/* Push the corner buttons (mirror, cam-flip, status lamp) below the
- * notch / status bar */
+/* Notch / status-bar safe area for top corner buttons */
 body.mobile-omni .cam-flip-btn,
 body.mobile-omni .mirror-btn {
     top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
@@ -110,19 +124,36 @@ body.mobile-omni .status-lamp {
     top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
 }
 
-/* Fullscreen controls strip lifts above the iPhone home-indicator */
+/* The control strip must hug the very bottom edge of the visible
+ * viewport. Use full bleed + safe-area padding so the visible buttons
+ * stay above the iPhone home indicator while the strip itself reaches
+ * the screen edge. */
 body.mobile-omni .fullscreen-controls {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
-    padding-bottom: 0 !important;
-    gap: 6px !important;
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 56px;
+    padding: 8px 8px calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: #111 !important;
+    z-index: 10000 !important;
+    box-sizing: border-box;
+    display: flex !important;
     flex-wrap: wrap;
     justify-content: center;
-    max-width: calc(100vw - 24px);
+    align-items: center;
+    gap: 6px !important;
 }
 
 body.mobile-omni .fs-ctrl-btn {
     font-size: 12px !important;
     padding: 7px 10px !important;
+    min-width: 0 !important;
 }
 
 /* Subtitle overlay sits above the controls strip */
