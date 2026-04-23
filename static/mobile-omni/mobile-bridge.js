@@ -5,8 +5,8 @@
  *   1. Force `body.video-fullscreen` so the page boots in fullscreen.
  *   2. Inject a top-left ← back button (returns to /mobile/).
  *   3. Re-skin the bottom-right #fullscreenBtn as a ⚙️ settings opener
- *      that pops up a bottom-sheet with prompt / length-penalty / delay /
- *      maxKV controls bound to the underlying omni inputs.
+ *      that shows a feature-rich bottom-sheet matching the merge-branch
+ *      SettingsSheet design (Preset / Ref Audio / Prompt / Params).
  *   4. Camera extras: torch toggle + pinch-to-zoom on supported devices.
  *   5. Bridge `sessionStorage['mobileOmni:settings']` -> #systemPrompt.
  * ========================================================= */
@@ -14,9 +14,9 @@
 (function bootstrapMobileOmni() {
     const BACK_URL = '/mobile/';
 
-    // ----- icons (inline SVG) -----
     const ICON_BACK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
     const ICON_GEAR = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+    const ICON_CLOSE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     const ICON_TORCH = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6l-1 6h-4z"/><path d="M8 8h8l-2 8h-4z"/><path d="M11 16v6"/></svg>';
 
     function ensureFullscreenClass() {
@@ -24,7 +24,9 @@
         document.body.classList.add('mobile-omni');
     }
 
-    // -------- back button (top-left) --------
+    // ========================================================================
+    // Back button (top-left)
+    // ========================================================================
     function injectBackButton() {
         const container = document.getElementById('videoContainer');
         if (!container || container.querySelector('.mobile-back-btn')) return;
@@ -34,22 +36,21 @@
         btn.setAttribute('aria-label', 'Back to mobile turn page');
         btn.innerHTML = ICON_BACK;
         const goBack = (e) => {
-            if (e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-            try {
-                window.location.assign(BACK_URL);
-            } catch (_) {
-                window.location.href = BACK_URL;
-            }
+            if (e) { e.preventDefault(); e.stopPropagation(); }
+            try { window.location.assign(BACK_URL); } catch (_) { window.location.href = BACK_URL; }
         };
         btn.addEventListener('click', goBack);
         btn.addEventListener('touchend', goBack, { passive: false });
         container.appendChild(btn);
     }
 
-    // -------- settings sheet --------
+    // ========================================================================
+    // Settings sheet — aligned to merge-branch SettingsSheet design
+    // ========================================================================
+    let presetData = [];
+    let selectedPresetId = null;
+    let refAudioState = { name: '未设置参考音频', source: 'none', duration: 0, hasAudio: false };
+
     function buildSettingsSheet() {
         if (document.getElementById('mobileSettingsSheet')) return;
 
@@ -61,106 +62,285 @@
         sheet.className = 'mobile-settings-sheet';
         sheet.id = 'mobileSettingsSheet';
         sheet.innerHTML = `
-            <div class="ms-handle"></div>
-            <h3>设置</h3>
-            <div class="ms-row">
-                <label for="mSystemPrompt">System Prompt</label>
-                <textarea id="mSystemPrompt" rows="3" placeholder="System prompt..."></textarea>
+            <div class="ms-head">
+                <div>
+                    <div class="ms-title">设置</div>
+                    <div class="ms-subtitle">视频双工</div>
+                </div>
+                <button class="ms-close-btn" type="button" id="msCloseBtn">${ICON_CLOSE}</button>
             </div>
-            <div class="ms-row ms-inline">
-                <label for="mLengthPenalty">Length Penalty</label>
-                <input type="number" id="mLengthPenalty" min="0.1" max="5" step="0.05">
+            <div class="ms-section">
+                <div class="ms-section-title">Preset</div>
+                <div class="ms-preset-row" id="msPresetRow">
+                    <div class="ms-preset-loading">Loading presets...</div>
+                </div>
             </div>
-            <div class="ms-row ms-inline">
-                <label for="mPlaybackDelay">Playback Delay (ms)</label>
-                <input type="number" id="mPlaybackDelay" min="0" max="2000" step="50">
+            <div class="ms-section">
+                <div class="ms-section-title">参考音频</div>
+                <div class="ms-ref-card" id="msRefCard">
+                    <div class="ms-ref-title" id="msRefTitle">未设置参考音频</div>
+                    <div class="ms-ref-meta" id="msRefMeta">来源：none</div>
+                    <div class="ms-ref-actions">
+                        <button class="ms-ref-btn" type="button" id="msRefDefault">默认</button>
+                        <button class="ms-ref-btn" type="button" id="msRefUpload">上传</button>
+                        <button class="ms-ref-btn" type="button" id="msRefPlay" disabled>播放</button>
+                        <button class="ms-ref-btn" type="button" id="msRefClear">清空</button>
+                    </div>
+                </div>
             </div>
-            <div class="ms-row ms-inline">
-                <label for="mMaxKv">Max KV (tok)</label>
-                <input type="number" id="mMaxKv" min="512" max="8192" step="512">
+            <div class="ms-section">
+                <label class="ms-section-title" for="msSystemPrompt">System Prompt</label>
+                <textarea class="ms-textarea" id="msSystemPrompt" rows="4"></textarea>
             </div>
-            <button type="button" class="ms-close" id="mSettingsClose">完成</button>
+            <div class="ms-section">
+                <div class="ms-section-title">参数</div>
+                <div class="ms-grid">
+                    <label class="ms-field">
+                        <span>Length Penalty</span>
+                        <input class="ms-input" type="number" id="msLengthPenalty" min="0.1" max="5" step="0.05">
+                    </label>
+                    <label class="ms-field">
+                        <span>Playback Delay (ms)</span>
+                        <input class="ms-input" type="number" id="msPlaybackDelay" min="0" max="2000" step="50">
+                    </label>
+                    <label class="ms-field">
+                        <span>Max KV (tok)</span>
+                        <input class="ms-input" type="number" id="msMaxKv" min="512" max="16384" step="512">
+                    </label>
+                </div>
+            </div>
+            <button class="ms-done-btn" type="button" id="msDoneBtn">完成</button>
         `;
 
         document.body.appendChild(backdrop);
         document.body.appendChild(sheet);
 
-        // wire two-way bridges to the underlying desktop inputs
-        bindMirror('mSystemPrompt', 'systemPrompt');
-        bindMirror('mLengthPenalty', 'omniLengthPenalty');
-        bindMirror('mPlaybackDelay', 'playbackDelay');
-        bindMirror('mMaxKv', 'maxKvTokens');
+        // stop sheet clicks from closing
+        sheet.addEventListener('click', (e) => e.stopPropagation());
 
-        const close = () => {
-            backdrop.classList.remove('open');
-            sheet.classList.remove('open');
-        };
+        const close = () => { backdrop.classList.remove('open'); sheet.classList.remove('open'); };
         backdrop.addEventListener('click', close);
-        document.getElementById('mSettingsClose').addEventListener('click', close);
+        document.getElementById('msCloseBtn').addEventListener('click', close);
+        document.getElementById('msDoneBtn').addEventListener('click', close);
+
+        bindMirror('msSystemPrompt', 'systemPrompt');
+        bindMirror('msLengthPenalty', 'omniLengthPenalty');
+        bindMirror('msPlaybackDelay', 'playbackDelay');
+        bindMirror('msMaxKv', 'maxKvTokens');
+
+        loadPresets();
+        wireRefAudioActions();
+        refreshRefAudioDisplay();
     }
 
     function bindMirror(mobileId, desktopId) {
         const m = document.getElementById(mobileId);
         const d = document.getElementById(desktopId);
         if (!m || !d) return;
-        // initial sync: desktop -> mobile
         m.value = d.value;
-        // mobile -> desktop on every input
         m.addEventListener('input', () => {
             d.value = m.value;
             d.dispatchEvent(new Event('input', { bubbles: true }));
             d.dispatchEvent(new Event('change', { bubbles: true }));
         });
-        // also reflect desktop changes (e.g. when a preset auto-fills)
-        d.addEventListener('input', () => {
-            if (m.value !== d.value) m.value = d.value;
+        const sync = () => { if (m.value !== d.value) m.value = d.value; };
+        d.addEventListener('input', sync);
+        d.addEventListener('change', sync);
+    }
+
+    // ---- Presets ----
+    async function loadPresets() {
+        const row = document.getElementById('msPresetRow');
+        if (!row) return;
+        try {
+            const resp = await fetch('/api/presets');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            presetData = data.omni || [];
+        } catch (e) {
+            console.warn('[mobile-omni] preset load failed:', e);
+            presetData = [];
+        }
+        renderPresets();
+    }
+
+    function renderPresets() {
+        const row = document.getElementById('msPresetRow');
+        if (!row) return;
+        row.innerHTML = '';
+        if (presetData.length === 0) {
+            row.innerHTML = '<div class="ms-preset-loading">暂无预设</div>';
+            return;
+        }
+
+        // detect which desktop preset is currently active
+        const desktopBtns = document.querySelectorAll('#presetSelectorOmni .preset-btn.active');
+        const desktopActiveId = desktopBtns.length ? desktopBtns[0].dataset.presetId : null;
+        if (desktopActiveId) selectedPresetId = desktopActiveId;
+        if (!selectedPresetId && presetData.length) selectedPresetId = presetData[0].id;
+
+        for (const p of presetData) {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'ms-preset-chip' + (p.id === selectedPresetId ? ' active' : '');
+            chip.textContent = p.name;
+            chip.title = p.description || p.name;
+            chip.dataset.presetId = p.id;
+            chip.addEventListener('click', () => selectPreset(p.id));
+            row.appendChild(chip);
+        }
+    }
+
+    async function selectPreset(presetId) {
+        selectedPresetId = presetId;
+        // click the corresponding desktop preset button so omni-app.js handles
+        // the full logic (apply prompt, lazy-load audio, etc.)
+        const desktopBtn = document.querySelector(`#presetSelectorOmni .preset-btn[data-preset-id="${presetId}"]`);
+        if (desktopBtn) desktopBtn.click();
+
+        // update mobile chip highlight
+        const row = document.getElementById('msPresetRow');
+        if (row) {
+            for (const c of row.querySelectorAll('.ms-preset-chip')) {
+                c.classList.toggle('active', c.dataset.presetId === presetId);
+            }
+        }
+
+        // refresh system prompt from desktop after a tick (preset may async-update it)
+        setTimeout(() => {
+            const m = document.getElementById('msSystemPrompt');
+            const d = document.getElementById('systemPrompt');
+            if (m && d) m.value = d.value;
+            refreshRefAudioDisplay();
+        }, 500);
+    }
+
+    // ---- Ref Audio ----
+    function getDesktopRefAudioPlayer() {
+        const container = document.getElementById('omniRefAudioPlayer');
+        if (!container) return null;
+        const nameEl = container.querySelector('.rap-name');
+        const durationEl = container.querySelector('.rap-duration');
+        return { container, nameEl, durationEl };
+    }
+
+    function refreshRefAudioDisplay() {
+        const rap = getDesktopRefAudioPlayer();
+        const titleEl = document.getElementById('msRefTitle');
+        const metaEl = document.getElementById('msRefMeta');
+        const playBtn = document.getElementById('msRefPlay');
+
+        if (rap && rap.nameEl) {
+            const name = rap.nameEl.textContent?.trim();
+            if (name && name !== '未设置' && name !== 'No audio') {
+                refAudioState.name = name;
+                refAudioState.hasAudio = true;
+                const dur = rap.durationEl?.textContent?.trim() || '';
+                refAudioState.duration = parseFloat(dur) || 0;
+                refAudioState.source = 'preset';
+            } else {
+                refAudioState = { name: '未设置参考音频', source: 'none', duration: 0, hasAudio: false };
+            }
+        }
+        if (titleEl) titleEl.textContent = refAudioState.hasAudio ? refAudioState.name : '未设置参考音频';
+        if (metaEl) {
+            metaEl.textContent = refAudioState.hasAudio
+                ? `来源：${refAudioState.source}${refAudioState.duration ? ` · ${refAudioState.duration.toFixed(1)}s` : ''}`
+                : '来源：none';
+        }
+        if (playBtn) playBtn.disabled = !refAudioState.hasAudio;
+    }
+
+    function wireRefAudioActions() {
+        // Default — click the desktop Remove button first (resets to default), then let it reload
+        document.getElementById('msRefDefault')?.addEventListener('click', () => {
+            const removeBtn = document.querySelector('#omniRefAudioPlayer .rap-remove-btn');
+            if (removeBtn) removeBtn.click();
+            setTimeout(refreshRefAudioDisplay, 1500);
         });
-        d.addEventListener('change', () => {
-            if (m.value !== d.value) m.value = d.value;
+
+        // Upload — trigger the desktop upload input
+        document.getElementById('msRefUpload')?.addEventListener('click', () => {
+            const uploadInput = document.querySelector('#omniRefAudioPlayer input[type="file"]');
+            if (uploadInput) {
+                uploadInput.click();
+                uploadInput.addEventListener('change', () => {
+                    setTimeout(refreshRefAudioDisplay, 1000);
+                }, { once: true });
+            }
+        });
+
+        // Play — trigger the desktop play button
+        document.getElementById('msRefPlay')?.addEventListener('click', () => {
+            const playBtn = document.querySelector('#omniRefAudioPlayer .rap-play-btn');
+            if (playBtn) playBtn.click();
+        });
+
+        // Clear — click the desktop remove, then prevent default-reload by immediately setting empty
+        document.getElementById('msRefClear')?.addEventListener('click', () => {
+            const removeBtn = document.querySelector('#omniRefAudioPlayer .rap-remove-btn');
+            if (removeBtn) removeBtn.click();
+            setTimeout(refreshRefAudioDisplay, 500);
         });
     }
 
+    // ---- Open sheet ----
     function openSettingsSheet() {
         const backdrop = document.getElementById('mobileSettingsBackdrop');
         const sheet = document.getElementById('mobileSettingsSheet');
         if (!backdrop || !sheet) return;
-        // refresh from desktop in case anything changed
-        ['mSystemPrompt:systemPrompt', 'mLengthPenalty:omniLengthPenalty',
-         'mPlaybackDelay:playbackDelay', 'mMaxKv:maxKvTokens'].forEach((pair) => {
-            const [mid, did] = pair.split(':');
+
+        // sync inputs from desktop
+        const pairs = [
+            ['msSystemPrompt', 'systemPrompt'],
+            ['msLengthPenalty', 'omniLengthPenalty'],
+            ['msPlaybackDelay', 'playbackDelay'],
+            ['msMaxKv', 'maxKvTokens'],
+        ];
+        for (const [mid, did] of pairs) {
             const m = document.getElementById(mid);
             const d = document.getElementById(did);
             if (m && d) m.value = d.value;
-        });
+        }
+
+        renderPresets();
+        refreshRefAudioDisplay();
+
         backdrop.classList.add('open');
         sheet.classList.add('open');
     }
 
-    // -------- ⚙️ on the bottom-right --------
+    // ========================================================================
+    // ⚙️ on the bottom-right
+    // ========================================================================
     function rebindFullscreenButtonAsGear() {
         const btn = document.getElementById('fullscreenBtn');
         if (!btn) return;
-        // clone removes all listeners registered by omni-app.js's IIFE
         const clone = btn.cloneNode(false);
-        clone.id = 'fullscreenBtn'; // keep id so omni-app.js's visibility toggles still find it
+        clone.id = 'fullscreenBtn';
         clone.className = btn.className;
         clone.classList.add('visible');
         clone.setAttribute('title', 'Settings');
         clone.setAttribute('aria-label', 'Open settings');
         clone.innerHTML = ICON_GEAR;
         btn.parentNode.replaceChild(clone, btn);
-        const open = (e) => {
-            if (e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-            openSettingsSheet();
-        };
+        const open = (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } openSettingsSheet(); };
         clone.addEventListener('click', open);
         clone.addEventListener('touchend', open, { passive: false });
     }
 
-    // -------- session storage bridge from /mobile/ -> systemPrompt --------
+    function keepGearVisible() {
+        const btn = document.getElementById('fullscreenBtn');
+        if (!btn) return;
+        const obs = new MutationObserver(() => {
+            if (!btn.classList.contains('visible')) btn.classList.add('visible');
+        });
+        obs.observe(btn, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    // ========================================================================
+    // Session storage bridge from /mobile/
+    // ========================================================================
     function applyMobileSettings() {
         let raw;
         try { raw = sessionStorage.getItem('mobileOmni:settings'); } catch (_) { return; }
@@ -229,13 +409,8 @@
 
     function refreshCameraCapabilities() {
         const track = getActiveVideoTrack();
-        if (track === lastVideoTrack) {
-            // same track, just re-evaluate capability visibility
-            updateTorchVisibility(track);
-            return;
-        }
+        if (track === lastVideoTrack) { updateTorchVisibility(track); return; }
         lastVideoTrack = track;
-        // turn off torch state when camera changes
         torchBtn?.classList.remove('active');
         updateTorchVisibility(track);
     }
@@ -244,12 +419,7 @@
         if (!torchBtn) return;
         let supported = false;
         if (track && typeof track.getCapabilities === 'function') {
-            try {
-                const caps = track.getCapabilities();
-                supported = !!(caps && caps.torch);
-            } catch (_) {
-                supported = false;
-            }
+            try { supported = !!(track.getCapabilities().torch); } catch (_) {}
         }
         torchBtn.classList.toggle('visible', supported);
     }
@@ -257,16 +427,11 @@
     function watchVideoElement() {
         const v = document.getElementById('videoEl');
         if (!v) return;
-        // poll srcObject changes every 1s (cheap; no MediaStream change events)
         setInterval(refreshCameraCapabilities, 1000);
     }
 
-    // -------- pinch zoom on the video container --------
-    function distance(t1, t2) {
-        const dx = t1.clientX - t2.clientX;
-        const dy = t1.clientY - t2.clientY;
-        return Math.hypot(dx, dy);
-    }
+    // pinch zoom
+    function distance(t1, t2) { return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY); }
 
     async function handlePinchStart(e) {
         if (e.touches.length !== 2) return;
@@ -283,7 +448,6 @@
             max: caps.zoom.max || 1,
             track,
         };
-        // prevent the browser from page-zooming while we're handling the pinch
         e.preventDefault();
     }
 
@@ -299,9 +463,7 @@
     }
 
     function handlePinchEnd(e) {
-        if (e.touches.length < 2) {
-            pinchState = null;
-        }
+        if (e.touches.length < 2) pinchState = null;
     }
 
     function bindPinchZoom() {
@@ -313,24 +475,11 @@
         v.addEventListener('touchcancel', handlePinchEnd, { passive: false });
     }
 
-    // -------- block desktop omni from killing our gear button visibility --------
-    function keepGearVisible() {
-        const btn = document.getElementById('fullscreenBtn');
-        if (!btn) return;
-        // omni-app.js calls .classList.toggle('visible', false) in some states;
-        // re-add it so the gear stays accessible.
-        const obs = new MutationObserver(() => {
-            if (!btn.classList.contains('visible')) {
-                btn.classList.add('visible');
-            }
-        });
-        obs.observe(btn, { attributes: true, attributeFilter: ['class'] });
-    }
-
+    // ========================================================================
+    // Init
+    // ========================================================================
     function init() {
         ensureFullscreenClass();
-        // omni-app.js binds its IIFE to #fullscreenBtn after DOMContentLoaded.
-        // Run our DOM mutations on the next tick to land after that binding.
         setTimeout(() => {
             injectBackButton();
             buildSettingsSheet();
