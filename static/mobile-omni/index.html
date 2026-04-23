@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>MiniCPM-o · Mobile Omni</title>
+    <link rel="stylesheet" href="/static/duplex/duplex-shared.css">
+    <link rel="stylesheet" href="/static/omni/omni.css">
+    <link rel="stylesheet" href="/static/mobile-omni/mobile-omni.css">
+</head>
+<body class="video-fullscreen mobile-omni">
+
+<!-- Header is hidden in mobile-omni mode but kept in DOM so omni-app.js can query it safely -->
+<div class="header">
+    <div class="header-left">
+        <h1>MiniCPM-o 4.5</h1>
+        <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/omni" class="active">Omni Full-Duplex</a>
+        </div>
+    </div>
+    <div class="header-right">
+        <button class="header-reset-btn" id="btnResetSettings" data-tip="Clear all saved settings and restore defaults">Reset Settings</button>
+        <span class="status-badge" id="serviceStatus">Connecting...</span>
+    </div>
+</div>
+
+<div class="main">
+    <div class="col-left">
+    <div class="row-top">
+    <!-- Video -->
+    <div class="panel-media">
+        <div class="video-container" id="videoContainer">
+            <video id="videoEl" autoplay muted playsinline></video>
+            <canvas id="frameCanvas" style="display:none;"></canvas>
+            <div class="video-placeholder" id="videoPlaceholder">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5">
+                    <path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+                </svg>
+                <span>Camera loading...</span>
+            </div>
+            <div class="video-overlay" id="videoOverlay" style="display:none;">
+                <span class="video-badge" id="modeBadge">Live</span>
+            </div>
+            <button class="cam-flip-btn" id="camFlipBtn" title="Flip camera">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/><path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/>
+                    <circle cx="12" cy="12" r="3"/><path d="m18 22-3-3 3-3"/><path d="m6 2 3 3-3 3"/>
+                </svg>
+            </button>
+            <button class="mirror-btn" id="mirrorBtn" title="Mirror flip">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="3" x2="12" y2="21" stroke-dasharray="2 2"/>
+                    <polygon points="5,6 5,18 1,12" fill="currentColor" stroke="none"/>
+                    <polygon points="19,6 19,18 23,12" fill="currentColor" stroke="none"/>
+                    <path d="M8 6h-1a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h1"/>
+                    <path d="M16 6h1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1"/>
+                </svg>
+            </button>
+            <div class="status-lamp" id="statusLamp">
+                <span class="dot"></span><span class="label">LIVE</span><span class="timer" id="lampTimer"></span>
+            </div>
+            <button class="fullscreen-btn" id="fullscreenBtn" title="Back to mobile">
+                <svg id="fullscreenIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+                    <path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+                </svg>
+            </button>
+            <div class="video-border-overlay" id="videoBorderOverlay"></div>
+            <button class="subtitle-toggle-btn" id="subtitleToggleBtn" title="Subtitles on/off">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 6h16"/><path d="M12 6v14"/>
+                </svg>
+            </button>
+            <div class="fs-chat-overlay subtitle-on" id="fsChatOverlay">
+                <div class="fs-chat-inner" id="fsChatInner"></div>
+            </div>
+            <div class="fullscreen-controls" id="fullscreenControls">
+                <button class="fs-ctrl-btn" id="fsBtnForceListen" disabled style="background:rgba(255,255,255,0.15);color:#fff;">Force Listen</button>
+                <button class="fs-ctrl-btn" id="fsBtnHD" disabled style="background:rgba(255,255,255,0.15);color:#fff;">HD</button>
+                <button class="fs-ctrl-btn fs-start" id="fsBtnStart"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>Start</button>
+                <button class="fs-ctrl-btn" id="fsBtnPause" disabled style="background:rgba(255,255,255,0.15);color:#fff;">Pause</button>
+                <button class="fs-ctrl-btn fs-stop" id="fsBtnStop" disabled><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>Stop</button>
+            </div>
+        </div>
+    </div>
+    <!-- Mode Selector (hidden in mobile-omni, kept in DOM for omni-app.js) -->
+    <div class="panel-mode" id="panelMode">
+        <div class="fo-row fo-row-wrap">
+            <div class="mode-selector">
+                <button class="mode-btn active" data-mode="live"><span>Live</span></button>
+                <button class="mode-btn" data-mode="file"><span>File</span></button>
+            </div>
+            <div class="file-chooser" id="fileChooser">
+                <label for="videoFileInput" class="fo-file-btn">Choose video</label>
+                <input type="file" id="videoFileInput" accept="video/*">
+                <span class="file-name" id="fileName">No file</span>
+                <span class="fo-duration" id="fileDuration"></span>
+            </div>
+        </div>
+        <div class="file-options" id="fileOptions">
+            <div class="fo-group">
+                <span class="fo-group-title">Audio</span>
+                <div class="fo-row fo-row-wrap">
+                    <span class="fo-label">Source</span>
+                    <div class="fo-radio-group">
+                        <label class="fo-radio"><input type="radio" name="fileAudioMode" value="video" checked> Video-only</label>
+                        <label class="fo-radio"><input type="radio" name="fileAudioMode" value="mic"> Mic-only</label>
+                        <label class="fo-radio"><input type="radio" name="fileAudioMode" value="mixed"> Video+Mic</label>
+                    </div>
+                </div>
+                <div class="fo-row">
+                    <span class="fo-label">Playback Volume</span>
+                    <input type="range" class="fo-range" id="filePlaybackVol" min="0" max="100" value="30" step="5">
+                    <span class="fo-val" id="filePlaybackVolVal">30%</span>
+                </div>
+                <button class="fo-mixer-btn" id="btnMixerToggle" style="display:none;">Mixer</button>
+            </div>
+            <div class="fo-group">
+                <span class="fo-group-title">Video</span>
+                <div class="fo-row fo-row-wrap">
+                    <span class="fo-label">Sample t</span>
+                    <input type="range" class="fo-range" id="frameOffset" min="0" max="1" step="0.05" value="0.5">
+                    <span class="fo-val" id="frameOffsetVal">0.50</span>
+                </div>
+                <div class="fo-row">
+                    <span class="fo-label">Pad s</span>
+                    <span style="font-size:10px;color:#888;">L</span>
+                    <input type="number" class="cg-input-sm" id="padBeforeSec" value="0" min="0" max="30" step="1">
+                    <span style="font-size:10px;color:#888;">R</span>
+                    <input type="number" class="cg-input-sm" id="padAfterSec" value="2" min="0" max="30" step="1">
+                </div>
+            </div>
+        </div>
+    </div>
+    </div><!-- /row-top -->
+
+    <!-- Mic Waveform (kept for JS, hidden by mobile-omni.css) -->
+    <div class="omni-waveform-bar" id="omniWaveformBar">
+        <canvas id="omniWaveformCanvas"></canvas>
+        <div class="omni-waveform-placeholder" id="omniWaveformPlaceholder">
+            <span>Mic waveform</span>
+        </div>
+    </div>
+
+    <div class="row-bottom">
+    <!-- Other Config (hidden in mobile-omni) -->
+    <div class="panel-config">
+        <details class="config-group" open>
+            <summary>Response Length Controls</summary>
+            <div class="cg-body">
+                <div class="cg-row">
+                    <div class="cg-row inline">
+                        <span class="cg-label" style="flex:none;">Length Penalty</span>
+                        <input type="number" class="cg-input-sm" id="omniLengthPenalty" value="1.1" min="0.1" max="5.0" step="0.05">
+                    </div>
+                    <div class="lp-presets" style="display:flex;flex-direction:column;gap:4px;">
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <button type="button" class="lp-preset-btn" data-lp="1.2">Verbose</button>
+                            <span style="font-size:10px;color:#999;">Longer, detailed replies</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <button type="button" class="lp-preset-btn active" data-lp="1.1">Balanced</button>
+                            <span style="font-size:10px;color:#999;">Moderate length</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <button type="button" class="lp-preset-btn" data-lp="1.05">Concise</button>
+                            <span style="font-size:10px;color:#999;">Short, focused answers</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </details>
+        <details class="config-group" open>
+            <summary>Vision Settings</summary>
+            <div class="cg-body">
+                <div class="cg-row inline">
+                    <span class="cg-label" style="flex:none;">High-Definition Vision</span>
+                    <input type="checkbox" id="visionHD">
+                    <span style="font-size:10px;color:#888;" id="visionHint">64 tok</span>
+                </div>
+            </div>
+        </details>
+        <details class="config-group">
+            <summary>Other Settings</summary>
+            <div class="cg-body">
+                <div class="cg-row inline">
+                    <span class="cg-label" style="flex:none;">Delay</span>
+                    <input type="number" class="cg-input-sm" id="playbackDelay" value="200" min="0" max="2000" step="50">
+                    <span style="font-size:10px;color:#888;">ms</span>
+                </div>
+                <div class="cg-row inline">
+                    <span class="cg-label" style="flex:none;">MaxKV</span>
+                    <input type="number" class="cg-input-sm" id="maxKvTokens" value="8192" min="512" max="8192" step="512">
+                    <span style="font-size:10px;color:#888;">tok</span>
+                </div>
+            </div>
+        </details>
+        <details class="config-group">
+            <summary>Audio Devices</summary>
+            <div class="cg-body">
+                <div class="cg-row">
+                    <span class="cg-label">Mic</span>
+                    <select class="cg-select" id="omniMicDevice"></select>
+                </div>
+                <div class="cg-row">
+                    <span class="cg-label">Speaker</span>
+                    <select class="cg-select" id="omniSpeakerDevice"></select>
+                </div>
+                <button class="device-refresh-btn" id="omniBtnRefreshDevices">Refresh</button>
+            </div>
+        </details>
+        <details class="config-group">
+            <summary>Fullscreen Subtitle</summary>
+            <div class="cg-body">
+                <div class="cg-row inline">
+                    <span class="cg-label" style="flex:none;">Height</span>
+                    <input type="number" class="cg-input-sm" id="fsSubHeight" value="20" min="5" max="80" step="5" style="width:50px;">
+                    <span style="font-size:10px;color:#888;">% from bottom</span>
+                </div>
+                <div class="cg-row inline">
+                    <span class="cg-label" style="flex:none;">Opacity %</span>
+                    <input type="number" class="cg-input-sm" id="fsAlphaBottom" value="80" min="0" max="100" step="10" style="width:50px;">
+                    <span style="font-size:13px;color:#888;">↗</span>
+                    <input type="number" class="cg-input-sm" id="fsAlphaTop" value="30" min="0" max="100" step="10" style="width:50px;">
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <div class="panel-status" id="panelStatus"></div>
+    </div><!-- /row-bottom -->
+    </div><!-- /col-left -->
+
+    <div class="col-right">
+
+    <!-- Preset + System Prompt (hidden in mobile-omni) -->
+    <div class="panel-sysconfig">
+        <div style="padding:6px 0 8px 0;">
+            <div id="presetSelectorOmni"></div>
+        </div>
+        <details class="config-group" id="omniSysPromptDetails">
+            <summary style="display:none;">System Prompt Details</summary>
+            <div class="cg-body">
+                <div class="cg-row">
+                    <textarea class="cg-input" id="systemPrompt" rows="2" placeholder="System prompt...">Streaming Omni Conversation.</textarea>
+                </div>
+                <div class="cg-row">
+                    <span class="cg-label">LLM Ref Audio (system prompt)</span>
+                    <div id="omniRefAudioPlayer"></div>
+                </div>
+                <div class="cg-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #f0ede8;">
+                    <span class="cg-label">TTS Ref Audio (voice cloning)</span>
+                    <div style="font-size:12px;">
+                        <div style="display:flex;gap:12px;align-items:center;margin-bottom:4px;">
+                            <label style="cursor:pointer;color:#555;"><input type="radio" name="omniTtsRefMode" value="extract" checked> Same as LLM</label>
+                            <label style="cursor:pointer;color:#555;"><input type="radio" name="omniTtsRefMode" value="independent"> Independent</label>
+                        </div>
+                        <div id="omniTtsRefHint" style="font-size:11px;color:#aaa;"></div>
+                        <div id="omniTtsRefUpload" style="display:none;margin-top:6px;"></div>
+                    </div>
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- Dialog -->
+    <div class="panel-dialog">
+        <div class="conv-header">
+            <span>Conversation</span>
+        </div>
+        <div class="conv-log" id="conversationLog">
+            <div class="conv-empty" id="convEmpty">
+                <span>Start a session to see the conversation</span>
+            </div>
+        </div>
+    </div>
+
+    </div><!-- /col-right -->
+
+    <!-- Controls (hidden in mobile-omni; fullscreen-controls used instead) -->
+    <div class="panel-controls">
+        <button class="ctrl-btn" id="btnForceListen" disabled>Force Listen</button>
+        <button class="ctrl-btn" id="btnHD" disabled>HD</button>
+        <button class="ctrl-btn" id="btnPause" disabled>Pause</button>
+        <button class="ctrl-btn danger" id="btnStop" disabled>Stop</button>
+        <button class="ctrl-btn primary" id="btnStart">Start</button>
+        <span class="ctrl-divider"></span>
+        <label class="rec-label"><input type="checkbox" id="recCheckbox" checked> Rec</label>
+        <button class="ctrl-btn rec-settings-btn" id="btnRecSettings">⚙</button>
+        <button class="ctrl-btn" id="btnDownloadRec" style="display:none;" disabled>Download Rec</button>
+    </div>
+
+</div>
+
+<!-- Draggable Mixer Panel (hidden in mobile-omni) -->
+<div class="mixer-panel" id="mixerPanel"></div>
+
+<!-- Save & Share container kept for shared modules but visually hidden -->
+<div id="save-share-container" style="position:fixed;bottom:16px;right:16px;z-index:100;max-width:300px;display:none;"></div>
+
+<script src="/static/ref-audio-player.js"></script>
+<script src="/static/shared/preset-selector.js"></script>
+<script src="/static/shared/save-share.js"></script>
+<script type="module" src="/static/omni/omni-app.js"></script>
+<script type="module" src="/static/mobile-omni/mobile-bridge.js"></script>
+</body>
+</html>

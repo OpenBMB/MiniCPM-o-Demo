@@ -2694,7 +2694,19 @@ function App() {
               <button
                 className="topbar-icon-btn"
                 type="button"
-                onClick={() => duplex.openScreen('video')}
+                onClick={() => {
+                  // 视频全双工直接复用桌面 omni 页面（static/mobile-omni/），
+                  // 不再使用 React 端 VideoDuplexScreen
+                  try {
+                    const payload = {
+                      systemPrompt: settings.omni.systemPrompt,
+                    }
+                    sessionStorage.setItem('mobileOmni:settings', JSON.stringify(payload))
+                  } catch {
+                    // sessionStorage 不可用时静默失败，omni 页面会用自身默认值
+                  }
+                  window.location.assign('/mobile-omni/')
+                }}
                 disabled={isGenerating || isRecording || isPreparingRecording}
                 aria-label="进入视频双工"
               >
