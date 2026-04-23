@@ -3778,6 +3778,16 @@ function App() {
     setRecordError(null)
     setIsPreparingRecording(true)
 
+    // Capture the pointer id at entry. If the user releases (or the press
+    // gets cancelled) while we are awaiting prewarm or ctx.resume(), the
+    // pointerup/cancel handler will null this ref and we must abort instead
+    // of bringing up an unattended recording session.
+    const initiatingPointerId = recordingPointerIdRef.current
+    const userStillHolding = () =>
+      initiatingPointerId !== null
+        ? recordingPointerIdRef.current === initiatingPointerId
+        : true
+
     // The mic was (most likely) prewarmed in handleTalkPointerDown while the
     // 320ms hold-arm timer was running. If prewarm is still in flight (slow
     // device / first-time permission prompt), wait for it. If prewarm hasn't
@@ -3786,6 +3796,11 @@ function App() {
     let warm = audioCaptureCtxRef.current !== null && mediaStreamRef.current !== null
     if (!warm) {
       warm = await prewarmMic()
+    }
+    if (!userStillHolding()) {
+      coldDownMic()
+      setIsPreparingRecording(false)
+      return
     }
     if (!warm || !audioCaptureCtxRef.current || !mediaStreamRef.current) {
       setRecordError('无法开始录音：麦克风初始化失败。')
@@ -3802,6 +3817,12 @@ function App() {
       } catch {
         // ignore
       }
+    }
+
+    if (!userStillHolding()) {
+      coldDownMic()
+      setIsPreparingRecording(false)
+      return
     }
 
     audioCaptureChunksRef.current = []
