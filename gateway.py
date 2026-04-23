@@ -171,6 +171,48 @@ async def health():
     }
 
 
+# ============ 前端诊断日志 (用于排查录音故障) ============
+
+_DEBUG_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".run-logs")
+_DEBUG_LOG_PATH = os.path.join(_DEBUG_LOG_DIR, "mobile-record-trace.jsonl")
+_DEBUG_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB rolling cap
+
+
+def _append_debug_trace(payload: Dict[str, Any]) -> None:
+    """Append a single JSON line to the rolling debug log."""
+    try:
+        os.makedirs(_DEBUG_LOG_DIR, exist_ok=True)
+        # Roll over if oversized.
+        try:
+            if os.path.exists(_DEBUG_LOG_PATH) and os.path.getsize(_DEBUG_LOG_PATH) > _DEBUG_LOG_MAX_BYTES:
+                rolled = _DEBUG_LOG_PATH + ".1"
+                if os.path.exists(rolled):
+                    os.remove(rolled)
+                os.rename(_DEBUG_LOG_PATH, rolled)
+        except OSError:
+            pass
+        record = {
+            "ts": datetime.now().isoformat(timespec="milliseconds"),
+            **payload,
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("failed to write mobile record trace: %s", exc)
+
+
+@app.post("/api/_debug/record_trace")
+async def post_record_trace(payload: Dict[str, Any]):
+    """Receive a recording-session trace from the mobile frontend.
+
+    The frontend posts one record per press-to-talk attempt with the
+    full event timeline so we can diagnose failures (overlay shown but
+    no audio captured) without asking users to copy console logs.
+    """
+    _append_debug_trace(payload)
+    return {"ok": True}
+
+
 @app.get("/status", response_model=ServiceStatus)
 async def status():
     """服务状态"""

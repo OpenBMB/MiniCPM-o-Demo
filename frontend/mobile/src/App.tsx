@@ -13,6 +13,12 @@ import type { DuplexIcons } from './duplex/types'
 import { StreamingPcmPlayer, float32ToWavBlobUrl } from './streaming-player'
 import './App.css'
 
+// Static AudioWorklet module used by the mobile turn-based recorder.
+// Keep this outside the Vite bundle so addModule() fetches a normal
+// same-origin JS file, just like the existing duplex/half-duplex
+// worklets in this repo.
+const PCM_WORKLET_URL = '/static/duplex/lib/pcm-capture-turnbased.js'
+
 type BackendContentItem =
   | {
       type: 'text'
@@ -74,6 +80,12 @@ type ConversationEntry =
       error?: boolean
       interrupted?: boolean
       audioPreviewUrl?: string | null
+      // Persisted source for the assistant audio so it can be replayed
+      // after a reload. audioPreviewUrl alone is a transient Blob URL
+      // that dies the moment the page reloads; we need the underlying
+      // bytes to rebuild a fresh Blob URL on rehydrate.
+      audioBase64?: string | null
+      audioSampleRate?: number | null
       recordingSessionId?: string | null
     }
   | {
@@ -90,6 +102,7 @@ type ConversationEntry =
       audioBase64: string
       durationMs: number
       previewUrl: string
+      attachments?: Attachment[]
     }
 
 type PendingReply = {
@@ -214,8 +227,10 @@ function getErrorMessage(error: unknown): string {
 }
 
 const CANCEL_DRAG_PX = 80
-const MIN_HOLD_MS = 250
-const TAP_HINT_MS = 1200
+// Below this duration, a press is silently discarded (no message is sent
+// and no error is shown). Treats accidental taps and too-short presses
+// as a no-op while keeping the visual feedback (overlay + haptic).
+const SILENT_DISCARD_MS = 280
 
 const ACTIVE_SESSION_STORAGE_KEY = 'mobile.turn.activeSessionId.v1'
 const SESSIONS_DB_NAME = 'mobile-turn-db'
@@ -251,7 +266,13 @@ function deriveSessionTitle(messages: ConversationEntry[]): string {
 function stripBlobUrls(messages: ConversationEntry[]): ConversationEntry[] {
   return messages.map((m) => {
     if (m.role === 'user' && m.kind === 'voice') {
-      return { ...m, previewUrl: '' }
+      return {
+        ...m,
+        previewUrl: '',
+        attachments: m.attachments
+          ? m.attachments.map((a) => ({ ...a, previewUrl: '' }))
+          : undefined,
+      }
     }
     if (m.role === 'user' && m.kind === 'text' && m.attachments) {
       return {
@@ -278,22 +299,62 @@ function base64ToBlob(base64: string, mime: string): Blob | null {
   }
 }
 
+function hydrateAttachments(attachments: Attachment[]): Attachment[] {
+  return attachments.map((a) => {
+    if (a.previewUrl) return a
+    let mime = 'application/octet-stream'
+    if (a.kind === 'image') mime = 'image/jpeg'
+    else if (a.kind === 'audio') mime = 'audio/webm'
+    else if (a.kind === 'video') mime = 'video/mp4'
+    const blob = base64ToBlob(a.base64, mime)
+    return blob ? { ...a, previewUrl: URL.createObjectURL(blob) } : a
+  })
+}
+
 function rehydrateMessages(messages: ConversationEntry[]): ConversationEntry[] {
   return messages.map((m) => {
+    if (m.role === 'assistant' && m.audioBase64) {
+      // Rebuild the playable Blob URL from the persisted audio bytes.
+      // Without this every assistant message would lose its audio
+      // after a page reload (the previous Blob URL is dead).
+      try {
+        const url = audioBase64ToBlobUrl(
+          m.audioBase64,
+          m.audioSampleRate ?? 24000,
+        )
+        return { ...m, audioPreviewUrl: url }
+      } catch {
+        return m
+      }
+    }
     if (m.role === 'user' && m.kind === 'text' && m.attachments) {
+      return { ...m, attachments: hydrateAttachments(m.attachments) }
+    }
+    if (m.role === 'user' && m.kind === 'voice') {
+      // Recreate WAV preview from the stored Float32 PCM base64 plus
+      // attachment previews if any rode along with the voice message.
+      let previewUrl = m.previewUrl
+      if (!previewUrl && m.audioBase64) {
+        try {
+          const bin = atob(m.audioBase64)
+          const bytes = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+          const float32 = new Float32Array(
+            bytes.buffer,
+            bytes.byteOffset,
+            bytes.byteLength / 4,
+          )
+          previewUrl = float32ToWavBlobUrl(float32, 16000)
+        } catch {
+          previewUrl = ''
+        }
+      }
       return {
         ...m,
-        attachments: m.attachments.map((a) => {
-          if (a.previewUrl) return a
-          let mime = 'application/octet-stream'
-          if (a.kind === 'image') mime = 'image/jpeg'
-          else if (a.kind === 'audio') mime = 'audio/webm'
-          else if (a.kind === 'video') mime = 'video/mp4'
-          const blob = base64ToBlob(a.base64, mime)
-          return blob
-            ? { ...a, previewUrl: URL.createObjectURL(blob) }
-            : a
-        }),
+        previewUrl,
+        attachments: m.attachments
+          ? hydrateAttachments(m.attachments)
+          : undefined,
       }
     }
     return m
@@ -1137,14 +1198,32 @@ function buildRequestMessages(
       }
     }
 
+    const voiceAtts = entry.attachments ?? []
+    if (voiceAtts.length === 0) {
+      return {
+        role: 'user',
+        content: [
+          {
+            type: 'audio',
+            data: entry.audioBase64,
+          },
+        ],
+      }
+    }
+    const items: BackendContentItem[] = []
+    for (const a of voiceAtts) {
+      if (a.kind === 'image') {
+        items.push({ type: 'image', data: a.base64 })
+      } else if (a.kind === 'audio') {
+        items.push({ type: 'audio', data: a.base64, name: a.name, duration: a.duration })
+      } else {
+        items.push({ type: 'video', data: a.base64, duration: a.duration })
+      }
+    }
+    items.push({ type: 'audio', data: entry.audioBase64 })
     return {
       role: 'user',
-      content: [
-        {
-          type: 'audio',
-          data: entry.audioBase64,
-        },
-      ],
+      content: items,
     }
   })
 
@@ -1520,104 +1599,6 @@ function AudioPlayPill({
   )
 }
 
-const CAMERA_QUICK_PROMPTS = [
-  '这是什么？',
-  '描述图中的场景',
-  '提取图中文字',
-  '图里的内容讲给我听',
-] as const
-
-type CameraReviewOverlayProps = {
-  attachment: Attachment
-  draft: string
-  onDraftChange: (v: string) => void
-  onClose: () => void
-  onRetake: () => void
-  onSend: (text: string) => void
-  disabled: boolean
-}
-
-function CameraReviewOverlay({
-  attachment,
-  draft,
-  onDraftChange,
-  onClose,
-  onRetake,
-  onSend,
-  disabled,
-}: CameraReviewOverlayProps) {
-  return (
-    <div className="camera-review">
-      <div className="camera-review-topbar">
-        <button
-          type="button"
-          className="camera-review-icon-btn"
-          onClick={onClose}
-          aria-label="放弃"
-        >
-          <CloseIcon className="app-icon app-icon-md" />
-        </button>
-        <div className="camera-review-topbar-spacer" />
-        <button
-          type="button"
-          className="camera-review-icon-btn"
-          onClick={onRetake}
-          aria-label="重拍"
-        >
-          <RefreshIcon className="app-icon app-icon-md" />
-        </button>
-      </div>
-
-      <div className="camera-review-stage">
-        <img src={attachment.previewUrl} alt="拍摄的照片" />
-      </div>
-
-      <div className="camera-review-bottom">
-        <div className="camera-review-chips">
-          {CAMERA_QUICK_PROMPTS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className="camera-review-chip"
-              disabled={disabled}
-              onClick={() => onSend(p)}
-            >
-              {p}
-              <span className="camera-review-chip-arrow">→</span>
-            </button>
-          ))}
-        </div>
-
-        <form
-          className="camera-review-composer"
-          onSubmit={(e) => {
-            e.preventDefault()
-            onSend(draft)
-          }}
-        >
-          <input
-            className="camera-review-input"
-            type="text"
-            value={draft}
-            placeholder="问点关于这张图的…"
-            onChange={(e) => onDraftChange(e.target.value)}
-            disabled={disabled}
-            autoFocus
-          />
-          <button
-            type="submit"
-            className="camera-review-send"
-            disabled={disabled}
-            aria-label="发送"
-          >
-            <SendIcon className="app-icon app-icon-md" />
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 function MessageAttachment({ attachment }: { attachment: Attachment }) {
   if (attachment.kind === 'image') {
     return (
@@ -1667,8 +1648,16 @@ function MessageBubble({
   }
 
   if (entry.role === 'user' && entry.kind === 'voice') {
+    const voiceAtts = entry.attachments ?? []
     return (
       <div className="msg user-voice">
+        {voiceAtts.length > 0 ? (
+          <div className="msg-attachments">
+            {voiceAtts.map((a) => (
+              <MessageAttachment key={a.id} attachment={a} />
+            ))}
+          </div>
+        ) : null}
         <div className="voice-row">
           <AudioPlayPill url={entry.previewUrl} />
           <div className="voice-wave" />
@@ -2273,6 +2262,15 @@ function HistoryDrawer({
 function App() {
   const [screen, setScreen] = useState<Screen>('turn')
   const [composeMode, setComposeMode] = useState<'voice' | 'text'>('voice')
+  // Release the mic when the user leaves voice mode so the OS recording
+  // indicator turns off and we don't hold a stream we won't use.
+  useEffect(() => {
+    if (composeMode !== 'voice') {
+      clearIdleColdDownTimer()
+      coldDownMic()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composeMode])
   const [draft, setDraft] = useState('')
 
   const [sessions, setSessions] = useState<ChatSession[]>([])
@@ -2290,15 +2288,74 @@ function App() {
   const recordingPointerStartYRef = useRef<number | null>(null)
   const recordingPointerIdRef = useRef<number | null>(null)
   const recordingWillCancelRef = useRef(false)
-  const holdArmTimerRef = useRef<number | null>(null)
-  const tapHintTimerRef = useRef<number | null>(null)
   const wasGeneratingAtDownRef = useRef(false)
-  const [showTapHint, setShowTapHint] = useState(false)
   const [recordError, setRecordError] = useState<string | null>(null)
+
+  // ─── Recording diagnostics ──────────────────────────────────────────
+  // Every press-to-talk attempt accumulates a small event timeline that
+  // we POST to the backend on release. When a user reports "overlay
+  // came up but nothing recorded", we can read the rolling log file
+  // (.run-logs/mobile-record-trace.jsonl) instead of asking them to
+  // open devtools.
+  type RecordTraceEvent = {
+    t: number
+    tag: string
+    info?: Record<string, unknown>
+  }
+  const recordTraceRef = useRef<RecordTraceEvent[]>([])
+  const recordTraceStartRef = useRef<number>(0)
+  const recordTraceSessionIdRef = useRef<string>('')
+  const recordOnAudioProcessCountRef = useRef<number>(0)
+
+  function trace(tag: string, info?: Record<string, unknown>) {
+    if (recordTraceRef.current.length === 0) {
+      recordTraceStartRef.current = performance.now()
+    }
+    recordTraceRef.current.push({
+      t: Math.round(performance.now() - recordTraceStartRef.current),
+      tag,
+      info,
+    })
+    if (recordTraceRef.current.length > 200) {
+      recordTraceRef.current.shift()
+    }
+  }
+
+  function resetTrace(sessionId: string) {
+    recordTraceRef.current = []
+    recordTraceStartRef.current = performance.now()
+    recordTraceSessionIdRef.current = sessionId
+    recordOnAudioProcessCountRef.current = 0
+  }
+
+  function flushTrace(outcome: string, extra?: Record<string, unknown>) {
+    if (recordTraceRef.current.length === 0) return
+    const events = recordTraceRef.current
+    const payload = {
+      session_id: recordTraceSessionIdRef.current,
+      outcome,
+      ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      events,
+      extra: extra ?? null,
+    }
+    recordTraceRef.current = []
+    // Fire-and-forget. Use keepalive so the request survives if the
+    // user navigates away immediately after release.
+    try {
+      void fetch('/api/_debug/record_trace', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {
+        /* swallow */
+      })
+    } catch {
+      /* ignore */
+    }
+  }
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
-  const [cameraReview, setCameraReview] = useState<Attachment | null>(null)
-  const [reviewDraft, setReviewDraft] = useState('')
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
   const albumInputRef = useRef<HTMLInputElement | null>(null)
   const audioInputRef = useRef<HTMLInputElement | null>(null)
@@ -2330,10 +2387,28 @@ function App() {
   const streamingPlayerRef = useRef<StreamingPcmPlayer | null>(null)
   const streamingStopRef = useRef<(() => void) | null>(null)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
+  const threadWrapRef = useRef<HTMLDivElement | null>(null)
+
+  // Scroll the thread to the bottom WITHOUT bubbling to the document.
+  // We can't use threadEndRef.scrollIntoView because that walks up
+  // and scrolls every scrollable ancestor, which on this page would
+  // push the composer (and the + icon) off the bottom of the viewport.
+  function scrollThreadToBottom(behavior: ScrollBehavior = 'smooth') {
+    const wrap = threadWrapRef.current
+    if (!wrap) return
+    wrap.scrollTo({ top: wrap.scrollHeight, behavior })
+  }
+  const textInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const textInputAutoFocusRef = useRef(false)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioCaptureCtxRef = useRef<AudioContext | null>(null)
+  const audioCaptureMuteGainRef = useRef<GainNode | null>(null)
+  const isCapturingRef = useRef(false)
+  const prewarmInflightRef = useRef<Promise<boolean> | null>(null)
   const audioCaptureSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const audioCaptureProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const audioCaptureWorkletRef = useRef<AudioWorkletNode | null>(null)
+  const audioCapturePathRef = useRef<'worklet' | 'script-processor' | null>(null)
   const audioCaptureChunksRef = useRef<Float32Array[]>([])
   const audioCaptureSampleRateRef = useRef<number>(16000)
   const recordingStartRef = useRef<number>(0)
@@ -2460,8 +2535,22 @@ function App() {
   }, [messages, activeSessionId, sessionsHydrated])
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    scrollThreadToBottom('smooth')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadEntries.length])
+
+  useEffect(() => {
+    if (!attachMenuOpen) return
+    // Mimic Doubao: opening the + drawer pushes the thread to the bottom
+    // so the drawer feels like it's "popping up" rather than overlaying
+    // somewhere mid-screen. We scroll the thread container only — never
+    // the document — so the composer (and the + icon) stay anchored.
+    const id = window.requestAnimationFrame(() => {
+      scrollThreadToBottom('smooth')
+    })
+    return () => window.cancelAnimationFrame(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachMenuOpen])
 
   useEffect(() => {
     let cancelled = false
@@ -2694,21 +2783,8 @@ function App() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
-      try {
-        audioCaptureProcessorRef.current?.disconnect()
-      } catch {
-        // ignore
-      }
-      try {
-        audioCaptureSourceRef.current?.disconnect()
-      } catch {
-        // ignore
-      }
-      const ctx = audioCaptureCtxRef.current
-      if (ctx && ctx.state !== 'closed') {
-        void ctx.close().catch(() => {})
-      }
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+      clearIdleColdDownTimer()
+      coldDownMic()
 
       for (const entry of messagesRef.current) {
         if (entry.role === 'user' && entry.kind === 'voice') {
@@ -2979,7 +3055,26 @@ function App() {
     playPcmBase64(activeModeSettings.refAudio.base64, 16000)
   }
 
-  function resetRecorderResources() {
+  function coldDownMic() {
+    isCapturingRef.current = false
+    const worklet = audioCaptureWorkletRef.current
+    if (worklet) {
+      try {
+        worklet.port.postMessage({ type: 'capture', value: false })
+      } catch {
+        // ignore
+      }
+      try {
+        worklet.port.onmessage = null
+      } catch {
+        // ignore
+      }
+      try {
+        worklet.disconnect()
+      } catch {
+        // ignore
+      }
+    }
     try {
       audioCaptureProcessorRef.current?.disconnect()
     } catch {
@@ -2990,8 +3085,16 @@ function App() {
     } catch {
       // ignore
     }
+    try {
+      audioCaptureMuteGainRef.current?.disconnect()
+    } catch {
+      // ignore
+    }
+    audioCaptureWorkletRef.current = null
     audioCaptureProcessorRef.current = null
     audioCaptureSourceRef.current = null
+    audioCaptureMuteGainRef.current = null
+    audioCapturePathRef.current = null
     const ctx = audioCaptureCtxRef.current
     if (ctx && ctx.state !== 'closed') {
       void ctx.close().catch(() => {})
@@ -3001,6 +3104,187 @@ function App() {
     recordingStartRef.current = 0
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
     mediaStreamRef.current = null
+  }
+
+  // Toggle the capture gate. Mirrors isCapturingRef onto the worklet so
+  // it knows whether to forward PCM frames; the ScriptProcessor path
+  // reads isCapturingRef directly inside onaudioprocess.
+  function setCapturing(value: boolean) {
+    isCapturingRef.current = value
+    const worklet = audioCaptureWorkletRef.current
+    if (worklet) {
+      try {
+        worklet.port.postMessage({ type: 'capture', value })
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Soft-reset between successful presses: stop collecting and drop the
+  // chunks we just consumed, but keep the MediaStream and AudioContext
+  // alive so the *next* press can start recording instantly. The mic
+  // is fully released later by the idle timer (or on mode switch /
+  // unmount) so the OS recording indicator does eventually turn off.
+  function softResetCapture() {
+    setCapturing(false)
+    audioCaptureChunksRef.current = []
+  }
+
+  const idleColdDownTimerRef = useRef<number | null>(null)
+  const IDLE_COLD_DOWN_MS = 60000
+
+  function clearIdleColdDownTimer() {
+    if (idleColdDownTimerRef.current !== null) {
+      window.clearTimeout(idleColdDownTimerRef.current)
+      idleColdDownTimerRef.current = null
+    }
+  }
+
+  function scheduleIdleColdDown() {
+    clearIdleColdDownTimer()
+    idleColdDownTimerRef.current = window.setTimeout(() => {
+      idleColdDownTimerRef.current = null
+      // Only release if we are still idle (not actively capturing)
+      if (!isCapturingRef.current && recordingPointerIdRef.current === null) {
+        coldDownMic()
+      }
+    }, IDLE_COLD_DOWN_MS)
+  }
+
+  async function prewarmMic(): Promise<boolean> {
+    // Already warm and ready?
+    if (audioCaptureCtxRef.current && mediaStreamRef.current) {
+      trace('prewarm.skip', { reason: 'already-warm' })
+      return true
+    }
+    if (prewarmInflightRef.current) {
+      trace('prewarm.join', { reason: 'inflight' })
+      return prewarmInflightRef.current
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      trace('prewarm.unsupported', { reason: 'no-getUserMedia' })
+      return false
+    }
+    const AudioContextCtor = getAudioContextCtor()
+    if (!AudioContextCtor) {
+      trace('prewarm.unsupported', { reason: 'no-AudioContext' })
+      return false
+    }
+
+    trace('prewarm.start')
+    const job = (async (): Promise<boolean> => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        trace('prewarm.gum.ok')
+        const ctx = new AudioContextCtor()
+        trace('prewarm.ctx.created', { state: ctx.state, sampleRate: ctx.sampleRate })
+        if (ctx.state === 'suspended') {
+          try {
+            await ctx.resume()
+            trace('prewarm.ctx.resume.ok', { state: ctx.state })
+          } catch (err) {
+            trace('prewarm.ctx.resume.err', { err: String(err) })
+          }
+        }
+        const source = ctx.createMediaStreamSource(stream)
+        const useWorklet =
+          typeof AudioWorkletNode !== 'undefined' &&
+          typeof ctx.audioWorklet?.addModule === 'function'
+        trace('prewarm.path.choose', { useWorklet })
+
+        if (useWorklet) {
+          try {
+            await ctx.audioWorklet.addModule(PCM_WORKLET_URL)
+            trace('prewarm.worklet.module.ok')
+          } catch (err) {
+            trace('prewarm.worklet.module.err', { err: String(err) })
+            // Fall through to ScriptProcessor below.
+            return await setupScriptProcessor(stream, ctx, source)
+          }
+          const node = new AudioWorkletNode(ctx, 'pcm-capture-turnbased')
+          node.port.onmessage = (event: MessageEvent) => {
+            const data = event.data as
+              | { type: 'pcm'; samples: Float32Array; frame: number }
+              | undefined
+            if (!data || data.type !== 'pcm') return
+            audioCaptureChunksRef.current.push(data.samples)
+            recordOnAudioProcessCountRef.current += 1
+            if (recordOnAudioProcessCountRef.current === 1) {
+              trace('worklet.first-message', {
+                len: data.samples.length,
+                ctxState: ctx.state,
+              })
+            }
+          }
+          node.port.onmessageerror = (event) => {
+            trace('worklet.message.err', { detail: String(event) })
+          }
+          source.connect(node)
+          // No need to connect to destination — worklet runs regardless.
+
+          mediaStreamRef.current = stream
+          audioCaptureCtxRef.current = ctx
+          audioCaptureSourceRef.current = source
+          audioCaptureWorkletRef.current = node
+          audioCapturePathRef.current = 'worklet'
+          audioCaptureSampleRateRef.current = ctx.sampleRate
+          trace('prewarm.done', { state: ctx.state, path: 'worklet' })
+          return true
+        }
+
+        return await setupScriptProcessor(stream, ctx, source)
+      } catch (err) {
+        console.warn('mic prewarm failed', err)
+        trace('prewarm.err', { err: String(err) })
+        return false
+      } finally {
+        prewarmInflightRef.current = null
+      }
+    })()
+
+    prewarmInflightRef.current = job
+    return job
+  }
+
+  // Fallback path for browsers without AudioWorklet (very old Android /
+  // iOS < 14.5). Kept around so we don't regress on those devices.
+  async function setupScriptProcessor(
+    stream: MediaStream,
+    ctx: AudioContext,
+    source: MediaStreamAudioSourceNode,
+  ): Promise<boolean> {
+    trace('prewarm.script-processor.setup')
+    const processor = ctx.createScriptProcessor(4096, 1, 1)
+    const muteGain = ctx.createGain()
+    muteGain.gain.value = 0
+
+    processor.onaudioprocess = (event: AudioProcessingEvent) => {
+      if (!isCapturingRef.current) return
+      const input = event.inputBuffer.getChannelData(0)
+      const copy = new Float32Array(input.length)
+      copy.set(input)
+      audioCaptureChunksRef.current.push(copy)
+      recordOnAudioProcessCountRef.current += 1
+      if (recordOnAudioProcessCountRef.current === 1) {
+        trace('audioprocess.first', { len: copy.length, ctxState: ctx.state })
+      }
+    }
+
+    source.connect(processor)
+    processor.connect(muteGain)
+    muteGain.connect(ctx.destination)
+    trace('prewarm.graph.connected')
+
+    mediaStreamRef.current = stream
+    audioCaptureCtxRef.current = ctx
+    audioCaptureSourceRef.current = source
+    audioCaptureProcessorRef.current = processor
+    audioCaptureMuteGainRef.current = muteGain
+    audioCapturePathRef.current = 'script-processor'
+    audioCaptureSampleRateRef.current = ctx.sampleRate
+    trace('prewarm.done', { state: ctx.state, path: 'script-processor' })
+    return true
   }
 
   function startNewSession() {
@@ -3231,12 +3515,13 @@ function App() {
       }
 
       let assistantAudioUrl: string | null = null
+      const assistantAudioSampleRate = payload.audio_sample_rate ?? 24000
 
       if (payload.audio_data) {
         try {
           assistantAudioUrl = audioBase64ToBlobUrl(
             payload.audio_data,
-            payload.audio_sample_rate ?? 24000,
+            assistantAudioSampleRate,
           )
         } catch {
           assistantAudioUrl = null
@@ -3249,6 +3534,10 @@ function App() {
         kind: 'assistant',
         text: payload.text?.trim() || '(空回复)',
         audioPreviewUrl: assistantAudioUrl,
+        // Keep the raw bytes so we can rebuild the Blob URL after a
+        // page reload (Blob URLs themselves don't survive).
+        audioBase64: payload.audio_data ?? null,
+        audioSampleRate: payload.audio_data ? assistantAudioSampleRate : null,
         recordingSessionId: payload.recording_session_id ?? null,
       }
 
@@ -3370,15 +3659,31 @@ function App() {
       if (player) {
         const merged = player.getMergedFloat32()
         let mergedUrl: string | null = null
+        let mergedBase64: string | null = null
         if (merged && merged.length > 0) {
           try {
             mergedUrl = float32ToWavBlobUrl(merged, lastSampleRate)
           } catch {
             mergedUrl = null
           }
+          try {
+            mergedBase64 = float32ToBase64(merged)
+          } catch {
+            mergedBase64 = null
+          }
         }
-        if (mergedUrl && resolvedEntry && resolvedEntry.kind === 'assistant') {
-          resolvedEntry = { ...resolvedEntry, audioPreviewUrl: mergedUrl }
+        if (
+          (mergedUrl || mergedBase64) &&
+          resolvedEntry &&
+          resolvedEntry.kind === 'assistant'
+        ) {
+          resolvedEntry = {
+            ...resolvedEntry,
+            audioPreviewUrl: mergedUrl ?? resolvedEntry.audioPreviewUrl ?? null,
+            // Persist the raw float32 PCM so playback survives a reload.
+            audioBase64: mergedBase64 ?? resolvedEntry.audioBase64 ?? null,
+            audioSampleRate: mergedBase64 ? lastSampleRate : resolvedEntry.audioSampleRate ?? null,
+          }
         }
 
         if (cutPlayback) {
@@ -3629,6 +3934,9 @@ function App() {
     }
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
+      textInputAutoFocusRef.current = true
+      setComposeMode('text')
+      setAttachMenuOpen(false)
     }
   }
 
@@ -3654,6 +3962,9 @@ function App() {
     }
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
+      textInputAutoFocusRef.current = true
+      setComposeMode('text')
+      setAttachMenuOpen(false)
     }
   }
 
@@ -3677,32 +3988,17 @@ function App() {
     if (!f) return
     try {
       const att = await downscaleImageToAttachment(f)
-      setReviewDraft('')
-      setCameraReview(att)
+      setPendingAttachments((prev) => [...prev, att])
+      // Drop the user back into the main composer in text mode so they
+      // can either type a question or hold-to-talk on top of the photo,
+      // matching Doubao behaviour. Mark autofocus so iOS pops the
+      // keyboard inside the same user-gesture stack.
+      textInputAutoFocusRef.current = true
+      setComposeMode('text')
+      setAttachMenuOpen(false)
     } catch (err) {
       console.warn('camera capture failed', err)
     }
-  }
-
-  async function sendCameraReview(text: string) {
-    const att = cameraReview
-    if (!att || isGenerating || isPreparingRecording) return
-    setCameraReview(null)
-    setReviewDraft('')
-    setRecordError(null)
-    const trimmed = text.trim()
-    const nextMessages: ConversationEntry[] = [
-      ...messagesRef.current,
-      {
-        id: createId('user'),
-        role: 'user',
-        kind: 'text',
-        text: trimmed,
-        attachments: [att],
-      },
-    ]
-    setMessages(nextMessages)
-    await submitConversation(nextMessages)
   }
 
   async function regenerateLastReply() {
@@ -3729,105 +4025,49 @@ function App() {
     await submitConversation(trimmed)
   }
 
-  async function startRecording(options?: { skipGenerationCheck?: boolean }) {
-    if (
-      (!options?.skipGenerationCheck && isGenerating) ||
-      isRecording ||
-      isPreparingRecording ||
-      composeMode !== 'voice' ||
-      screen !== 'turn'
-    ) {
-      return
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setRecordError('当前浏览器不支持麦克风录音。')
-      return
-    }
-
-    const AudioContextCtor = getAudioContextCtor()
-    if (!AudioContextCtor) {
-      setRecordError('当前浏览器不支持 AudioContext，无法录音。')
-      return
-    }
-
-    setRecordError(null)
-    setIsPreparingRecording(true)
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const audioContext = new AudioContextCtor()
-      // Some browsers (iOS Safari) start the context suspended.
-      if (audioContext.state === 'suspended') {
-        try {
-          await audioContext.resume()
-        } catch {
-          // ignore
-        }
-      }
-      const source = audioContext.createMediaStreamSource(stream)
-      const processor = audioContext.createScriptProcessor(4096, 1, 1)
-
-      mediaStreamRef.current = stream
-      audioCaptureCtxRef.current = audioContext
-      audioCaptureSourceRef.current = source
-      audioCaptureProcessorRef.current = processor
-      audioCaptureChunksRef.current = []
-      audioCaptureSampleRateRef.current = audioContext.sampleRate
-      recordingActionRef.current = 'send'
-
-      processor.onaudioprocess = (event: AudioProcessingEvent) => {
-        const input = event.inputBuffer.getChannelData(0)
-        // Copy because the underlying buffer is reused by the audio thread.
-        const copy = new Float32Array(input.length)
-        copy.set(input)
-        audioCaptureChunksRef.current.push(copy)
-      }
-
-      source.connect(processor)
-      // ScriptProcessor will not fire onaudioprocess unless connected
-      // somewhere; route to destination at zero gain to keep it silent.
-      const muteGain = audioContext.createGain()
-      muteGain.gain.value = 0
-      processor.connect(muteGain)
-      muteGain.connect(audioContext.destination)
-
-      recordingStartRef.current = performance.now()
-      setIsRecording(true)
-    } catch (error) {
-      setRecordError(`无法开始录音：${getErrorMessage(error)}`)
-      resetRecorderResources()
-      setIsPreparingRecording(false)
-    }
-  }
-
   async function finalizeRecording() {
     const durationMs = Math.max(0, performance.now() - recordingStartRef.current)
     const shouldSend = recordingActionRef.current === 'send'
     const chunks = audioCaptureChunksRef.current
     const sampleRate = audioCaptureSampleRateRef.current
 
-    resetRecorderResources()
+    // Keep the mic warm so a follow-up press can start recording
+    // instantly. coldDownMic happens later via the idle timer or on
+    // mode switch / unmount.
+    softResetCapture()
+    scheduleIdleColdDown()
 
     try {
       if (!shouldSend) {
         return
       }
 
-      if (durationMs < 300 || chunks.length === 0) {
-        setRecordError('录音太短了，请再试一次。')
+      if (durationMs < SILENT_DISCARD_MS || chunks.length === 0) {
+        // Defensive: pointer-up handler should have already discarded
+        // anything this short. Stay silent regardless.
+        flushTrace('finalize.empty', {
+          durationMs: Math.round(durationMs),
+          chunks: chunks.length,
+        })
         return
       }
 
       const merged = concatFloat32(chunks)
       if (merged.length === 0) {
-        setRecordError('未采集到音频，请重试。')
+        flushTrace('finalize.merged-empty', {
+          durationMs: Math.round(durationMs),
+          chunks: chunks.length,
+        })
         return
       }
 
       const resampled = resampleLinear(merged, sampleRate, 16000)
       const audioBase64 = float32ToBase64(resampled)
       const previewUrl = float32ToWavBlobUrl(resampled, 16000)
+      const carriedAttachments = pendingAttachments
+      if (carriedAttachments.length > 0) {
+        setPendingAttachments([])
+      }
       const nextMessages: ConversationEntry[] = [
         ...messagesRef.current,
         {
@@ -3837,13 +4077,23 @@ function App() {
           audioBase64,
           durationMs,
           previewUrl,
+          ...(carriedAttachments.length > 0
+            ? { attachments: carriedAttachments }
+            : {}),
         },
       ]
+
+      flushTrace('finalize.send', {
+        durationMs: Math.round(durationMs),
+        chunks: chunks.length,
+        samples: merged.length,
+      })
 
       setMessages(nextMessages)
       await submitConversation(nextMessages)
     } catch (error) {
       setRecordError(`录音处理失败：${getErrorMessage(error)}`)
+      flushTrace('finalize.error', { err: getErrorMessage(error) })
     } finally {
       setIsPreparingRecording(false)
     }
@@ -3852,13 +4102,34 @@ function App() {
   function stopRecording(action: 'send' | 'cancel') {
     recordingActionRef.current = action
 
-    const wasCapturing = audioCaptureCtxRef.current !== null
+    // With prewarm, audioCaptureCtxRef can be set even before recording starts.
+    // The real "we are collecting audio" flag is isCapturingRef.
+    const wasCapturing = isCapturingRef.current
+    const heldMs = performance.now() - recordingStartRef.current
+    trace('stopRecording', {
+      action,
+      wasCapturing,
+      heldMs: Math.round(heldMs),
+      chunks: audioCaptureChunksRef.current.length,
+      onaudioprocess: recordOnAudioProcessCountRef.current,
+    })
 
     if (wasCapturing) {
       void finalizeRecording()
     } else {
-      resetRecorderResources()
+      coldDownMic()
       setIsPreparingRecording(false)
+      // If the user actually held long enough to "really mean it" but we
+      // still hadn't started capturing, the mic pipeline failed to come
+      // up in time (slow getUserMedia, suspended ctx, etc). Surface a
+      // small error so the press doesn't silently vanish.
+      if (action === 'send' && heldMs >= SILENT_DISCARD_MS) {
+        console.warn('[record] long hold but never captured', { heldMs })
+        setRecordError('麦克风还没准备好，请稍后再试。')
+        flushTrace('long-hold-no-capture', { heldMs: Math.round(heldMs) })
+      } else {
+        flushTrace('short-tap-discard', { heldMs: Math.round(heldMs) })
+      }
     }
 
     setIsRecording(false)
@@ -3868,46 +4139,153 @@ function App() {
     recordingPointerIdRef.current = null
   }
 
-  function clearHoldArmTimer() {
-    if (holdArmTimerRef.current !== null) {
-      window.clearTimeout(holdArmTimerRef.current)
-      holdArmTimerRef.current = null
-    }
-  }
+  function discardRecordingState() {
+    setCapturing(false)
+    setIsRecording(false)
+    setIsPreparingRecording(false)
+    setRecordingWillCancel(false)
+    recordingWillCancelRef.current = false
+    recordingPointerStartYRef.current = null
+    recordingPointerIdRef.current = null
 
-  function flashTapHint() {
-    if (tapHintTimerRef.current !== null) {
-      window.clearTimeout(tapHintTimerRef.current)
+    const release = () => {
+      // Don't tear down the mic if a brand-new press has already taken
+      // over (recordingPointerIdRef set again), or if a prewarm finished
+      // and the new press already flipped capturing on. Otherwise we'd
+      // race-wipe a working mic right after the user starts holding
+      // again following a quick tap.
+      if (recordingPointerIdRef.current !== null) return
+      if (isCapturingRef.current) return
+      coldDownMic()
     }
-    setShowTapHint(true)
-    tapHintTimerRef.current = window.setTimeout(() => {
-      tapHintTimerRef.current = null
-      setShowTapHint(false)
-    }, TAP_HINT_MS)
+    if (prewarmInflightRef.current) {
+      void prewarmInflightRef.current.finally(release)
+    } else {
+      release()
+    }
   }
 
   function handleTalkPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (isPreparingRecording || isRecording) return
+    if (isRecording || isPreparingRecording) return
+
+    // We're using the mic again — cancel the pending idle release so it
+    // doesn't yank the stream out from under us mid-press.
+    clearIdleColdDownTimer()
+
+    resetTrace(createId('rec'))
+    trace('pointerdown', {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      isGenerating,
+      warmCtx: !!audioCaptureCtxRef.current,
+      warmStream: !!mediaStreamRef.current,
+      ctxState: audioCaptureCtxRef.current?.state ?? null,
+    })
+
     recordingPointerStartYRef.current = event.clientY
     recordingPointerIdRef.current = event.pointerId
     recordingWillCancelRef.current = false
     wasGeneratingAtDownRef.current = isGenerating
     setRecordingWillCancel(false)
-    setShowTapHint(false)
+    setRecordError(null)
+
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
       /* ignore */
     }
-    clearHoldArmTimer()
-    holdArmTimerRef.current = window.setTimeout(() => {
-      holdArmTimerRef.current = null
-      const wasGenerating = wasGeneratingAtDownRef.current
-      if (wasGenerating) {
-        stopCurrentReply()
+
+    // Haptic feedback (Android / some Desktop). iOS Safari ignores.
+    try {
+      navigator.vibrate?.(15)
+    } catch {
+      /* ignore */
+    }
+
+    // Pressing during an AI reply interrupts it immediately. If the user
+    // ends up only tapping (under SILENT_DISCARD_MS) we still keep the
+    // interrupt — that matches the semantics of "tap to stop reply".
+    if (isGenerating) {
+      stopCurrentReply()
+    }
+
+    // If the mic is already warm from a previous press, kick the
+    // AudioContext awake while we are still inside the user gesture
+    // stack. iOS Safari requires resume() to be called inside a real
+    // user gesture; calling it later (after an `await`) silently leaves
+    // the context suspended, which means onaudioprocess never fires and
+    // the user gets a long blue overlay with zero recorded audio.
+    const warmCtx = audioCaptureCtxRef.current
+    if (warmCtx && warmCtx.state === 'suspended') {
+      trace('pointerdown.resume.sync', { stateBefore: warmCtx.state })
+      void warmCtx
+        .resume()
+        .then(() => trace('pointerdown.resume.sync.ok', { state: warmCtx.state }))
+        .catch((err) => trace('pointerdown.resume.sync.err', { err: String(err) }))
+    }
+
+    // Show the overlay and arm the recording state synchronously so the
+    // user gets immediate visual confirmation. The actual mic open happens
+    // asynchronously below; chunks only start filling once isCapturingRef
+    // is flipped to true. If the user releases before we get that far,
+    // pointer-up will silent-discard.
+    recordingActionRef.current = 'send'
+    audioCaptureChunksRef.current = []
+    recordingStartRef.current = performance.now()
+    setIsRecording(true)
+
+    void beginRecordingCapture(event.pointerId)
+  }
+
+  async function beginRecordingCapture(initiatingPointerId: number) {
+    const stillHolding = () => recordingPointerIdRef.current === initiatingPointerId
+    trace('begin.enter', { warmCtx: !!audioCaptureCtxRef.current })
+
+    let warm = audioCaptureCtxRef.current !== null && mediaStreamRef.current !== null
+    if (!warm) warm = await prewarmMic()
+    if (!stillHolding()) {
+      trace('begin.abort.releasedDuringPrewarm')
+      return
+    }
+
+    if (!warm || !audioCaptureCtxRef.current || !mediaStreamRef.current) {
+      trace('begin.fail.initFailed', { warm })
+      console.warn('[record] mic init failed', { warm })
+      setRecordError('无法开始录音：麦克风初始化失败。')
+      discardRecordingState()
+      flushTrace('mic-init-failed')
+      return
+    }
+
+    const ctx = audioCaptureCtxRef.current
+    trace('begin.ctx.check', { state: ctx.state })
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+        trace('begin.ctx.resume.ok', { state: ctx.state })
+      } catch (err) {
+        trace('begin.ctx.resume.err', { err: String(err) })
+        console.warn('[record] ctx.resume threw', err)
       }
-      void startRecording({ skipGenerationCheck: wasGenerating })
-    }, MIN_HOLD_MS)
+    }
+    if (!stillHolding()) {
+      trace('begin.abort.releasedDuringResume')
+      return
+    }
+
+    if (ctx.state !== 'running') {
+      trace('begin.fail.notRunning', { state: ctx.state })
+      console.warn('[record] AudioContext not running after resume', {
+        state: ctx.state,
+      })
+      setRecordError('音频通道未启动，请重试。')
+      discardRecordingState()
+      flushTrace('ctx-not-running', { state: ctx.state })
+      return
+    }
+
+    setCapturing(true)
+    trace('begin.capturing', { path: audioCapturePathRef.current })
   }
 
   function handleTalkPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -3923,41 +4301,55 @@ function App() {
   }
 
   function handleTalkPointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (recordingPointerIdRef.current !== event.pointerId && recordingPointerIdRef.current !== null) return
+    if (
+      recordingPointerIdRef.current !== event.pointerId &&
+      recordingPointerIdRef.current !== null
+    )
+      return
     try {
       event.currentTarget.releasePointerCapture(event.pointerId)
     } catch {
       /* ignore */
     }
 
-    const wasArming = holdArmTimerRef.current !== null
-    const wasGeneratingAtDown = wasGeneratingAtDownRef.current
-    clearHoldArmTimer()
+    const duration = performance.now() - recordingStartRef.current
+    const willCancel = recordingWillCancelRef.current
+    trace('pointerup', {
+      duration: Math.round(duration),
+      willCancel,
+      isCapturing: isCapturingRef.current,
+      chunks: audioCaptureChunksRef.current.length,
+      onaudioprocess: recordOnAudioProcessCountRef.current,
+    })
 
-    if (wasArming) {
-      recordingPointerStartYRef.current = null
-      recordingPointerIdRef.current = null
-      if (wasGeneratingAtDown) {
-        stopCurrentReply()
-      } else {
-        flashTapHint()
-      }
+    if (!isRecording) {
+      trace('pointerup.notRecording')
+      discardRecordingState()
+      flushTrace('not-recording-on-up', { duration: Math.round(duration) })
       return
     }
 
-    if (!isRecording && !isPreparingRecording) {
-      recordingPointerStartYRef.current = null
-      recordingPointerIdRef.current = null
+    if (willCancel || duration < SILENT_DISCARD_MS) {
+      discardRecordingState()
+      flushTrace(willCancel ? 'cancel-by-drag' : 'short-tap', {
+        duration: Math.round(duration),
+      })
       return
     }
-    stopRecording(recordingWillCancelRef.current ? 'cancel' : 'send')
+
+    stopRecording('send')
   }
 
   function handleTalkPointerCancel(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (recordingPointerIdRef.current !== event.pointerId && recordingPointerIdRef.current !== null) return
-    clearHoldArmTimer()
+    if (
+      recordingPointerIdRef.current !== event.pointerId &&
+      recordingPointerIdRef.current !== null
+    )
+      return
+    trace('pointercancel', { isRecording, isPreparingRecording })
     if (isRecording || isPreparingRecording) {
-      stopRecording('cancel')
+      discardRecordingState()
+      flushTrace('pointercancel')
     } else {
       recordingPointerStartYRef.current = null
       recordingPointerIdRef.current = null
@@ -3969,13 +4361,7 @@ function App() {
     void sendTextMessage()
   }
 
-  const voiceMainLabel = isRecording
-    ? '松开发送'
-    : isPreparingRecording
-      ? '处理中...'
-      : isGenerating
-        ? '点击停止 / 按住打断'
-        : '按住说话'
+  const voiceMainLabel = isRecording ? '松开发送' : '按住说话'
 
   return (
     <div className="mobile-app">
@@ -4003,26 +4389,6 @@ function App() {
         }}
       />
       {isRecording ? <RecordingOverlay willCancel={recordingWillCancel} /> : null}
-      {cameraReview ? (
-        <CameraReviewOverlay
-          attachment={cameraReview}
-          draft={reviewDraft}
-          onDraftChange={setReviewDraft}
-          onClose={() => {
-            setCameraReview(null)
-            setReviewDraft('')
-          }}
-          onRetake={() => {
-            setCameraReview(null)
-            setReviewDraft('')
-            setTimeout(() => cameraInputRef.current?.click(), 0)
-          }}
-          onSend={(text) => {
-            void sendCameraReview(text)
-          }}
-          disabled={isGenerating || isPreparingRecording}
-        />
-      ) : null}
       <SettingsSheet
         open={settingsOpen}
         activeMode={activePresetMode}
@@ -4134,7 +4500,7 @@ function App() {
             </div>
           </header>
 
-          <div className="thread-wrap">
+          <div className="thread-wrap" ref={threadWrapRef}>
             <div className="thread">
               {threadEntries.map((entry, index) => {
                 const isLastAssistant =
@@ -4273,6 +4639,17 @@ function App() {
                   onSubmit={handleComposerSubmit}
                 >
                   <textarea
+                    ref={(node) => {
+                      textInputRef.current = node
+                      if (node && textInputAutoFocusRef.current) {
+                        textInputAutoFocusRef.current = false
+                        try {
+                          node.focus({ preventScroll: false })
+                        } catch {
+                          node.focus()
+                        }
+                      }
+                    }}
                     className="pill-input"
                     placeholder="发消息…"
                     rows={1}
@@ -4293,22 +4670,22 @@ function App() {
                 </form>
               ) : (
                 <button
-                  className="pill-main pill-talk"
+                  className={[
+                    'pill-main',
+                    'pill-talk',
+                    isRecording || isPreparingRecording ? 'is-recording' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
                   type="button"
                   onPointerDown={handleTalkPointerDown}
                   onPointerMove={handleTalkPointerMove}
                   onPointerUp={handleTalkPointerUp}
                   onPointerCancel={handleTalkPointerCancel}
-                  disabled={isPreparingRecording}
                 >
                   <span className="pill-talk-label">
                     {isRecording ? '说话中…' : voiceMainLabel}
                   </span>
-                  {showTapHint ? (
-                    <span className="pill-talk-hint" role="status">
-                      按住才能说话
-                    </span>
-                  ) : null}
                 </button>
               )}
 
@@ -4320,7 +4697,17 @@ function App() {
                     stopCurrentReply()
                     return
                   }
-                  setComposeMode(composeMode === 'voice' ? 'text' : 'voice')
+                  if (composeMode === 'voice') {
+                    // Mark before setState so the textarea's ref callback,
+                    // which fires during the commit triggered by this click,
+                    // can synchronously call .focus() and pop the keyboard
+                    // on iOS Safari (programmatic focus is only allowed
+                    // inside the user gesture stack).
+                    textInputAutoFocusRef.current = true
+                    setComposeMode('text')
+                  } else {
+                    setComposeMode('voice')
+                  }
                 }}
                 aria-label={composeMode === 'voice' ? '切换到键盘' : '切换到语音'}
               >
