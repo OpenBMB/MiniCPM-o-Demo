@@ -213,6 +213,8 @@ function getErrorMessage(error: unknown): string {
 }
 
 const CANCEL_DRAG_PX = 80
+const MIN_HOLD_MS = 250
+const TAP_HINT_MS = 1200
 
 function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
   if (!el) return
@@ -1854,6 +1856,9 @@ function App() {
   const recordingPointerStartYRef = useRef<number | null>(null)
   const recordingPointerIdRef = useRef<number | null>(null)
   const recordingWillCancelRef = useRef(false)
+  const holdArmTimerRef = useRef<number | null>(null)
+  const tapHintTimerRef = useRef<number | null>(null)
+  const [showTapHint, setShowTapHint] = useState(false)
   const [recordError, setRecordError] = useState<string | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
@@ -3121,18 +3126,41 @@ function App() {
     recordingPointerIdRef.current = null
   }
 
+  function clearHoldArmTimer() {
+    if (holdArmTimerRef.current !== null) {
+      window.clearTimeout(holdArmTimerRef.current)
+      holdArmTimerRef.current = null
+    }
+  }
+
+  function flashTapHint() {
+    if (tapHintTimerRef.current !== null) {
+      window.clearTimeout(tapHintTimerRef.current)
+    }
+    setShowTapHint(true)
+    tapHintTimerRef.current = window.setTimeout(() => {
+      tapHintTimerRef.current = null
+      setShowTapHint(false)
+    }, TAP_HINT_MS)
+  }
+
   function handleTalkPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
     if (isGenerating || isPreparingRecording || isRecording) return
     recordingPointerStartYRef.current = event.clientY
     recordingPointerIdRef.current = event.pointerId
     recordingWillCancelRef.current = false
     setRecordingWillCancel(false)
+    setShowTapHint(false)
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
       /* ignore */
     }
-    void startRecording()
+    clearHoldArmTimer()
+    holdArmTimerRef.current = window.setTimeout(() => {
+      holdArmTimerRef.current = null
+      void startRecording()
+    }, MIN_HOLD_MS)
   }
 
   function handleTalkPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -3154,12 +3182,34 @@ function App() {
     } catch {
       /* ignore */
     }
+
+    const wasArming = holdArmTimerRef.current !== null
+    clearHoldArmTimer()
+
+    if (wasArming) {
+      recordingPointerStartYRef.current = null
+      recordingPointerIdRef.current = null
+      flashTapHint()
+      return
+    }
+
     if (!isRecording && !isPreparingRecording) {
       recordingPointerStartYRef.current = null
       recordingPointerIdRef.current = null
       return
     }
     stopRecording(recordingWillCancelRef.current ? 'cancel' : 'send')
+  }
+
+  function handleTalkPointerCancel(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (recordingPointerIdRef.current !== event.pointerId && recordingPointerIdRef.current !== null) return
+    clearHoldArmTimer()
+    if (isRecording || isPreparingRecording) {
+      stopRecording('cancel')
+    } else {
+      recordingPointerStartYRef.current = null
+      recordingPointerIdRef.current = null
+    }
   }
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
@@ -3463,12 +3513,17 @@ function App() {
                   onPointerDown={handleTalkPointerDown}
                   onPointerMove={handleTalkPointerMove}
                   onPointerUp={handleTalkPointerUp}
-                  onPointerCancel={() => stopRecording('cancel')}
+                  onPointerCancel={handleTalkPointerCancel}
                   disabled={isGenerating || isPreparingRecording}
                 >
                   <span className="pill-talk-label">
                     {isRecording ? '说话中…' : voiceMainLabel}
                   </span>
+                  {showTapHint ? (
+                    <span className="pill-talk-hint" role="status">
+                      按住才能说话
+                    </span>
+                  ) : null}
                 </button>
               )}
 

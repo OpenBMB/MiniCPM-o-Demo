@@ -929,6 +929,7 @@
 }
 
 .pill-talk {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   height: 40px;
@@ -958,6 +959,43 @@
 
 .pill-talk-label {
   pointer-events: none;
+}
+
+.pill-talk-hint {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  background: rgb(17 24 39 / 92%);
+  color: #ffffff;
+  font-size: 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: tap-hint-in 140ms ease-out;
+  z-index: 5;
+}
+
+.pill-talk-hint::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: rgb(17 24 39 / 92%);
+}
+
+@keyframes tap-hint-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .pill-send {
