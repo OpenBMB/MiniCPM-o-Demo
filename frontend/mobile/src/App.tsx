@@ -1488,9 +1488,6 @@ function App() {
     presetsByMode.audio_duplex.find(
       (preset) => preset.id === settings.audio_duplex.presetId,
     )?.name ?? '自定义'
-  const videoPresetName =
-    presetsByMode.omni.find((preset) => preset.id === settings.omni.presetId)?.name ??
-    '自定义'
 
   useEffect(() => {
     messagesRef.current = messages
@@ -2865,13 +2862,6 @@ function App() {
         <VideoDuplexScreen
           duplex={duplex}
           icons={duplexIcons}
-          settingsSummary={{
-            Component: SettingsSummary,
-            presetName: videoPresetName,
-            refAudio: settings.omni.refAudio,
-            systemPrompt: settings.omni.systemPrompt,
-            lengthPenalty: settings.videoDuplexLengthPenalty,
-          }}
           onOpenSettings={() => {
             setSettingsOpen(true)
           }}
