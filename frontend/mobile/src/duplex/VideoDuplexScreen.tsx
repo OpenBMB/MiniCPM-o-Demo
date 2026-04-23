@@ -11,36 +11,115 @@ export type VideoDuplexScreenProps = {
   onOpenSettings: () => void
 }
 
-function lampClassFor(status: UseDuplexSessionApi['status']): string {
-  if (status === 'live') return 'live'
-  if (status === 'starting' || status === 'queueing') return 'preparing'
-  if (status === 'paused') return 'paused'
-  if (status === 'error') return 'error'
-  return 'stopped'
+/**
+ * Phases mirror the desktop omni fullscreen state machine, derived from
+ * (status, pauseState, hasSession). See setButtonStates / setPauseBtnState /
+ * setQueueButtonStates in static/omni/omni-app.js for the source of truth.
+ */
+type Phase =
+  | 'idle' // no session, never started (initial preview)
+  | 'queuing' // _queuePhase = queuing | almost
+  | 'preparing' // _queuePhase = assigned, or status=starting before queue
+  | 'live' // running, pauseState = active
+  | 'pausing' // pauseState = pausing
+  | 'paused' // pauseState = paused
+  | 'stopped' // session ended via Stop
+  | 'error'
+
+function derivePhase(api: UseDuplexSessionApi): Phase {
+  if (api.status === 'error') return 'error'
+  if (api.status === 'queueing') return 'queuing'
+  if (api.status === 'starting') return 'preparing'
+  if (api.pauseState === 'pausing') return 'pausing'
+  if (api.pauseState === 'paused') return 'paused'
+  if (api.status === 'live') return 'live'
+  if (api.status === 'stopped') return 'stopped'
+  return 'idle'
 }
 
-function lampLabelFor(
-  status: UseDuplexSessionApi['status'],
-  pause: UseDuplexSessionApi['pauseState'],
-): string {
-  if (status === 'queueing') return 'QUEUE'
-  if (status === 'starting') return 'PREP'
-  if (status === 'live') return 'LIVE'
-  if (status === 'paused' || pause === 'paused') return 'PAUSE'
-  if (status === 'error') return 'ERR'
-  return 'READY'
+type LampSpec = {
+  visible: boolean
+  className: string // 'live' | 'preparing' | 'stopped' | 'error'
+  label: string
+}
+
+function lampForPhase(phase: Phase): LampSpec {
+  switch (phase) {
+    case 'live':
+      return { visible: true, className: 'live', label: 'LIVE' }
+    case 'queuing':
+    case 'preparing':
+    case 'pausing':
+    case 'paused':
+      return { visible: true, className: 'preparing', label: 'Preparing' }
+    case 'stopped':
+      return { visible: true, className: 'stopped', label: 'Stopped' }
+    case 'idle':
+    case 'error':
+    default:
+      return { visible: false, className: 'stopped', label: '' }
+  }
+}
+
+type StartSpec = { label: string; live: boolean; disabled: boolean }
+
+function startForPhase(phase: Phase): StartSpec {
+  switch (phase) {
+    case 'idle':
+    case 'stopped':
+    case 'error':
+      return { label: 'Start', live: false, disabled: false }
+    case 'queuing':
+      return { label: 'Queued', live: false, disabled: true }
+    case 'preparing':
+      return { label: 'Preparing...', live: false, disabled: true }
+    case 'live':
+    case 'pausing':
+    case 'paused':
+      return { label: '● Live', live: true, disabled: true }
+  }
+}
+
+type PauseSpec = { label: string; disabled: boolean }
+
+function pauseForPhase(phase: Phase): PauseSpec {
+  switch (phase) {
+    case 'live':
+      return { label: 'Pause', disabled: false }
+    case 'pausing':
+      return { label: 'Pausing...', disabled: true }
+    case 'paused':
+      return { label: 'Resume', disabled: false }
+    default:
+      return { label: 'Pause', disabled: true }
+  }
+}
+
+type StopSpec = { label: string; disabled: boolean; cancel: boolean }
+
+function stopForPhase(phase: Phase): StopSpec {
+  switch (phase) {
+    case 'queuing':
+      return { label: 'Cancel', disabled: false, cancel: true }
+    case 'live':
+    case 'pausing':
+    case 'paused':
+      return { label: 'Stop', disabled: false, cancel: false }
+    default:
+      return { label: 'Stop', disabled: true, cancel: false }
+  }
+}
+
+function ancillaryDisabledForPhase(phase: Phase): boolean {
+  // Mirror desktop syncFullscreenButtons: Force Listen / HD only enabled when
+  // the session is actually running (live / pausing / paused).
+  return phase !== 'live' && phase !== 'pausing' && phase !== 'paused'
 }
 
 function formatTimer(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
-
-function pauseLabelFor(state: UseDuplexSessionApi['pauseState']): string {
-  if (state === 'pausing') return 'Pausing...'
-  if (state === 'paused') return 'Resume'
-  return 'Pause'
 }
 
 export function VideoDuplexScreen({
@@ -51,8 +130,9 @@ export function VideoDuplexScreen({
   void icons
   void onOpenSettings // settings entry not surfaced in faithful-omni layout
 
-  const [elapsed, setElapsed] = useState(0)
+  const phase = derivePhase(duplex)
 
+  const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
     if (duplex.status !== 'live') {
       if (
@@ -64,7 +144,6 @@ export function VideoDuplexScreen({
       }
       return
     }
-
     const start = Date.now() - elapsed * 1000
     const id = window.setInterval(() => {
       setElapsed(Math.floor((Date.now() - start) / 1000))
@@ -79,27 +158,13 @@ export function VideoDuplexScreen({
     .filter((entry) => entry.role === 'assistant')
     .slice(-SUBTITLE_KEEP)
   const subtitleOn = duplex.textPanelOpen
-  const lampClass = lampClassFor(duplex.status)
-  const lampLabel = lampLabelFor(duplex.status, duplex.pauseState)
-  const showTimer = duplex.status === 'live' || duplex.status === 'paused'
-  const borderActive = duplex.status === 'live'
 
-  const startRunning = duplex.status === 'live' || duplex.status === 'paused'
-  const startPreparing =
-    duplex.status === 'starting' || duplex.status === 'queueing'
-  const startDisabled = duplex.hasSession || startPreparing
-  const startLabel = startRunning
-    ? '● Live'
-    : duplex.status === 'queueing'
-      ? 'Queued'
-      : duplex.status === 'starting'
-        ? 'Preparing...'
-        : 'Start'
-
-  const pauseDisabled =
-    !duplex.hasSession || duplex.pauseState === 'pausing'
-  const stopDisabled = !duplex.hasSession
-  const pauseLabel = pauseLabelFor(duplex.pauseState)
+  const lamp = lampForPhase(phase)
+  const start = startForPhase(phase)
+  const pause = pauseForPhase(phase)
+  const stop = stopForPhase(phase)
+  const ancillaryDisabled = ancillaryDisabledForPhase(phase)
+  const showTimer = phase === 'live' || phase === 'paused' || phase === 'pausing'
 
   const videoClass = ['vd-video', duplex.mirrorEnabled ? 'mirrored' : '']
     .filter(Boolean)
@@ -117,20 +182,15 @@ export function VideoDuplexScreen({
         />
         <canvas ref={duplex.canvasRef} className="vd-capture-canvas" />
 
-        <div
-          className={['vd-video-border', borderActive ? 'active' : '']
-            .filter(Boolean)
-            .join(' ')}
-          aria-hidden="true"
-        />
-
-        <div className={['vd-status-lamp', lampClass].join(' ')}>
-          <span className="vd-dot" aria-hidden="true" />
-          <span className="vd-label">{lampLabel}</span>
-          {showTimer ? (
-            <span className="vd-timer">{formatTimer(elapsed)}</span>
-          ) : null}
-        </div>
+        {lamp.visible ? (
+          <div className={['vd-status-lamp', lamp.className].join(' ')}>
+            <span className="vd-dot" aria-hidden="true" />
+            <span className="vd-label">{lamp.label}</span>
+            {showTimer ? (
+              <span className="vd-timer">{formatTimer(elapsed)}</span>
+            ) : null}
+          </div>
+        ) : null}
 
         <button
           className={[
@@ -275,29 +335,29 @@ export function VideoDuplexScreen({
         <button
           className="vd-ctrl-btn"
           type="button"
-          disabled
-          title="Force Listen (not supported on mobile)"
+          disabled={ancillaryDisabled}
+          title="Force Listen (mobile placeholder)"
         >
           Force Listen
         </button>
         <button
           className="vd-ctrl-btn"
           type="button"
-          disabled
-          title="HD (not supported on mobile)"
+          disabled={ancillaryDisabled}
+          title="HD (mobile placeholder)"
         >
           HD
         </button>
         <button
-          className={['vd-ctrl-btn vd-start', startRunning ? 'live' : '']
+          className={['vd-ctrl-btn vd-start', start.live ? 'live' : '']
             .filter(Boolean)
             .join(' ')}
           type="button"
-          disabled={startDisabled}
+          disabled={start.disabled}
           onClick={duplex.startSession}
-          title={startLabel}
+          title={start.label}
         >
-          {startRunning ? null : (
+          {start.live ? null : (
             <svg
               width="14"
               height="14"
@@ -308,34 +368,38 @@ export function VideoDuplexScreen({
               <polygon points="6,3 20,12 6,21" />
             </svg>
           )}
-          {startLabel}
+          {start.label}
         </button>
         <button
           className="vd-ctrl-btn"
           type="button"
-          disabled={pauseDisabled}
+          disabled={pause.disabled}
           onClick={duplex.togglePause}
-          title={pauseLabel}
+          title={pause.label}
         >
-          {pauseLabel}
+          {pause.label}
         </button>
         <button
-          className="vd-ctrl-btn vd-stop"
+          className={['vd-ctrl-btn vd-stop', stop.cancel ? 'cancel' : '']
+            .filter(Boolean)
+            .join(' ')}
           type="button"
-          disabled={stopDisabled}
+          disabled={stop.disabled}
           onClick={duplex.stopSession}
-          title="Stop"
+          title={stop.label}
         >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <rect x="4" y="4" width="16" height="16" rx="2" />
-          </svg>
-          Stop
+          {stop.cancel ? null : (
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+            </svg>
+          )}
+          {stop.label}
         </button>
       </div>
     </div>

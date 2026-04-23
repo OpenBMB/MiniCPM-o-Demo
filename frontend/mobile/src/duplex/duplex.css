@@ -48,29 +48,6 @@
   pointer-events: none;
 }
 
-/* ---------- Video border overlay (.video-border-overlay clone) ----------
-   A thin inner glow that lights up while the model is actively listening,
-   matching desktop omni's `.video-border-overlay.active` cue. */
-.vd-video-border {
-  position: absolute;
-  inset: 0;
-  border-radius: 0;
-  pointer-events: none;
-  z-index: 5;
-  box-shadow: none;
-  transition:
-    box-shadow 0.25s ease,
-    border-color 0.25s ease;
-  border: 0 solid transparent;
-}
-
-.vd-video-border.active {
-  border: 2px solid rgb(74 222 128 / 85%);
-  box-shadow:
-    inset 0 0 0 1px rgb(74 222 128 / 35%),
-    inset 0 0 12px rgb(74 222 128 / 35%);
-}
-
 /* ---------- Status lamp (top-left pill, copy of .status-lamp) ---------- */
 .vd-status-lamp {
   position: absolute;
@@ -379,6 +356,13 @@
 
 .vd-ctrl-btn.vd-stop:not(:disabled):active {
   background: rgb(239 68 68 / 15%);
+}
+
+/* "Cancel" appearance while a queued session is being torn down. */
+.vd-ctrl-btn.vd-stop.cancel {
+  background: rgb(239 68 68 / 90%);
+  color: #fff;
+  border-color: rgb(239 68 68 / 90%);
 }
 
 .vd-ctrl-btn.vd-force-listen-active {
