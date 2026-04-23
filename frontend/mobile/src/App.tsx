@@ -2330,6 +2330,8 @@ function App() {
   const streamingPlayerRef = useRef<StreamingPcmPlayer | null>(null)
   const streamingStopRef = useRef<(() => void) | null>(null)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
+  const textInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const textInputAutoFocusRef = useRef(false)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioCaptureCtxRef = useRef<AudioContext | null>(null)
   const audioCaptureSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
@@ -4273,6 +4275,17 @@ function App() {
                   onSubmit={handleComposerSubmit}
                 >
                   <textarea
+                    ref={(node) => {
+                      textInputRef.current = node
+                      if (node && textInputAutoFocusRef.current) {
+                        textInputAutoFocusRef.current = false
+                        try {
+                          node.focus({ preventScroll: false })
+                        } catch {
+                          node.focus()
+                        }
+                      }
+                    }}
                     className="pill-input"
                     placeholder="发消息…"
                     rows={1}
@@ -4320,7 +4333,17 @@ function App() {
                     stopCurrentReply()
                     return
                   }
-                  setComposeMode(composeMode === 'voice' ? 'text' : 'voice')
+                  if (composeMode === 'voice') {
+                    // Mark before setState so the textarea's ref callback,
+                    // which fires during the commit triggered by this click,
+                    // can synchronously call .focus() and pop the keyboard
+                    // on iOS Safari (programmatic focus is only allowed
+                    // inside the user gesture stack).
+                    textInputAutoFocusRef.current = true
+                    setComposeMode('text')
+                  } else {
+                    setComposeMode('voice')
+                  }
                 }}
                 aria-label={composeMode === 'voice' ? '切换到键盘' : '切换到语音'}
               >
