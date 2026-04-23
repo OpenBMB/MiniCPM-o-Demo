@@ -1858,6 +1858,7 @@ function App() {
   const recordingWillCancelRef = useRef(false)
   const holdArmTimerRef = useRef<number | null>(null)
   const tapHintTimerRef = useRef<number | null>(null)
+  const wasGeneratingAtDownRef = useRef(false)
   const [showTapHint, setShowTapHint] = useState(false)
   const [recordError, setRecordError] = useState<string | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
@@ -3016,9 +3017,9 @@ function App() {
     await submitConversation(trimmed)
   }
 
-  async function startRecording() {
+  async function startRecording(options?: { skipGenerationCheck?: boolean }) {
     if (
-      isGenerating ||
+      (!options?.skipGenerationCheck && isGenerating) ||
       isRecording ||
       isPreparingRecording ||
       composeMode !== 'voice' ||
@@ -3145,10 +3146,11 @@ function App() {
   }
 
   function handleTalkPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (isGenerating || isPreparingRecording || isRecording) return
+    if (isPreparingRecording || isRecording) return
     recordingPointerStartYRef.current = event.clientY
     recordingPointerIdRef.current = event.pointerId
     recordingWillCancelRef.current = false
+    wasGeneratingAtDownRef.current = isGenerating
     setRecordingWillCancel(false)
     setShowTapHint(false)
     try {
@@ -3159,7 +3161,11 @@ function App() {
     clearHoldArmTimer()
     holdArmTimerRef.current = window.setTimeout(() => {
       holdArmTimerRef.current = null
-      void startRecording()
+      const wasGenerating = wasGeneratingAtDownRef.current
+      if (wasGenerating) {
+        stopCurrentReply()
+      }
+      void startRecording({ skipGenerationCheck: wasGenerating })
     }, MIN_HOLD_MS)
   }
 
@@ -3184,12 +3190,17 @@ function App() {
     }
 
     const wasArming = holdArmTimerRef.current !== null
+    const wasGeneratingAtDown = wasGeneratingAtDownRef.current
     clearHoldArmTimer()
 
     if (wasArming) {
       recordingPointerStartYRef.current = null
       recordingPointerIdRef.current = null
-      flashTapHint()
+      if (wasGeneratingAtDown) {
+        stopCurrentReply()
+      } else {
+        flashTapHint()
+      }
       return
     }
 
@@ -3222,7 +3233,7 @@ function App() {
     : isPreparingRecording
       ? '处理中...'
       : isGenerating
-        ? 'AI 回复中...'
+        ? '点击停止 / 按住打断'
         : '按住说话'
 
   return (
@@ -3514,7 +3525,7 @@ function App() {
                   onPointerMove={handleTalkPointerMove}
                   onPointerUp={handleTalkPointerUp}
                   onPointerCancel={handleTalkPointerCancel}
-                  disabled={isGenerating || isPreparingRecording}
+                  disabled={isPreparingRecording}
                 >
                   <span className="pill-talk-label">
                     {isRecording ? '说话中…' : voiceMainLabel}
