@@ -44,6 +44,16 @@ body.mobile-omni .app-nav {
     display: none !important;
 }
 
+/* Per spec 4.2.2: HD / File mode buttons removed on mobile.
+ * The mode-selector / file-chooser sit inside .panel-mode which is already
+ * hidden, but #fsBtnHD lives in the bottom strip and must be hidden too. */
+body.mobile-omni #fsBtnHD,
+body.mobile-omni .mode-selector,
+body.mobile-omni .file-chooser,
+body.mobile-omni .file-options {
+    display: none !important;
+}
+
 /* Kill the green "listening" border overlay; it covers the whole stage
  * on mobile and looks like a stray frame instead of a tasteful indicator. */
 body.mobile-omni .video-border-overlay,
@@ -98,7 +108,8 @@ body.mobile-omni #videoEl {
     background: #000;
 }
 
-/* Bottom-right fullscreen-btn is repurposed as "back to mobile". */
+/* Bottom-right fullscreen-btn is now the ⚙️ settings opener (icon swapped
+ * via mobile-bridge.js). */
 body.mobile-omni .fullscreen-btn {
     display: flex !important;
     position: absolute !important;
@@ -115,13 +126,182 @@ body.mobile-omni .subtitle-toggle-btn {
     z-index: 200 !important;
 }
 
-/* Notch / status-bar safe area for top corner buttons */
+/* Notch / status-bar safe area for top corner buttons.
+ * Top-left is now occupied by the back button (.mobile-back-btn) so push
+ * the status-lamp to the top-center to avoid overlap. */
 body.mobile-omni .cam-flip-btn,
 body.mobile-omni .mirror-btn {
     top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
 }
 body.mobile-omni .status-lamp {
     top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
+    left: 50% !important;
+    transform: translateX(-50%);
+}
+
+/* Top-right torch button (added by mobile-bridge.js when supported).
+ * Sits to the LEFT of the mirror button (which is at right: 62px) so we
+ * place it at right: 114px (mirror is 44px wide + 8px gap). */
+body.mobile-omni .mobile-torch-btn {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    right: 114px;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    border: none;
+    background: rgba(255, 255, 255, 0.25);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    touch-action: manipulation;
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.3);
+}
+body.mobile-omni .mobile-torch-btn.visible {
+    display: flex;
+}
+body.mobile-omni .mobile-torch-btn.active {
+    background: rgba(255, 220, 100, 0.4);
+    color: #fff8b0;
+}
+body.mobile-omni .mobile-torch-btn:active {
+    transform: scale(0.9);
+}
+
+/* Top-left back button — replaces the desktop "Home" link per spec 4.2.2 */
+body.mobile-omni .mobile-back-btn {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 12px;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    border: none;
+    background: rgba(0, 0, 0, 0.4);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.3);
+}
+body.mobile-omni .mobile-back-btn:active {
+    transform: scale(0.9);
+}
+
+/* Bottom-sheet settings overlay (opened by ⚙️) */
+body.mobile-omni .mobile-settings-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    z-index: 12000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+body.mobile-omni .mobile-settings-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+body.mobile-omni .mobile-settings-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #1c1c1e;
+    color: #fff;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+    padding: 12px 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+    transform: translateY(100%);
+    transition: transform 0.25s ease;
+    z-index: 12001;
+    max-height: 80dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+body.mobile-omni .mobile-settings-sheet.open {
+    transform: translateY(0);
+}
+body.mobile-omni .mobile-settings-sheet .ms-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.3);
+    margin: 0 auto 12px;
+}
+body.mobile-omni .mobile-settings-sheet h3 {
+    margin: 0 0 12px;
+    font-size: 16px;
+    font-weight: 600;
+}
+body.mobile-omni .mobile-settings-sheet .ms-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+body.mobile-omni .mobile-settings-sheet .ms-row label {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+}
+body.mobile-omni .mobile-settings-sheet input[type="number"],
+body.mobile-omni .mobile-settings-sheet textarea {
+    background: #2c2c2e;
+    color: #fff;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-family: inherit;
+    width: 100%;
+    box-sizing: border-box;
+}
+body.mobile-omni .mobile-settings-sheet textarea {
+    resize: vertical;
+    min-height: 64px;
+}
+body.mobile-omni .mobile-settings-sheet .ms-row.ms-inline {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+}
+body.mobile-omni .mobile-settings-sheet .ms-row.ms-inline label {
+    flex: 1;
+    color: #fff;
+    font-size: 14px;
+}
+body.mobile-omni .mobile-settings-sheet .ms-row.ms-inline input {
+    flex: 0 0 96px;
+    text-align: right;
+}
+body.mobile-omni .mobile-settings-sheet .ms-close {
+    width: 100%;
+    padding: 12px;
+    border: 0;
+    border-radius: 10px;
+    background: #fff;
+    color: #1c1c1e;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+}
+body.mobile-omni .mobile-settings-sheet .ms-close:active {
+    transform: scale(0.98);
 }
 
 /* The control strip must hug the very bottom edge of the visible
