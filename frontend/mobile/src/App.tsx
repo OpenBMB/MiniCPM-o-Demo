@@ -216,6 +216,211 @@ const CANCEL_DRAG_PX = 80
 const MIN_HOLD_MS = 250
 const TAP_HINT_MS = 1200
 
+const ACTIVE_SESSION_STORAGE_KEY = 'mobile.turn.activeSessionId.v1'
+const SESSIONS_DB_NAME = 'mobile-turn-db'
+const SESSIONS_DB_VERSION = 1
+const SESSIONS_STORE = 'sessions'
+
+type ChatSession = {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messages: ConversationEntry[]
+}
+
+function deriveSessionTitle(messages: ConversationEntry[]): string {
+  for (const m of messages) {
+    if (m.role !== 'user') continue
+    if (m.kind === 'text' && m.text.trim()) {
+      const t = m.text.trim().replace(/\s+/g, ' ')
+      return t.length > 28 ? `${t.slice(0, 28)}…` : t
+    }
+    if (m.kind === 'voice') return '语音对话'
+    if (m.kind === 'text' && m.attachments && m.attachments.length > 0) {
+      const a = m.attachments[0]
+      if (a.kind === 'image') return '图片对话'
+      if (a.kind === 'audio') return '音频对话'
+      if (a.kind === 'video') return '视频对话'
+    }
+  }
+  return '新对话'
+}
+
+function stripBlobUrls(messages: ConversationEntry[]): ConversationEntry[] {
+  return messages.map((m) => {
+    if (m.role === 'user' && m.kind === 'voice') {
+      return { ...m, previewUrl: '' }
+    }
+    if (m.role === 'user' && m.kind === 'text' && m.attachments) {
+      return {
+        ...m,
+        attachments: m.attachments.map((a) => ({ ...a, previewUrl: '' })),
+      }
+    }
+    if (m.role === 'assistant') {
+      return { ...m, audioPreviewUrl: null }
+    }
+    return m
+  })
+}
+
+function base64ToBlob(base64: string, mime: string): Blob | null {
+  try {
+    const bin = atob(base64)
+    const len = bin.length
+    const bytes = new Uint8Array(len)
+    for (let i = 0; i < len; i += 1) bytes[i] = bin.charCodeAt(i)
+    return new Blob([bytes], { type: mime })
+  } catch {
+    return null
+  }
+}
+
+function rehydrateMessages(messages: ConversationEntry[]): ConversationEntry[] {
+  return messages.map((m) => {
+    if (m.role === 'user' && m.kind === 'text' && m.attachments) {
+      return {
+        ...m,
+        attachments: m.attachments.map((a) => {
+          if (a.previewUrl) return a
+          let mime = 'application/octet-stream'
+          if (a.kind === 'image') mime = 'image/jpeg'
+          else if (a.kind === 'audio') mime = 'audio/webm'
+          else if (a.kind === 'video') mime = 'video/mp4'
+          const blob = base64ToBlob(a.base64, mime)
+          return blob
+            ? { ...a, previewUrl: URL.createObjectURL(blob) }
+            : a
+        }),
+      }
+    }
+    return m
+  })
+}
+
+let _dbPromise: Promise<IDBDatabase> | null = null
+function openSessionsDb(): Promise<IDBDatabase> {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('IndexedDB unavailable'))
+  }
+  if (_dbPromise) return _dbPromise
+  _dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(SESSIONS_DB_NAME, SESSIONS_DB_VERSION)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(SESSIONS_STORE)) {
+        db.createObjectStore(SESSIONS_STORE, { keyPath: 'id' })
+      }
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+  return _dbPromise
+}
+
+async function idbGetAllSessions(): Promise<ChatSession[]> {
+  try {
+    const db = await openSessionsDb()
+    return await new Promise<ChatSession[]>((resolve, reject) => {
+      const tx = db.transaction(SESSIONS_STORE, 'readonly')
+      const store = tx.objectStore(SESSIONS_STORE)
+      const req = store.getAll()
+      req.onsuccess = () => {
+        const rows = (req.result as ChatSession[]) || []
+        resolve(
+          rows
+            .filter((s) => s && typeof s.id === 'string' && Array.isArray(s.messages))
+            .map((s) => ({
+              id: s.id,
+              title: s.title || '新对话',
+              createdAt: Number(s.createdAt) || Date.now(),
+              updatedAt: Number(s.updatedAt) || Number(s.createdAt) || Date.now(),
+              messages: rehydrateMessages(s.messages),
+            })),
+        )
+      }
+      req.onerror = () => reject(req.error)
+    })
+  } catch (err) {
+    console.warn('IDB read failed', err)
+    return []
+  }
+}
+
+async function idbPutSession(session: ChatSession): Promise<void> {
+  try {
+    const db = await openSessionsDb()
+    const record: ChatSession = {
+      ...session,
+      messages: stripBlobUrls(session.messages),
+    }
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(SESSIONS_STORE, 'readwrite')
+      tx.objectStore(SESSIONS_STORE).put(record)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn('IDB write failed', err)
+  }
+}
+
+async function idbDeleteSession(id: string): Promise<void> {
+  try {
+    const db = await openSessionsDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(SESSIONS_STORE, 'readwrite')
+      tx.objectStore(SESSIONS_STORE).delete(id)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn('IDB delete failed', err)
+  }
+}
+
+async function idbClearAll(): Promise<void> {
+  try {
+    const db = await openSessionsDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(SESSIONS_STORE, 'readwrite')
+      tx.objectStore(SESSIONS_STORE).clear()
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn('IDB clear failed', err)
+  }
+}
+
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  const today = new Date()
+  const d = new Date(ts)
+  if (
+    today.getFullYear() === d.getFullYear() &&
+    today.getMonth() === d.getMonth() &&
+    today.getDate() === d.getDate()
+  ) {
+    return `${d.getHours().toString().padStart(2, '0')}:${d
+      .getMinutes()
+      .toString()
+      .padStart(2, '0')}`
+  }
+  const yesterday = new Date(Date.now() - 86_400_000)
+  if (
+    yesterday.getFullYear() === d.getFullYear() &&
+    yesterday.getMonth() === d.getMonth() &&
+    yesterday.getDate() === d.getDate()
+  ) {
+    return '昨天'
+  }
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
 function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
   if (!el) return
   el.style.height = 'auto'
@@ -698,6 +903,61 @@ function SettingsIcon({ className }: IconProps) {
         strokeWidth="1.6"
       />
       <circle cx="12" cy="12" r="2.5" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
+function TrashIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M5 7h14M9.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5V7m-7.5 0 .8 11.2a1.8 1.8 0 0 0 1.8 1.6h6.8a1.8 1.8 0 0 0 1.8-1.6L17.5 7"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+      <path
+        d="M10.5 11v5M13.5 11v5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  )
+}
+
+function EditSquareIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M5 6.8A2.2 2.2 0 0 1 7.2 4.6h5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.6"
+      />
+      <path
+        d="M19.4 11v5.8a2.2 2.2 0 0 1-2.2 2.2H7.2A2.2 2.2 0 0 1 5 16.8V11"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.6"
+      />
+      <path
+        d="m13.6 11.5 6-6a1.6 1.6 0 0 1 2.3 2.3l-6 6-2.7.4.4-2.7Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
     </svg>
   )
 }
@@ -1843,10 +2103,132 @@ const duplexIcons: DuplexIcons = {
   FlipCamera: FlipCameraIcon,
 }
 
+type HistoryDrawerProps = {
+  open: boolean
+  sessions: ChatSession[]
+  activeId: string
+  onClose: () => void
+  onNewSession: () => void
+  onSwitch: (id: string) => void
+  onDelete: (id: string) => void
+  onClearAll: () => void
+  onOpenSettings: () => void
+}
+
+function HistoryDrawer({
+  open,
+  sessions,
+  activeId,
+  onClose,
+  onNewSession,
+  onSwitch,
+  onDelete,
+  onClearAll,
+  onOpenSettings,
+}: HistoryDrawerProps) {
+  const sorted = sessions.slice().sort((a, b) => b.updatedAt - a.updatedAt)
+  return (
+    <div
+      className={`history-drawer-root ${open ? 'is-open' : ''}`}
+      aria-hidden={!open}
+    >
+      <div className="history-drawer-backdrop" onClick={onClose} />
+      <aside className="history-drawer" role="dialog" aria-label="历史会话">
+        <div className="history-drawer-top">
+          <button
+            type="button"
+            className="history-drawer-new"
+            onClick={onNewSession}
+          >
+            <EditSquareIcon className="app-icon app-icon-md" />
+            <span>新建对话</span>
+          </button>
+        </div>
+
+        <div className="history-drawer-list">
+          {sorted.length === 0 ? (
+            <div className="history-drawer-empty">还没有历史对话</div>
+          ) : (
+            sorted.map((s) => (
+              <div
+                key={s.id}
+                className={[
+                  'history-drawer-item',
+                  s.id === activeId ? 'is-active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                <button
+                  type="button"
+                  className="history-drawer-item-main"
+                  onClick={() => onSwitch(s.id)}
+                >
+                  <span className="history-drawer-item-title">{s.title}</span>
+                  <span className="history-drawer-item-time">
+                    {formatRelativeTime(s.updatedAt)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="history-drawer-item-delete"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (window.confirm(`删除「${s.title}」？此操作不可撤销。`)) {
+                      onDelete(s.id)
+                    }
+                  }}
+                  aria-label="删除"
+                >
+                  <TrashIcon className="app-icon app-icon-sm" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="history-drawer-bottom">
+          <button
+            type="button"
+            className="history-drawer-bottom-item"
+            onClick={onOpenSettings}
+          >
+            <SettingsIcon className="app-icon app-icon-md" />
+            <span>设置</span>
+          </button>
+          <button
+            type="button"
+            className="history-drawer-bottom-item is-danger"
+            onClick={() => {
+              if (
+                window.confirm(
+                  '确定清空本机所有对话和媒体？此操作不可撤销，相当于该手机从未使用过本应用。',
+                )
+              ) {
+                onClearAll()
+              }
+            }}
+          >
+            <TrashIcon className="app-icon app-icon-md" />
+            <span>清空全部数据</span>
+          </button>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('turn')
   const [composeMode, setComposeMode] = useState<'voice' | 'text'>('voice')
   const [draft, setDraft] = useState('')
+
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => createId('session'))
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [sessionsHydrated, setSessionsHydrated] = useState(false)
+  const activeSessionIdRef = useRef(activeSessionId)
+
   const [messages, setMessages] = useState<ConversationEntry[]>([])
   const [pendingReply, setPendingReply] = useState<PendingReply | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -1929,6 +2311,101 @@ function App() {
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId
+  }, [activeSessionId])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const all = await idbGetAllSessions()
+      if (cancelled) return
+      const sorted = all.slice().sort((a, b) => b.updatedAt - a.updatedAt)
+      setSessions(sorted)
+
+      let nextActiveId: string | null = null
+      let nextMessages: ConversationEntry[] | null = null
+      try {
+        const saved =
+          typeof localStorage !== 'undefined'
+            ? localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)
+            : null
+        if (saved) {
+          const found = sorted.find((s) => s.id === saved)
+          if (found) {
+            nextActiveId = found.id
+            nextMessages = found.messages
+          }
+        }
+        if (!nextActiveId && sorted.length > 0) {
+          nextActiveId = sorted[0].id
+          nextMessages = sorted[0].messages
+        }
+      } catch {
+        /* ignore */
+      }
+      if (nextActiveId) setActiveSessionId(nextActiveId)
+      if (nextMessages) setMessages(nextMessages)
+      setSessionsHydrated(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!sessionsHydrated) return
+    if (typeof localStorage === 'undefined') return
+    try {
+      localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, activeSessionId)
+    } catch {
+      /* ignore quota */
+    }
+  }, [activeSessionId, sessionsHydrated])
+
+  useEffect(() => {
+    if (!sessionsHydrated) return
+    const now = Date.now()
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === activeSessionId)
+      if (messages.length === 0) {
+        if (idx === -1) return prev
+        const updated: ChatSession = {
+          ...prev[idx],
+          messages,
+          updatedAt: now,
+          title: '新对话',
+        }
+        const next = prev.slice()
+        next[idx] = updated
+        void idbPutSession(updated)
+        return next
+      }
+      const title = deriveSessionTitle(messages)
+      if (idx === -1) {
+        const created: ChatSession = {
+          id: activeSessionId,
+          title,
+          createdAt: now,
+          updatedAt: now,
+          messages,
+        }
+        void idbPutSession(created)
+        return [created, ...prev]
+      }
+      const updated: ChatSession = {
+        ...prev[idx],
+        title,
+        messages,
+        updatedAt: now,
+      }
+      const next = prev.slice()
+      next[idx] = updated
+      void idbPutSession(updated)
+      return next
+    })
+  }, [messages, activeSessionId, sessionsHydrated])
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -2447,6 +2924,79 @@ function App() {
     mediaStreamRef.current = null
   }
 
+  function startNewSession() {
+    stopCurrentReply()
+    const newId = createId('session')
+    setActiveSessionId(newId)
+    setMessages([])
+    setDraft('')
+    setPendingReply(null)
+    setRecordError(null)
+    setHistoryOpen(false)
+  }
+
+  function switchToSession(id: string) {
+    if (id === activeSessionId) {
+      setHistoryOpen(false)
+      return
+    }
+    stopCurrentReply()
+    const target = sessions.find((s) => s.id === id)
+    if (!target) return
+    setActiveSessionId(id)
+    setMessages(rehydrateMessages(target.messages))
+    setDraft('')
+    setPendingReply(null)
+    setRecordError(null)
+    setHistoryOpen(false)
+  }
+
+  function deleteSession(id: string) {
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id)
+      void idbDeleteSession(id)
+      return next
+    })
+    if (id === activeSessionId) {
+      const remaining = sessions
+        .filter((s) => s.id !== id)
+        .slice()
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+      if (remaining.length > 0) {
+        const top = remaining[0]
+        setActiveSessionId(top.id)
+        setMessages(rehydrateMessages(top.messages))
+      } else {
+        const newId = createId('session')
+        setActiveSessionId(newId)
+        setMessages([])
+      }
+      setDraft('')
+      setPendingReply(null)
+      setRecordError(null)
+    }
+  }
+
+  async function clearAllData() {
+    stopCurrentReply()
+    await idbClearAll()
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY)
+      } catch {
+        /* ignore */
+      }
+    }
+    setSessions([])
+    const newId = createId('session')
+    setActiveSessionId(newId)
+    setMessages([])
+    setDraft('')
+    setPendingReply(null)
+    setRecordError(null)
+    setHistoryOpen(false)
+  }
+
   function stopCurrentReply() {
     abortRef.current?.abort()
 
@@ -2502,6 +3052,9 @@ function App() {
     nextMessages: ConversationEntry[],
   ) {
     const systemMessage = buildTurnSystemMessage()
+    const submissionSessionId = activeSessionIdRef.current
+    const isStillActive = () =>
+      activeSessionIdRef.current === submissionSessionId
 
     setPendingReply({
       id: createId('pending'),
@@ -2576,24 +3129,28 @@ function App() {
         recordingSessionId: payload.recording_session_id ?? null,
       }
 
-      setMessages([...nextMessages, assistantEntry])
-      setLastSessionId(payload.recording_session_id ?? null)
+      if (isStillActive()) {
+        setMessages([...nextMessages, assistantEntry])
+        setLastSessionId(payload.recording_session_id ?? null)
+      }
     } catch (error) {
       const errorText =
         controller.signal.aborted
           ? '已停止当前回复。'
           : `请求失败：${getErrorMessage(error)}`
 
-      setMessages([
-        ...nextMessages,
-        {
-          id: createId('assistant'),
-          role: 'assistant',
-          kind: 'assistant',
-          text: errorText,
-          error: true,
-        },
-      ])
+      if (isStillActive() && !controller.signal.aborted) {
+        setMessages([
+          ...nextMessages,
+          {
+            id: createId('assistant'),
+            role: 'assistant',
+            kind: 'assistant',
+            text: errorText,
+            error: true,
+          },
+        ])
+      }
     } finally {
       abortRef.current = null
       setPendingReply(null)
@@ -2605,6 +3162,9 @@ function App() {
     nextMessages: ConversationEntry[],
   ) {
     const systemMessage = buildTurnSystemMessage()
+    const submissionSessionId = activeSessionIdRef.current
+    const isStillActive = () =>
+      activeSessionIdRef.current === submissionSessionId
 
     const pendingId = createId('pending')
 
@@ -2624,16 +3184,18 @@ function App() {
     try {
       ws = new WebSocket(wsUrl)
     } catch (error) {
-      setMessages([
-        ...nextMessages,
-        {
-          id: createId('assistant'),
-          role: 'assistant',
-          kind: 'assistant',
-          text: `连接失败：${getErrorMessage(error)}`,
-          error: true,
-        },
-      ])
+      if (isStillActive()) {
+        setMessages([
+          ...nextMessages,
+          {
+            id: createId('assistant'),
+            role: 'assistant',
+            kind: 'assistant',
+            text: `连接失败：${getErrorMessage(error)}`,
+            error: true,
+          },
+        ])
+      }
       setPendingReply(null)
       setIsGenerating(false)
       return
@@ -2693,19 +3255,21 @@ function App() {
         player = null
       }
 
-      if (resolvedEntry) {
-        setMessages([...nextMessages, resolvedEntry])
-      } else if (errorMessage) {
-        setMessages([
-          ...nextMessages,
-          {
-            id: createId('assistant'),
-            role: 'assistant',
-            kind: 'assistant',
-            text: errorMessage,
-            error: true,
-          },
-        ])
+      if (isStillActive()) {
+        if (resolvedEntry) {
+          setMessages([...nextMessages, resolvedEntry])
+        } else if (errorMessage && !stoppedByUser) {
+          setMessages([
+            ...nextMessages,
+            {
+              id: createId('assistant'),
+              role: 'assistant',
+              kind: 'assistant',
+              text: errorMessage,
+              error: true,
+            },
+          ])
+        }
       }
 
       setPendingReply(null)
@@ -2775,12 +3339,14 @@ function App() {
       if (msg.type === 'chunk') {
         if (typeof msg.text_delta === 'string' && msg.text_delta) {
           fullText += msg.text_delta
-          setPendingReply({
-            id: pendingId,
-            role: 'assistant',
-            kind: 'pending',
-            text: fullText,
-          })
+          if (isStillActive()) {
+            setPendingReply({
+              id: pendingId,
+              role: 'assistant',
+              kind: 'pending',
+              text: fullText,
+            })
+          }
         }
 
         if (msg.audio_data && player) {
@@ -3245,6 +3811,22 @@ function App() {
         accept="audio/*"
         onChange={handleRefAudioInputChange}
       />
+      <HistoryDrawer
+        open={historyOpen}
+        sessions={sessions}
+        activeId={activeSessionId}
+        onClose={() => setHistoryOpen(false)}
+        onNewSession={startNewSession}
+        onSwitch={switchToSession}
+        onDelete={deleteSession}
+        onClearAll={() => {
+          void clearAllData()
+        }}
+        onOpenSettings={() => {
+          setHistoryOpen(false)
+          setSettingsOpen(true)
+        }}
+      />
       {isRecording ? <RecordingOverlay willCancel={recordingWillCancel} /> : null}
       {cameraReview ? (
         <CameraReviewOverlay
@@ -3324,7 +3906,7 @@ function App() {
             <button
               className="topbar-icon-btn"
               type="button"
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => setHistoryOpen(true)}
               aria-label="打开菜单"
             >
               <HamburgerIcon className="app-icon app-icon-md" />
