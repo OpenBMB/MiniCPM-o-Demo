@@ -214,7 +214,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 const CANCEL_DRAG_PX = 80
-const MIN_HOLD_MS = 250
+const MIN_HOLD_MS = 320
 const TAP_HINT_MS = 1200
 
 const ACTIVE_SESSION_STORAGE_KEY = 'mobile.turn.activeSessionId.v1'
@@ -2286,6 +2286,7 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isPreparingRecording, setIsPreparingRecording] = useState(false)
+  const [isArmingHold, setIsArmingHold] = useState(false)
   const [recordingWillCancel, setRecordingWillCancel] = useState(false)
   const recordingPointerStartYRef = useRef<number | null>(null)
   const recordingPointerIdRef = useRef<number | null>(null)
@@ -3910,6 +3911,7 @@ function App() {
     wasGeneratingAtDownRef.current = isGenerating
     setRecordingWillCancel(false)
     setShowTapHint(false)
+    setIsArmingHold(true)
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
@@ -3918,6 +3920,7 @@ function App() {
     clearHoldArmTimer()
     holdArmTimerRef.current = window.setTimeout(() => {
       holdArmTimerRef.current = null
+      setIsArmingHold(false)
       const wasGenerating = wasGeneratingAtDownRef.current
       if (wasGenerating) {
         stopCurrentReply()
@@ -3949,6 +3952,7 @@ function App() {
     const wasArming = holdArmTimerRef.current !== null
     const wasGeneratingAtDown = wasGeneratingAtDownRef.current
     clearHoldArmTimer()
+    setIsArmingHold(false)
 
     if (wasArming) {
       recordingPointerStartYRef.current = null
@@ -3972,6 +3976,7 @@ function App() {
   function handleTalkPointerCancel(event: ReactPointerEvent<HTMLButtonElement>) {
     if (recordingPointerIdRef.current !== event.pointerId && recordingPointerIdRef.current !== null) return
     clearHoldArmTimer()
+    setIsArmingHold(false)
     if (isRecording || isPreparingRecording) {
       stopRecording('cancel')
     } else {
@@ -3985,11 +3990,7 @@ function App() {
     void sendTextMessage()
   }
 
-  const voiceMainLabel = isRecording
-    ? '松开发送'
-    : isPreparingRecording
-      ? '处理中...'
-      : '按住说话'
+  const voiceMainLabel = isRecording ? '松开发送' : '按住说话'
 
   return (
     <div className="mobile-app">
@@ -4306,13 +4307,19 @@ function App() {
                 </form>
               ) : (
                 <button
-                  className="pill-main pill-talk"
+                  className={[
+                    'pill-main',
+                    'pill-talk',
+                    isArmingHold ? 'is-armed' : '',
+                    isRecording || isPreparingRecording ? 'is-recording' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
                   type="button"
                   onPointerDown={handleTalkPointerDown}
                   onPointerMove={handleTalkPointerMove}
                   onPointerUp={handleTalkPointerUp}
                   onPointerCancel={handleTalkPointerCancel}
-                  disabled={isPreparingRecording}
                 >
                   <span className="pill-talk-label">
                     {isRecording ? '说话中…' : voiceMainLabel}

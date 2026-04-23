@@ -1152,6 +1152,17 @@
   opacity: 0.55;
 }
 
+.pill-talk.is-armed {
+  background: rgba(30, 111, 255, 0.08);
+  color: #1e6fff;
+  transition: background 90ms ease-out, color 90ms ease-out;
+}
+
+.pill-talk.is-recording {
+  background: rgb(30 111 255 / 16%);
+  color: #1e6fff;
+}
+
 .pill-talk-label {
   pointer-events: none;
 }
