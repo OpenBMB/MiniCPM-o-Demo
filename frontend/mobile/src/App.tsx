@@ -74,6 +74,12 @@ type ConversationEntry =
       error?: boolean
       interrupted?: boolean
       audioPreviewUrl?: string | null
+      // Persisted source for the assistant audio so it can be replayed
+      // after a reload. audioPreviewUrl alone is a transient Blob URL
+      // that dies the moment the page reloads; we need the underlying
+      // bytes to rebuild a fresh Blob URL on rehydrate.
+      audioBase64?: string | null
+      audioSampleRate?: number | null
       recordingSessionId?: string | null
     }
   | {
@@ -301,6 +307,20 @@ function hydrateAttachments(attachments: Attachment[]): Attachment[] {
 
 function rehydrateMessages(messages: ConversationEntry[]): ConversationEntry[] {
   return messages.map((m) => {
+    if (m.role === 'assistant' && m.audioBase64) {
+      // Rebuild the playable Blob URL from the persisted audio bytes.
+      // Without this every assistant message would lose its audio
+      // after a page reload (the previous Blob URL is dead).
+      try {
+        const url = audioBase64ToBlobUrl(
+          m.audioBase64,
+          m.audioSampleRate ?? 24000,
+        )
+        return { ...m, audioPreviewUrl: url }
+      } catch {
+        return m
+      }
+    }
     if (m.role === 'user' && m.kind === 'text' && m.attachments) {
       return { ...m, attachments: hydrateAttachments(m.attachments) }
     }
@@ -3315,12 +3335,13 @@ function App() {
       }
 
       let assistantAudioUrl: string | null = null
+      const assistantAudioSampleRate = payload.audio_sample_rate ?? 24000
 
       if (payload.audio_data) {
         try {
           assistantAudioUrl = audioBase64ToBlobUrl(
             payload.audio_data,
-            payload.audio_sample_rate ?? 24000,
+            assistantAudioSampleRate,
           )
         } catch {
           assistantAudioUrl = null
@@ -3333,6 +3354,10 @@ function App() {
         kind: 'assistant',
         text: payload.text?.trim() || '(空回复)',
         audioPreviewUrl: assistantAudioUrl,
+        // Keep the raw bytes so we can rebuild the Blob URL after a
+        // page reload (Blob URLs themselves don't survive).
+        audioBase64: payload.audio_data ?? null,
+        audioSampleRate: payload.audio_data ? assistantAudioSampleRate : null,
         recordingSessionId: payload.recording_session_id ?? null,
       }
 
@@ -3454,15 +3479,31 @@ function App() {
       if (player) {
         const merged = player.getMergedFloat32()
         let mergedUrl: string | null = null
+        let mergedBase64: string | null = null
         if (merged && merged.length > 0) {
           try {
             mergedUrl = float32ToWavBlobUrl(merged, lastSampleRate)
           } catch {
             mergedUrl = null
           }
+          try {
+            mergedBase64 = float32ToBase64(merged)
+          } catch {
+            mergedBase64 = null
+          }
         }
-        if (mergedUrl && resolvedEntry && resolvedEntry.kind === 'assistant') {
-          resolvedEntry = { ...resolvedEntry, audioPreviewUrl: mergedUrl }
+        if (
+          (mergedUrl || mergedBase64) &&
+          resolvedEntry &&
+          resolvedEntry.kind === 'assistant'
+        ) {
+          resolvedEntry = {
+            ...resolvedEntry,
+            audioPreviewUrl: mergedUrl ?? resolvedEntry.audioPreviewUrl ?? null,
+            // Persist the raw float32 PCM so playback survives a reload.
+            audioBase64: mergedBase64 ?? resolvedEntry.audioBase64 ?? null,
+            audioSampleRate: mergedBase64 ? lastSampleRate : resolvedEntry.audioSampleRate ?? null,
+          }
         }
 
         if (cutPlayback) {
