@@ -2236,6 +2236,15 @@ function HistoryDrawer({
 function App() {
   const [screen, setScreen] = useState<Screen>('turn')
   const [composeMode, setComposeMode] = useState<'voice' | 'text'>('voice')
+  // Release the mic when the user leaves voice mode so the OS recording
+  // indicator turns off and we don't hold a stream we won't use.
+  useEffect(() => {
+    if (composeMode !== 'voice') {
+      clearIdleColdDownTimer()
+      coldDownMic()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composeMode])
   const [draft, setDraft] = useState('')
 
   const [sessions, setSessions] = useState<ChatSession[]>([])
@@ -2671,6 +2680,7 @@ function App() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
+      clearIdleColdDownTimer()
       coldDownMic()
 
       for (const entry of messagesRef.current) {
@@ -2973,8 +2983,35 @@ function App() {
     mediaStreamRef.current = null
   }
 
-  function resetRecorderResources() {
-    coldDownMic()
+  // Soft-reset between successful presses: stop collecting and drop the
+  // chunks we just consumed, but keep the MediaStream and AudioContext
+  // alive so the *next* press can start recording instantly. The mic
+  // is fully released later by the idle timer (or on mode switch /
+  // unmount) so the OS recording indicator does eventually turn off.
+  function softResetCapture() {
+    isCapturingRef.current = false
+    audioCaptureChunksRef.current = []
+  }
+
+  const idleColdDownTimerRef = useRef<number | null>(null)
+  const IDLE_COLD_DOWN_MS = 60000
+
+  function clearIdleColdDownTimer() {
+    if (idleColdDownTimerRef.current !== null) {
+      window.clearTimeout(idleColdDownTimerRef.current)
+      idleColdDownTimerRef.current = null
+    }
+  }
+
+  function scheduleIdleColdDown() {
+    clearIdleColdDownTimer()
+    idleColdDownTimerRef.current = window.setTimeout(() => {
+      idleColdDownTimerRef.current = null
+      // Only release if we are still idle (not actively capturing)
+      if (!isCapturingRef.current && recordingPointerIdRef.current === null) {
+        coldDownMic()
+      }
+    }, IDLE_COLD_DOWN_MS)
   }
 
   async function prewarmMic(): Promise<boolean> {
@@ -3759,7 +3796,11 @@ function App() {
     const chunks = audioCaptureChunksRef.current
     const sampleRate = audioCaptureSampleRateRef.current
 
-    resetRecorderResources()
+    // Keep the mic warm so a follow-up press can start recording
+    // instantly. coldDownMic happens later via the idle timer or on
+    // mode switch / unmount.
+    softResetCapture()
+    scheduleIdleColdDown()
 
     try {
       if (!shouldSend) {
@@ -3866,6 +3907,10 @@ function App() {
 
   function handleTalkPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
     if (isRecording || isPreparingRecording) return
+
+    // We're using the mic again — cancel the pending idle release so it
+    // doesn't yank the stream out from under us mid-press.
+    clearIdleColdDownTimer()
 
     recordingPointerStartYRef.current = event.clientY
     recordingPointerIdRef.current = event.pointerId
