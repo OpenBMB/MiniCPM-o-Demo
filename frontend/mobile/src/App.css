@@ -578,67 +578,76 @@
   color: #1e6fff;
 }
 
-.attach-sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 30%);
-  z-index: 60;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
+.attach-drawer {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 16px 8px 12px;
+  background: #f5f6f8;
+  border-radius: 18px;
+  animation: attach-drawer-in 180ms ease-out;
 }
 
-.attach-sheet {
-  width: 100%;
-  max-width: 480px;
-  background: #ffffff;
-  border-radius: 18px 18px 0 0;
-  padding: 18px 16px calc(env(safe-area-inset-bottom, 0px) + 18px);
-  display: flex;
-  justify-content: space-around;
-  gap: 12px;
+@keyframes attach-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.attach-sheet-item {
-  flex: 1;
+.attach-drawer-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 10px 8px;
+  gap: 8px;
+  padding: 6px 4px;
   border: 0;
   background: transparent;
   color: #1f2937;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
 }
 
-.attach-sheet-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
+.attach-drawer-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.attach-drawer-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
+}
+
+.attach-drawer-icon-camera {
   color: #1e6fff;
 }
 
-.attach-sheet-icon-image {
-  background: #e8efff;
+.attach-drawer-icon-album {
+  color: #1e6fff;
 }
 
-.attach-sheet-icon-audio {
-  background: #fff1e6;
-  color: #f97316;
+.attach-drawer-icon-file {
+  color: #f59e0b;
 }
 
-.attach-sheet-icon-video {
-  background: #ecfdf5;
+.attach-drawer-icon-phone {
   color: #10b981;
 }
 
-.attach-sheet-label {
-  font-weight: 600;
+.attach-drawer-label {
+  font-weight: 500;
+  color: #4b5563;
 }
 
 .camera-review {

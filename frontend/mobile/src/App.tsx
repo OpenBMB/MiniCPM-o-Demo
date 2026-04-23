@@ -770,6 +770,30 @@ function MusicIcon({ className }: IconProps) {
   )
 }
 
+function FileIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M14 3.5H7.5A2 2 0 0 0 5.5 5.5v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.2L14 3.5Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+      <path
+        d="M13.5 3.5v4.7h5"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  )
+}
+
 function FilmIcon({ className }: IconProps) {
   return (
     <svg
@@ -1839,6 +1863,7 @@ function App() {
   const albumInputRef = useRef<HTMLInputElement | null>(null)
   const audioInputRef = useRef<HTMLInputElement | null>(null)
   const videoInputRef = useRef<HTMLInputElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [presetsByMode, setPresetsByMode] = useState<Record<PresetMode, PresetMetadata[]>>({
     turnbased: [],
@@ -2889,6 +2914,31 @@ function App() {
     }
   }
 
+  async function handleAttachMixedFiles(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const list = Array.from(files)
+    const built: Attachment[] = []
+    for (const f of list) {
+      const t = f.type || ''
+      try {
+        if (t.startsWith('image/')) {
+          built.push(await downscaleImageToAttachment(f))
+        } else if (t.startsWith('audio/')) {
+          built.push(await mediaFileToAttachment(f, 'audio'))
+        } else if (t.startsWith('video/')) {
+          built.push(await mediaFileToAttachment(f, 'video'))
+        } else {
+          console.warn('unsupported file type', f.name, t)
+        }
+      } catch (err) {
+        console.warn('attach failed', f.name, err)
+      }
+    }
+    if (built.length > 0) {
+      setPendingAttachments((prev) => [...prev, ...built])
+    }
+  }
+
   function removePendingAttachment(id: string) {
     setPendingAttachments((prev) => {
       const target = prev.find((a) => a.id === id)
@@ -3360,6 +3410,17 @@ function App() {
                   e.target.value = ''
                 }}
               />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,audio/*,video/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  void handleAttachMixedFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
 
               <button
                 className="pill-side"
@@ -3435,9 +3496,14 @@ function App() {
                 type="button"
                 onClick={() => setAttachMenuOpen((v) => !v)}
                 disabled={isGenerating || isPreparingRecording}
-                aria-label="附件"
+                aria-label={attachMenuOpen ? '关闭附件菜单' : '附件'}
+                aria-expanded={attachMenuOpen}
               >
-                <PlusIcon className="app-icon app-icon-md" />
+                {attachMenuOpen ? (
+                  <CloseIcon className="app-icon app-icon-md" />
+                ) : (
+                  <PlusIcon className="app-icon app-icon-md" />
+                )}
               </button>
 
               {isGenerating ||
@@ -3469,55 +3535,63 @@ function App() {
 
             {attachMenuOpen ? (
               <div
-                className="attach-sheet-backdrop"
-                onClick={() => setAttachMenuOpen(false)}
+                className="attach-drawer"
+                role="dialog"
+                aria-label="选择附件"
               >
-                <div
-                  className="attach-sheet"
-                  onClick={(e) => e.stopPropagation()}
-                  role="dialog"
-                  aria-label="选择附件"
+                <button
+                  type="button"
+                  className="attach-drawer-item"
+                  onClick={() => {
+                    setAttachMenuOpen(false)
+                    cameraInputRef.current?.click()
+                  }}
                 >
-                  <button
-                    type="button"
-                    className="attach-sheet-item"
-                    onClick={() => {
-                      setAttachMenuOpen(false)
-                      albumInputRef.current?.click()
-                    }}
-                  >
-                    <span className="attach-sheet-icon attach-sheet-icon-image">
-                      <PhotoIcon className="app-icon app-icon-lg" />
-                    </span>
-                    <span className="attach-sheet-label">相册</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="attach-sheet-item"
-                    onClick={() => {
-                      setAttachMenuOpen(false)
-                      audioInputRef.current?.click()
-                    }}
-                  >
-                    <span className="attach-sheet-icon attach-sheet-icon-audio">
-                      <MusicIcon className="app-icon app-icon-lg" />
-                    </span>
-                    <span className="attach-sheet-label">音频</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="attach-sheet-item"
-                    onClick={() => {
-                      setAttachMenuOpen(false)
-                      videoInputRef.current?.click()
-                    }}
-                  >
-                    <span className="attach-sheet-icon attach-sheet-icon-video">
-                      <FilmIcon className="app-icon app-icon-lg" />
-                    </span>
-                    <span className="attach-sheet-label">视频</span>
-                  </button>
-                </div>
+                  <span className="attach-drawer-icon attach-drawer-icon-camera">
+                    <CameraSnapIcon className="app-icon app-icon-lg" />
+                  </span>
+                  <span className="attach-drawer-label">相机</span>
+                </button>
+                <button
+                  type="button"
+                  className="attach-drawer-item"
+                  onClick={() => {
+                    setAttachMenuOpen(false)
+                    albumInputRef.current?.click()
+                  }}
+                >
+                  <span className="attach-drawer-icon attach-drawer-icon-album">
+                    <PhotoIcon className="app-icon app-icon-lg" />
+                  </span>
+                  <span className="attach-drawer-label">相册</span>
+                </button>
+                <button
+                  type="button"
+                  className="attach-drawer-item"
+                  onClick={() => {
+                    setAttachMenuOpen(false)
+                    fileInputRef.current?.click()
+                  }}
+                >
+                  <span className="attach-drawer-icon attach-drawer-icon-file">
+                    <FileIcon className="app-icon app-icon-lg" />
+                  </span>
+                  <span className="attach-drawer-label">文件</span>
+                </button>
+                <button
+                  type="button"
+                  className="attach-drawer-item"
+                  onClick={() => {
+                    setAttachMenuOpen(false)
+                    duplex.openScreen('audio')
+                  }}
+                  disabled={isGenerating || isRecording || isPreparingRecording}
+                >
+                  <span className="attach-drawer-icon attach-drawer-icon-phone">
+                    <PhoneIcon className="app-icon app-icon-lg" />
+                  </span>
+                  <span className="attach-drawer-label">打电话</span>
+                </button>
               </div>
             ) : null}
 
