@@ -234,8 +234,19 @@ const SILENT_DISCARD_MS = 280
 
 const ACTIVE_SESSION_STORAGE_KEY = 'mobile.turn.activeSessionId.v1'
 const SESSIONS_DB_NAME = 'mobile-turn-db'
-const SESSIONS_DB_VERSION = 1
+const SESSIONS_DB_VERSION = 2
 const SESSIONS_STORE = 'sessions'
+const USER_PRESETS_STORE = 'user-presets'
+
+type UserPreset = {
+  id: string
+  name: string
+  mode: PresetMode
+  systemPrompt: string
+  refAudio: RefAudioState
+  createdAt: number
+  updatedAt: number
+}
 
 type ChatSession = {
   id: string
@@ -374,6 +385,9 @@ function openSessionsDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(SESSIONS_STORE)) {
         db.createObjectStore(SESSIONS_STORE, { keyPath: 'id' })
       }
+      if (!db.objectStoreNames.contains(USER_PRESETS_STORE)) {
+        db.createObjectStore(USER_PRESETS_STORE, { keyPath: 'id' })
+      }
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
@@ -439,6 +453,55 @@ async function idbDeleteSession(id: string): Promise<void> {
     })
   } catch (err) {
     console.warn('IDB delete failed', err)
+  }
+}
+
+// ─── User Presets persistence ────────────────────────────────────────
+
+async function idbGetAllUserPresets(): Promise<UserPreset[]> {
+  try {
+    const db = await openSessionsDb()
+    return await new Promise<UserPreset[]>((resolve, reject) => {
+      const tx = db.transaction(USER_PRESETS_STORE, 'readonly')
+      const store = tx.objectStore(USER_PRESETS_STORE)
+      const req = store.getAll()
+      req.onsuccess = () => {
+        const rows = (req.result as UserPreset[]) || []
+        resolve(rows.filter((p) => p && typeof p.id === 'string').sort((a, b) => a.createdAt - b.createdAt))
+      }
+      req.onerror = () => reject(req.error)
+    })
+  } catch (err) {
+    console.warn('IDB user-presets read failed', err)
+    return []
+  }
+}
+
+async function idbPutUserPreset(preset: UserPreset): Promise<void> {
+  try {
+    const db = await openSessionsDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(USER_PRESETS_STORE, 'readwrite')
+      tx.objectStore(USER_PRESETS_STORE).put(preset)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn('IDB user-presets write failed', err)
+  }
+}
+
+async function idbDeleteUserPreset(id: string): Promise<void> {
+  try {
+    const db = await openSessionsDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(USER_PRESETS_STORE, 'readwrite')
+      tx.objectStore(USER_PRESETS_STORE).delete(id)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn('IDB user-presets delete failed', err)
   }
 }
 
@@ -1916,6 +1979,7 @@ type SettingsSheetProps = {
   activeLabel: string
   activeSettings: ModeSettings
   activePresets: PresetMetadata[]
+  activeUserPresets: UserPreset[]
   defaultRefAudio: RefAudioState | null
   lengthPenalty: number
   maxNewTokens: number
@@ -1923,15 +1987,20 @@ type SettingsSheetProps = {
   turnStreamingEnabled: boolean
   onClose: () => void
   onSelectPreset: (presetId: string) => void
+  onSelectUserPreset: (presetId: string) => void
+  onSaveAsPreset: () => void
+  onDeleteUserPreset: (presetId: string) => void
   onPromptChange: (value: string) => void
   onLengthPenaltyChange: (value: number) => void
   onMaxTokensChange: (value: number) => void
   onTurnTtsEnabledChange: (value: boolean) => void
   onTurnStreamingEnabledChange: (value: boolean) => void
+  refAudioRecording: boolean
   onUseDefaultRefAudio: () => void
   onClearRefAudio: () => void
   onUploadRefAudio: () => void
   onPlayRefAudio: () => void
+  onToggleRecordRefAudio: () => void
 }
 
 function SettingsSheet({
@@ -1940,6 +2009,7 @@ function SettingsSheet({
   activeLabel,
   activeSettings,
   activePresets,
+  activeUserPresets,
   defaultRefAudio,
   lengthPenalty,
   maxNewTokens,
@@ -1947,15 +2017,20 @@ function SettingsSheet({
   turnStreamingEnabled,
   onClose,
   onSelectPreset,
+  onSelectUserPreset,
+  onSaveAsPreset,
+  onDeleteUserPreset,
   onPromptChange,
   onLengthPenaltyChange,
   onMaxTokensChange,
   onTurnTtsEnabledChange,
   onTurnStreamingEnabledChange,
+  refAudioRecording,
   onUseDefaultRefAudio,
   onClearRefAudio,
   onUploadRefAudio,
   onPlayRefAudio,
+  onToggleRecordRefAudio,
 }: SettingsSheetProps) {
   if (!open) {
     return null
@@ -1982,28 +2057,59 @@ function SettingsSheet({
         <div className="settings-section">
           <div className="settings-section-title">Preset</div>
           <div className="preset-chip-row">
-            {activePresets.length ? (
-              activePresets.map((preset) => (
-                <button
-                  key={preset.id}
-                  className={[
-                    'preset-chip',
-                    activeSettings.presetId === preset.id ? 'active' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  type="button"
-                  onClick={() => {
-                    onSelectPreset(preset.id)
-                  }}
-                >
-                  {preset.name}
-                </button>
-              ))
-            ) : (
-              <div className="settings-empty-copy">当前模式暂无可用 preset。</div>
-            )}
+            {activePresets.map((preset) => (
+              <button
+                key={preset.id}
+                className={[
+                  'preset-chip',
+                  activeSettings.presetId === preset.id ? 'active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                type="button"
+                onClick={() => {
+                  onSelectPreset(preset.id)
+                }}
+              >
+                {preset.name}
+              </button>
+            ))}
+            {activeUserPresets.map((preset) => (
+              <button
+                key={`u-${preset.id}`}
+                className={[
+                  'preset-chip user-preset-chip',
+                  activeSettings.presetId === `user:${preset.id}` ? 'active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                type="button"
+                onClick={() => {
+                  onSelectUserPreset(preset.id)
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  if (window.confirm(`删除预设"${preset.name}"？`)) {
+                    onDeleteUserPreset(preset.id)
+                  }
+                }}
+              >
+                {preset.name}
+              </button>
+            ))}
+            <button
+              className="save-preset-chip"
+              type="button"
+              onClick={onSaveAsPreset}
+            >
+              + 保存当前
+            </button>
           </div>
+          {activePresets.length === 0 && activeUserPresets.length === 0 && (
+            <div className="settings-empty-copy" style={{ marginTop: 4 }}>
+              暂无预设，点击"+ 保存当前"创建。
+            </div>
+          )}
         </div>
 
         <div className="settings-section">
@@ -2033,6 +2139,20 @@ function SettingsSheet({
                 onClick={onUploadRefAudio}
               >
                 上传
+              </button>
+              <button
+                className={`secondary-btn compact${refAudioRecording ? ' ref-audio-recording-active' : ''}`}
+                type="button"
+                onClick={onToggleRecordRefAudio}
+              >
+                {refAudioRecording ? (
+                  <>
+                    <span className="rec-dot" />
+                    停止录制
+                  </>
+                ) : (
+                  '录制'
+                )}
               </button>
               <button
                 className="secondary-btn compact"
@@ -2367,7 +2487,18 @@ function App() {
     audio_duplex: [],
     omni: [],
   })
+  const [userPresets, setUserPresets] = useState<UserPreset[]>([])
   const [defaultRefAudio, setDefaultRefAudio] = useState<RefAudioState | null>(null)
+
+  // Ref-audio recording state (separate from press-to-talk mic)
+  const [refAudioRecording, setRefAudioRecording] = useState(false)
+  const refRecStreamRef = useRef<MediaStream | null>(null)
+  const refRecCtxRef = useRef<AudioContext | null>(null)
+  const refRecWorkletRef = useRef<AudioWorkletNode | null>(null)
+  const refRecProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const refRecChunksRef = useRef<Float32Array[]>([])
+  const refRecStartRef = useRef<number>(0)
+  const refRecSampleRateRef = useRef<number>(16000)
   const [settings, setSettings] = useState<SettingsState>({
     ...DEFAULT_SETTINGS,
     turnbased: buildModeSettings(DEFAULT_SETTINGS.turnbased, {}),
@@ -2732,6 +2863,12 @@ function App() {
 
         setPresetsByMode(hydratedPresets)
         setDefaultRefAudio(nextDefaultRefAudio)
+        try {
+          const savedUserPresets = await idbGetAllUserPresets()
+          if (!cancelled) setUserPresets(savedUserPresets)
+        } catch {
+          // non-fatal
+        }
         setSettings((previous) => {
           const nextSettings: SettingsState = {
             ...previous,
@@ -2920,6 +3057,49 @@ function App() {
     }
   }
 
+  // ─── User Preset CRUD ────────────────────────────────────────────────
+
+  function handleSaveCurrentAsPreset(mode: PresetMode) {
+    const modeSettings = settings[mode]
+    const name = window.prompt('为这个预设起个名字', '')?.trim()
+    if (!name) return
+    const now = Date.now()
+    const preset: UserPreset = {
+      id: createId('upreset'),
+      name,
+      mode,
+      systemPrompt: modeSettings.systemPrompt,
+      refAudio: cloneRefAudio(modeSettings.refAudio),
+      createdAt: now,
+      updatedAt: now,
+    }
+    setUserPresets((prev) => [...prev, preset])
+    void idbPutUserPreset(preset)
+    updateModeSettings(mode, { presetId: `user:${preset.id}` })
+    reportSettingsMessage(`已保存预设"${name}"`)
+  }
+
+  function handleSelectUserPreset(mode: PresetMode, presetId: string) {
+    const preset = userPresets.find((p) => p.id === presetId)
+    if (!preset) return
+    updateModeSettings(mode, {
+      presetId: `user:${preset.id}`,
+      systemPrompt: preset.systemPrompt,
+      refAudio: preset.refAudio.base64 ? cloneRefAudio(preset.refAudio) : cloneRefAudio(EMPTY_REF_AUDIO),
+    })
+  }
+
+  function handleDeleteUserPreset(presetId: string) {
+    setUserPresets((prev) => prev.filter((p) => p.id !== presetId))
+    void idbDeleteUserPreset(presetId)
+    // If the deleted preset was active, clear the selection.
+    const activePresetMode = getPresetModeForScreen(screen)
+    const active = settings[activePresetMode]
+    if (active.presetId === `user:${presetId}`) {
+      updateModeSettings(activePresetMode, { presetId: null })
+    }
+  }
+
   function handleChangePrompt(mode: PresetMode, value: string) {
     updateModeSettings(mode, {
       presetId: null,
@@ -2988,6 +3168,133 @@ function App() {
     } finally {
       event.target.value = ''
     }
+  }
+
+  async function handleToggleRecordRefAudio() {
+    if (refAudioRecording) {
+      // ── Stop recording ──
+      setRefAudioRecording(false)
+      const chunks = refRecChunksRef.current
+      const sampleRate = refRecSampleRateRef.current
+      const durationMs = performance.now() - refRecStartRef.current
+
+      // Tear down
+      try { refRecWorkletRef.current?.port.postMessage({ type: 'capture', value: false }) } catch { /* */ }
+      try { refRecWorkletRef.current?.disconnect() } catch { /* */ }
+      try { refRecProcessorRef.current?.disconnect() } catch { /* */ }
+      refRecWorkletRef.current = null
+      refRecProcessorRef.current = null
+      const ctx = refRecCtxRef.current
+      if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {})
+      refRecCtxRef.current = null
+      refRecStreamRef.current?.getTracks().forEach((t) => t.stop())
+      refRecStreamRef.current = null
+
+      if (chunks.length === 0) {
+        reportSettingsMessage('录制时间太短，请重试。')
+        return
+      }
+
+      const merged = concatFloat32(chunks)
+      if (merged.length === 0) {
+        reportSettingsMessage('录制失败：没有采集到音频。')
+        return
+      }
+
+      const resampled = resampleLinear(merged, sampleRate, 16000)
+      const base64 = float32ToBase64(resampled)
+      const durationSec = durationMs / 1000
+
+      updateModeSettings(activePresetMode, {
+        presetId: null,
+        refAudio: {
+          source: 'upload',
+          name: `录制 ${new Date().toLocaleTimeString()}`,
+          duration: Math.round(durationSec * 10) / 10,
+          base64,
+        },
+      })
+      reportSettingsMessage(`已录制 ${durationSec.toFixed(1)}s 参考音频`)
+      return
+    }
+
+    // ── Start recording ──
+    if (!navigator.mediaDevices?.getUserMedia) {
+      reportSettingsMessage('当前环境不支持麦克风。')
+      return
+    }
+    const AudioContextCtor = getAudioContextCtor()
+    if (!AudioContextCtor) {
+      reportSettingsMessage('当前浏览器不支持录音。')
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const ctx = new AudioContextCtor()
+      if (ctx.state === 'suspended') {
+        try { await ctx.resume() } catch { /* */ }
+      }
+      const source = ctx.createMediaStreamSource(stream)
+      refRecChunksRef.current = []
+      refRecSampleRateRef.current = ctx.sampleRate
+
+      const useWorklet =
+        typeof AudioWorkletNode !== 'undefined' &&
+        typeof ctx.audioWorklet?.addModule === 'function'
+
+      if (useWorklet) {
+        try {
+          await ctx.audioWorklet.addModule(PCM_WORKLET_URL)
+        } catch {
+          // fall through to ScriptProcessor
+          setupRefRecScriptProcessor(stream, ctx, source)
+          return
+        }
+        const node = new AudioWorkletNode(ctx, 'pcm-capture-turnbased')
+        node.port.onmessage = (event: MessageEvent) => {
+          const data = event.data as { type: string; samples: Float32Array } | undefined
+          if (data?.type === 'pcm') refRecChunksRef.current.push(data.samples)
+        }
+        source.connect(node)
+        node.port.postMessage({ type: 'capture', value: true })
+        refRecWorkletRef.current = node
+      } else {
+        setupRefRecScriptProcessor(stream, ctx, source)
+        return
+      }
+
+      refRecStreamRef.current = stream
+      refRecCtxRef.current = ctx
+      refRecStartRef.current = performance.now()
+      setRefAudioRecording(true)
+    } catch (err) {
+      reportSettingsMessage(`无法开始录制：${getErrorMessage(err)}`)
+    }
+  }
+
+  function setupRefRecScriptProcessor(
+    stream: MediaStream,
+    ctx: AudioContext,
+    source: MediaStreamAudioSourceNode,
+  ) {
+    const processor = ctx.createScriptProcessor(4096, 1, 1)
+    const muteGain = ctx.createGain()
+    muteGain.gain.value = 0
+    processor.onaudioprocess = (event: AudioProcessingEvent) => {
+      const input = event.inputBuffer.getChannelData(0)
+      const copy = new Float32Array(input.length)
+      copy.set(input)
+      refRecChunksRef.current.push(copy)
+    }
+    source.connect(processor)
+    processor.connect(muteGain)
+    muteGain.connect(ctx.destination)
+    refRecProcessorRef.current = processor
+    refRecStreamRef.current = stream
+    refRecCtxRef.current = ctx
+    refRecStartRef.current = performance.now()
+    setRefAudioRecording(true)
   }
 
   function buildTurnSystemMessage(): string | BackendContentItem[] | null {
@@ -4398,6 +4705,7 @@ function App() {
         activeLabel={activeModeLabel}
         activeSettings={activeModeSettings}
         activePresets={activeModePresets}
+        activeUserPresets={userPresets.filter((p) => p.mode === activePresetMode)}
         defaultRefAudio={defaultRefAudio}
         lengthPenalty={activeLengthPenalty}
         maxNewTokens={settings.maxNewTokens}
@@ -4409,6 +4717,13 @@ function App() {
         onSelectPreset={(presetId) => {
           void handleSelectPreset(activePresetMode, presetId)
         }}
+        onSelectUserPreset={(presetId) => {
+          handleSelectUserPreset(activePresetMode, presetId)
+        }}
+        onSaveAsPreset={() => {
+          handleSaveCurrentAsPreset(activePresetMode)
+        }}
+        onDeleteUserPreset={handleDeleteUserPreset}
         onPromptChange={(value) => {
           handleChangePrompt(activePresetMode, value)
         }}
@@ -4439,10 +4754,12 @@ function App() {
         onClearRefAudio={() => {
           handleClearRefAudio(activePresetMode)
         }}
+        refAudioRecording={refAudioRecording}
         onUploadRefAudio={() => {
           refAudioInputRef.current?.click()
         }}
         onPlayRefAudio={handlePlayActiveRefAudio}
+        onToggleRecordRefAudio={handleToggleRecordRefAudio}
       />
       {screen === 'turn' ? (
         <div className="turn-screen">

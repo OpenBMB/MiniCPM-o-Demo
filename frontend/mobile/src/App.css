@@ -1327,6 +1327,14 @@
   color: #1d4ed8;
 }
 
+.preset-chip.user-preset-chip {
+  border-style: dashed;
+}
+
+.preset-chip.user-preset-chip.active {
+  border-style: solid;
+}
+
 .settings-empty-copy {
   color: #94a3b8;
   font-size: 12px;
@@ -1359,10 +1367,73 @@
   margin-top: 12px;
 }
 
+.secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d0d5dd;
+  border-radius: 14px;
+  background: #f9fafb;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.secondary-btn:active {
+  background: #e5e7eb;
+}
+
+.secondary-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .secondary-btn.compact {
   min-height: 36px;
-  padding: 0 12px;
-  border-radius: 14px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.save-preset-chip {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px dashed #93c5fd;
+  background: #f0f7ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.save-preset-chip:active {
+  background: #dbeafe;
+}
+
+/* Ref-audio recording button */
+.ref-audio-recording-active {
+  border-color: #f87171 !important;
+  background: #fef2f2 !important;
+  color: #dc2626 !important;
+}
+
+.rec-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  margin-right: 5px;
+  vertical-align: middle;
+  animation: rec-blink 1s ease-in-out infinite;
+}
+
+@keyframes rec-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .settings-textarea {
