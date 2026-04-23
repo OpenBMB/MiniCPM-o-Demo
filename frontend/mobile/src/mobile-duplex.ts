@@ -35,6 +35,7 @@ export type DuplexResultLike = {
 
 export type DuplexSessionLike = {
   running: boolean
+  forceListenActive: boolean
   recordingSessionId?: string
   onSystemLog: (text: string) => void
   onQueueUpdate: (data: DuplexQueueUpdate | null) => void
@@ -44,6 +45,7 @@ export type DuplexSessionLike = {
   onMetrics: (data: DuplexMetrics) => void
   onRunningChange: (running: boolean) => void
   onPauseStateChange: (state: 'active' | 'pausing' | 'paused') => void
+  onForceListenChange: (active: boolean) => void
   onListenResult: (result: DuplexResultLike) => void
   onSpeakStart: (text: string) => unknown
   onSpeakUpdate: (handle: unknown, text: string) => void
@@ -54,6 +56,7 @@ export type DuplexSessionLike = {
     startMediaFn?: () => Promise<void>,
   ) => Promise<void>
   pauseToggle: () => void
+  toggleForceListen: () => void
   stop: () => void
   cleanup: () => void
   sendChunk: (msg: Record<string, unknown>) => void
@@ -126,6 +129,8 @@ export class MobileLiveMediaProvider {
 
   private sinkGain: GainNode | null = null
 
+  private analyserNode: AnalyserNode | null = null
+
   private usingFrontCamera = true
 
   private micEnabled = true
@@ -152,6 +157,10 @@ export class MobileLiveMediaProvider {
 
   setMicEnabled(enabled: boolean) {
     this.micEnabled = enabled
+  }
+
+  getAnalyser(): AnalyserNode | null {
+    return this.analyserNode
   }
 
   async setCameraEnabled(enabled: boolean) {
@@ -234,7 +243,11 @@ export class MobileLiveMediaProvider {
     )
     this.sinkGain = this.audioContext.createGain()
     this.sinkGain.gain.value = 0
+    this.analyserNode = this.audioContext.createAnalyser()
+    this.analyserNode.fftSize = 1024
+    this.analyserNode.smoothingTimeConstant = 0.6
 
+    this.audioSource.connect(this.analyserNode)
     this.audioSource.connect(this.captureNode)
     this.captureNode.connect(this.sinkGain)
     this.sinkGain.connect(this.audioContext.destination)
@@ -277,6 +290,15 @@ export class MobileLiveMediaProvider {
     if (this.sinkGain) {
       this.sinkGain.disconnect()
       this.sinkGain = null
+    }
+
+    if (this.analyserNode) {
+      try {
+        this.analyserNode.disconnect()
+      } catch {
+        // analyser may already be disconnected if context closed first
+      }
+      this.analyserNode = null
     }
 
     if (this.audioContext) {
