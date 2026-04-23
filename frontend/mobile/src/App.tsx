@@ -2294,6 +2294,9 @@ function App() {
   const textInputAutoFocusRef = useRef(false)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioCaptureCtxRef = useRef<AudioContext | null>(null)
+  const audioCaptureMuteGainRef = useRef<GainNode | null>(null)
+  const isCapturingRef = useRef(false)
+  const prewarmInflightRef = useRef<Promise<boolean> | null>(null)
   const audioCaptureSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const audioCaptureProcessorRef = useRef<ScriptProcessorNode | null>(null)
   const audioCaptureChunksRef = useRef<Float32Array[]>([])
@@ -2670,21 +2673,7 @@ function App() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
-      try {
-        audioCaptureProcessorRef.current?.disconnect()
-      } catch {
-        // ignore
-      }
-      try {
-        audioCaptureSourceRef.current?.disconnect()
-      } catch {
-        // ignore
-      }
-      const ctx = audioCaptureCtxRef.current
-      if (ctx && ctx.state !== 'closed') {
-        void ctx.close().catch(() => {})
-      }
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+      coldDownMic()
 
       for (const entry of messagesRef.current) {
         if (entry.role === 'user' && entry.kind === 'voice') {
@@ -2955,7 +2944,8 @@ function App() {
     playPcmBase64(activeModeSettings.refAudio.base64, 16000)
   }
 
-  function resetRecorderResources() {
+  function coldDownMic() {
+    isCapturingRef.current = false
     try {
       audioCaptureProcessorRef.current?.disconnect()
     } catch {
@@ -2966,8 +2956,14 @@ function App() {
     } catch {
       // ignore
     }
+    try {
+      audioCaptureMuteGainRef.current?.disconnect()
+    } catch {
+      // ignore
+    }
     audioCaptureProcessorRef.current = null
     audioCaptureSourceRef.current = null
+    audioCaptureMuteGainRef.current = null
     const ctx = audioCaptureCtxRef.current
     if (ctx && ctx.state !== 'closed') {
       void ctx.close().catch(() => {})
@@ -2977,6 +2973,69 @@ function App() {
     recordingStartRef.current = 0
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
     mediaStreamRef.current = null
+  }
+
+  function resetRecorderResources() {
+    coldDownMic()
+  }
+
+  async function prewarmMic(): Promise<boolean> {
+    // Already warm and ready?
+    if (audioCaptureCtxRef.current && mediaStreamRef.current) {
+      return true
+    }
+    if (prewarmInflightRef.current) {
+      return prewarmInflightRef.current
+    }
+    if (!navigator.mediaDevices?.getUserMedia) return false
+    const AudioContextCtor = getAudioContextCtor()
+    if (!AudioContextCtor) return false
+
+    const job = (async (): Promise<boolean> => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        const ctx = new AudioContextCtor()
+        if (ctx.state === 'suspended') {
+          try {
+            await ctx.resume()
+          } catch {
+            // ignore
+          }
+        }
+        const source = ctx.createMediaStreamSource(stream)
+        const processor = ctx.createScriptProcessor(4096, 1, 1)
+        const muteGain = ctx.createGain()
+        muteGain.gain.value = 0
+
+        processor.onaudioprocess = (event: AudioProcessingEvent) => {
+          if (!isCapturingRef.current) return
+          const input = event.inputBuffer.getChannelData(0)
+          const copy = new Float32Array(input.length)
+          copy.set(input)
+          audioCaptureChunksRef.current.push(copy)
+        }
+
+        source.connect(processor)
+        processor.connect(muteGain)
+        muteGain.connect(ctx.destination)
+
+        mediaStreamRef.current = stream
+        audioCaptureCtxRef.current = ctx
+        audioCaptureSourceRef.current = source
+        audioCaptureProcessorRef.current = processor
+        audioCaptureMuteGainRef.current = muteGain
+        audioCaptureSampleRateRef.current = ctx.sampleRate
+        return true
+      } catch (err) {
+        console.warn('mic prewarm failed', err)
+        return false
+      } finally {
+        prewarmInflightRef.current = null
+      }
+    })()
+
+    prewarmInflightRef.current = job
+    return job
   }
 
   function startNewSession() {
@@ -3711,9 +3770,7 @@ function App() {
       setRecordError('当前浏览器不支持麦克风录音。')
       return
     }
-
-    const AudioContextCtor = getAudioContextCtor()
-    if (!AudioContextCtor) {
+    if (!getAudioContextCtor()) {
       setRecordError('当前浏览器不支持 AudioContext，无法录音。')
       return
     }
@@ -3721,51 +3778,37 @@ function App() {
     setRecordError(null)
     setIsPreparingRecording(true)
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const audioContext = new AudioContextCtor()
-      // Some browsers (iOS Safari) start the context suspended.
-      if (audioContext.state === 'suspended') {
-        try {
-          await audioContext.resume()
-        } catch {
-          // ignore
-        }
-      }
-      const source = audioContext.createMediaStreamSource(stream)
-      const processor = audioContext.createScriptProcessor(4096, 1, 1)
-
-      mediaStreamRef.current = stream
-      audioCaptureCtxRef.current = audioContext
-      audioCaptureSourceRef.current = source
-      audioCaptureProcessorRef.current = processor
-      audioCaptureChunksRef.current = []
-      audioCaptureSampleRateRef.current = audioContext.sampleRate
-      recordingActionRef.current = 'send'
-
-      processor.onaudioprocess = (event: AudioProcessingEvent) => {
-        const input = event.inputBuffer.getChannelData(0)
-        // Copy because the underlying buffer is reused by the audio thread.
-        const copy = new Float32Array(input.length)
-        copy.set(input)
-        audioCaptureChunksRef.current.push(copy)
-      }
-
-      source.connect(processor)
-      // ScriptProcessor will not fire onaudioprocess unless connected
-      // somewhere; route to destination at zero gain to keep it silent.
-      const muteGain = audioContext.createGain()
-      muteGain.gain.value = 0
-      processor.connect(muteGain)
-      muteGain.connect(audioContext.destination)
-
-      recordingStartRef.current = performance.now()
-      setIsRecording(true)
-    } catch (error) {
-      setRecordError(`无法开始录音：${getErrorMessage(error)}`)
-      resetRecorderResources()
-      setIsPreparingRecording(false)
+    // The mic was (most likely) prewarmed in handleTalkPointerDown while the
+    // 320ms hold-arm timer was running. If prewarm is still in flight (slow
+    // device / first-time permission prompt), wait for it. If prewarm hasn't
+    // been kicked off at all (e.g. startRecording called from somewhere
+    // other than the press-to-talk path), kick it off here as a fallback.
+    let warm = audioCaptureCtxRef.current !== null && mediaStreamRef.current !== null
+    if (!warm) {
+      warm = await prewarmMic()
     }
+    if (!warm || !audioCaptureCtxRef.current || !mediaStreamRef.current) {
+      setRecordError('无法开始录音：麦克风初始化失败。')
+      coldDownMic()
+      setIsPreparingRecording(false)
+      return
+    }
+
+    // Some browsers re-suspend the context between gestures; nudge it.
+    const ctx = audioCaptureCtxRef.current
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+      } catch {
+        // ignore
+      }
+    }
+
+    audioCaptureChunksRef.current = []
+    recordingActionRef.current = 'send'
+    recordingStartRef.current = performance.now()
+    isCapturingRef.current = true
+    setIsRecording(true)
   }
 
   async function finalizeRecording() {
@@ -3826,12 +3869,14 @@ function App() {
   function stopRecording(action: 'send' | 'cancel') {
     recordingActionRef.current = action
 
-    const wasCapturing = audioCaptureCtxRef.current !== null
+    // With prewarm, audioCaptureCtxRef can be set even before recording starts.
+    // The real "we are collecting audio" flag is isCapturingRef.
+    const wasCapturing = isCapturingRef.current
 
     if (wasCapturing) {
       void finalizeRecording()
     } else {
-      resetRecorderResources()
+      coldDownMic()
       setIsPreparingRecording(false)
     }
 
@@ -3874,6 +3919,10 @@ function App() {
     } catch {
       /* ignore */
     }
+    // Kick off mic prewarm in parallel with the hold-arm timer so that by
+    // the time the timer fires (320ms later) the MediaStream and AudioContext
+    // are usually already up and we can flip into "recording" instantly.
+    void prewarmMic()
     clearHoldArmTimer()
     holdArmTimerRef.current = window.setTimeout(() => {
       holdArmTimerRef.current = null
@@ -3914,6 +3963,19 @@ function App() {
     if (wasArming) {
       recordingPointerStartYRef.current = null
       recordingPointerIdRef.current = null
+      // We may have started prewarming the mic; release it so the browser
+      // recording indicator turns off and we don't keep a live stream open
+      // for what turned out to be a tap. We schedule a microtask later so
+      // that any in-flight prewarm promise can resolve and write into the
+      // refs before we tear it down.
+      const releaseWarm = () => {
+        if (!isCapturingRef.current) coldDownMic()
+      }
+      if (prewarmInflightRef.current) {
+        void prewarmInflightRef.current.finally(releaseWarm)
+      } else {
+        releaseWarm()
+      }
       if (wasGeneratingAtDown) {
         stopCurrentReply()
       } else {
@@ -3925,6 +3987,7 @@ function App() {
     if (!isRecording && !isPreparingRecording) {
       recordingPointerStartYRef.current = null
       recordingPointerIdRef.current = null
+      coldDownMic()
       return
     }
     stopRecording(recordingWillCancelRef.current ? 'cancel' : 'send')
@@ -3939,6 +4002,14 @@ function App() {
     } else {
       recordingPointerStartYRef.current = null
       recordingPointerIdRef.current = null
+      const releaseWarm = () => {
+        if (!isCapturingRef.current) coldDownMic()
+      }
+      if (prewarmInflightRef.current) {
+        void prewarmInflightRef.current.finally(releaseWarm)
+      } else {
+        releaseWarm()
+      }
     }
   }
 
