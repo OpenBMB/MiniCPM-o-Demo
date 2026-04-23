@@ -51,6 +51,7 @@ export type UseDuplexSessionApi = {
   statusText: string
   mode: DuplexMode
   micEnabled: boolean
+  mirrorEnabled: boolean
   textPanelOpen: boolean
   pauseState: DuplexPauseState
   forceListen: boolean
@@ -59,13 +60,20 @@ export type UseDuplexSessionApi = {
   videoScreenOpen: boolean
   hasSession: boolean
   openScreen: (mode: DuplexMode) => void
+  /** Half-duplex audio screen: re-issue start() for the current mode. */
   startCurrent: () => void
+  /** Video duplex (legacy React path): begin the WebSocket session. */
+  startSession: () => void
+  /** Video duplex (legacy React path): stop session but keep preview alive. */
+  stopSession: () => void
+  /** Tear down session + media and navigate back to the turn screen. */
   stop: (options?: { preserveScreen?: boolean }) => void
   toggleMic: () => void
   togglePause: () => void
   toggleForceListen: () => void
   toggleTextPanel: () => void
   flipCamera: () => void
+  flipMirror: () => void
   appendEntry: (role: DuplexEntry['role'], text: string) => string
   getAnalyser: () => AnalyserNode | null
 }
@@ -80,6 +88,7 @@ export function useDuplexSession(
   const [statusText, setStatusText] = useState('等待进入全双工')
   const [mode, setMode] = useState<DuplexMode>('audio')
   const [micEnabled, setMicEnabled] = useState(true)
+  const [mirrorEnabled, setMirrorEnabled] = useState(false)
   const [textPanelOpen, setTextPanelOpen] = useState(true)
   const [pauseState, setPauseState] = useState<DuplexPauseState>('active')
   const [forceListen, setForceListen] = useState(false)
@@ -149,13 +158,81 @@ export function useDuplexSession(
     }
   }
 
+  async function attachPreview(nextMode: DuplexMode) {
+    if (mediaRef.current || !videoRef.current || !canvasRef.current) {
+      return
+    }
+
+    try {
+      const media = new MobileLiveMediaProvider({
+        videoEl: videoRef.current,
+        canvasEl: canvasRef.current,
+      })
+
+      mediaRef.current = media
+      media.setMicEnabled(true)
+
+      if (nextMode === 'video') {
+        await media.setCameraEnabled(true)
+      }
+    } catch (error) {
+      mediaRef.current = null
+      appendEntry('system', `相机预览失败：${getErrorMessage(error)}`)
+    }
+  }
+
   function openScreen(nextMode: DuplexMode) {
     setMode(nextMode)
+    setEntries([])
+    setMicEnabled(true)
+    setPauseState('active')
+    setHasSession(false)
     setScreen(getDuplexScreenName(nextMode))
 
+    if (nextMode === 'video') {
+      // Desktop omni opens the video panel into a preview state and waits for
+      // the user to press Start before opening the WebSocket session.
+      setStatus('idle')
+      setStatusText('点击 Start 进入全双工')
+      requestAnimationFrame(() => {
+        void attachPreview('video')
+      })
+      return
+    }
+
+    // Audio mode keeps the existing auto-start behaviour because there is no
+    // explicit Start button on the audio duplex screen.
     requestAnimationFrame(() => {
       void start(nextMode)
     })
+  }
+
+  function startSession() {
+    if (sessionRef.current || startInFlightRef.current) {
+      return
+    }
+
+    void start(mode)
+  }
+
+  function stopSession() {
+    if (!sessionRef.current) {
+      return
+    }
+
+    sessionRef.current.stop()
+
+    // The session's onCleanup fires synchronously and tears down the media
+    // provider. Re-attach a camera preview so the user can press Start again.
+    if (mode === 'video') {
+      requestAnimationFrame(() => {
+        void attachPreview('video')
+      })
+    }
+  }
+
+  function flipMirror() {
+    setMirrorEnabled((previous) => !previous)
   }
 
   async function start(nextMode: DuplexMode) {
@@ -402,6 +479,7 @@ export function useDuplexSession(
     statusText,
     mode,
     micEnabled,
+    mirrorEnabled,
     textPanelOpen,
     pauseState,
     forceListen,
@@ -411,12 +489,15 @@ export function useDuplexSession(
     hasSession,
     openScreen,
     startCurrent,
+    startSession,
+    stopSession,
     stop,
     toggleMic,
     togglePause,
     toggleForceListen,
     toggleTextPanel,
     flipCamera,
+    flipMirror,
     appendEntry,
     getAnalyser,
   }

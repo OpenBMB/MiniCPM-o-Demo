@@ -1300,6 +1300,23 @@ async def audio_duplex():
     return HTMLResponse("<h1>Audio Duplex</h1><p>Page not found</p>")
 
 
+@app.get("/mobile-omni", include_in_schema=False)
+async def mobile_omni_redirect():
+    """移动版 Omni 入口重定向到带尾斜杠版本"""
+    return RedirectResponse(url="/mobile-omni/", status_code=302)
+
+
+@app.get("/mobile-omni/", response_class=HTMLResponse)
+async def mobile_omni():
+    """移动版全双工页：复用桌面 omni-app.js，外壳为 static/mobile-omni/"""
+    if not app_registry.is_enabled("omni"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "mobile-omni", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Mobile Omni</h1><p>Page not found</p>", status_code=404)
+
+
 @app.get("/mobile", include_in_schema=False)
 async def mobile_redirect():
     """移动端入口重定向到带尾斜杠版本，确保相对资源路径正确解析"""

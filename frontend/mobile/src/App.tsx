@@ -2359,9 +2359,6 @@ function App() {
     presetsByMode.audio_duplex.find(
       (preset) => preset.id === settings.audio_duplex.presetId,
     )?.name ?? '自定义'
-  const videoPresetName =
-    presetsByMode.omni.find((preset) => preset.id === settings.omni.presetId)?.name ??
-    '自定义'
 
   useEffect(() => {
     messagesRef.current = messages
@@ -4116,7 +4113,19 @@ function App() {
               <button
                 className="topbar-icon-btn"
                 type="button"
-                onClick={() => duplex.openScreen('video')}
+                onClick={() => {
+                  // 视频全双工直接复用桌面 omni 页面（static/mobile-omni/），
+                  // 不再使用 React 端 VideoDuplexScreen
+                  try {
+                    const payload = {
+                      systemPrompt: settings.omni.systemPrompt,
+                    }
+                    sessionStorage.setItem('mobileOmni:settings', JSON.stringify(payload))
+                  } catch {
+                    // sessionStorage 不可用时静默失败，omni 页面会用自身默认值
+                  }
+                  window.location.assign('/mobile-omni/')
+                }}
                 disabled={isGenerating || isRecording || isPreparingRecording}
                 aria-label="进入视频双工"
               >
@@ -4447,13 +4456,6 @@ function App() {
         <VideoDuplexScreen
           duplex={duplex}
           icons={duplexIcons}
-          settingsSummary={{
-            Component: SettingsSummary,
-            presetName: videoPresetName,
-            refAudio: settings.omni.refAudio,
-            systemPrompt: settings.omni.systemPrompt,
-            lengthPenalty: settings.videoDuplexLengthPenalty,
-          }}
           onOpenSettings={() => {
             setSettingsOpen(true)
           }}
