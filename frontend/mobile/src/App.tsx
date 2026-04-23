@@ -2297,6 +2297,17 @@ function App() {
   const streamingPlayerRef = useRef<StreamingPcmPlayer | null>(null)
   const streamingStopRef = useRef<(() => void) | null>(null)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
+  const threadWrapRef = useRef<HTMLDivElement | null>(null)
+
+  // Scroll the thread to the bottom WITHOUT bubbling to the document.
+  // We can't use threadEndRef.scrollIntoView because that walks up
+  // and scrolls every scrollable ancestor, which on this page would
+  // push the composer (and the + icon) off the bottom of the viewport.
+  function scrollThreadToBottom(behavior: ScrollBehavior = 'smooth') {
+    const wrap = threadWrapRef.current
+    if (!wrap) return
+    wrap.scrollTo({ top: wrap.scrollHeight, behavior })
+  }
   const textInputRef = useRef<HTMLTextAreaElement | null>(null)
   const textInputAutoFocusRef = useRef(false)
   const mediaStreamRef = useRef<MediaStream | null>(null)
@@ -2435,18 +2446,21 @@ function App() {
   }, [messages, activeSessionId, sessionsHydrated])
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    scrollThreadToBottom('smooth')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadEntries.length])
 
   useEffect(() => {
     if (!attachMenuOpen) return
     // Mimic Doubao: opening the + drawer pushes the thread to the bottom
     // so the drawer feels like it's "popping up" rather than overlaying
-    // somewhere mid-screen.
+    // somewhere mid-screen. We scroll the thread container only — never
+    // the document — so the composer (and the + icon) stay anchored.
     const id = window.requestAnimationFrame(() => {
-      threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+      scrollThreadToBottom('smooth')
     })
     return () => window.cancelAnimationFrame(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attachMenuOpen])
 
   useEffect(() => {
@@ -4193,7 +4207,7 @@ function App() {
             </div>
           </header>
 
-          <div className="thread-wrap">
+          <div className="thread-wrap" ref={threadWrapRef}>
             <div className="thread">
               {threadEntries.map((entry, index) => {
                 const isLastAssistant =

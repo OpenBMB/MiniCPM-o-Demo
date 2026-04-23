@@ -146,7 +146,13 @@
 .turn-screen {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  /* Use a fixed viewport height so the composer stays anchored at the
+     bottom even when content (e.g. the attach drawer) makes it taller.
+     With min-height the page would overflow and the pill-bar / + icon
+     could get pushed off-screen by an auto-scroll. */
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
   background: #fff;
 }
 
