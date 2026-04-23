@@ -825,6 +825,35 @@ function PlayIcon({ className }: IconProps) {
   )
 }
 
+function SpeakerIcon({ className }: IconProps) {
+  return (
+    <svg aria-hidden="true" className={className} fill="none" viewBox="0 0 24 24">
+      <path
+        d="M11 5 6.5 9H3.5C2.67 9 2 9.67 2 10.5v3c0 .83.67 1.5 1.5 1.5h3L11 19V5Z"
+        fill="currentColor"
+      />
+      <path
+        d="M15.54 8.46a5 5 0 0 1 0 7.07"
+        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
+      />
+      <path
+        d="M18.36 5.64a9 9 0 0 1 0 12.73"
+        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function PlayingBarsIcon({ className }: IconProps) {
+  return (
+    <svg aria-hidden="true" className={[className, 'speaker-wave-animate'].filter(Boolean).join(' ')} fill="none" viewBox="0 0 24 24">
+      <rect className="sw-bar sw-bar-1" x="4"  y="6" width="3" height="12" rx="1.5" fill="currentColor" />
+      <rect className="sw-bar sw-bar-2" x="10.5" y="3" width="3" height="18" rx="1.5" fill="currentColor" />
+      <rect className="sw-bar sw-bar-3" x="17" y="6" width="3" height="12" rx="1.5" fill="currentColor" />
+    </svg>
+  )
+}
+
 function VideoCallIcon({ className }: IconProps) {
   return (
     <svg
@@ -1687,6 +1716,9 @@ function MessageAttachment({ attachment }: { attachment: Attachment }) {
 type MessageBubbleProps = {
   entry: ThreadEntry
   isLastAssistant?: boolean
+  isStreaming?: boolean
+  isStreamAudioPlaying?: boolean
+  onStopStreamAudio?: () => void
   canRegenerate?: boolean
   onRegenerate?: () => void
 }
@@ -1694,6 +1726,9 @@ type MessageBubbleProps = {
 function MessageBubble({
   entry,
   isLastAssistant,
+  isStreaming,
+  isStreamAudioPlaying,
+  onStopStreamAudio,
   canRegenerate,
   onRegenerate,
 }: MessageBubbleProps) {
@@ -1732,7 +1767,7 @@ function MessageBubble({
 
   const isAssistant = entry.role === 'assistant'
   const audioUrl = isAssistant ? entry.audioPreviewUrl ?? null : null
-  const showActions = isAssistant && !entry.error
+  const showActions = isAssistant && !entry.error && !isStreaming
   const attachments =
     !isAssistant && entry.kind === 'text' ? entry.attachments ?? [] : []
 
@@ -1760,7 +1795,18 @@ function MessageBubble({
       {showActions ? (
         <div className="msg-actions">
           <CopyButton text={entry.text} />
-          <AssistantPlayButton url={audioUrl} />
+          {isStreamAudioPlaying ? (
+            <button
+              className="msg-action is-playing"
+              type="button"
+              onClick={onStopStreamAudio}
+              aria-label="停止播放"
+            >
+              <PlayingBarsIcon className="app-icon app-icon-md" />
+            </button>
+          ) : (
+            <AssistantPlayButton url={audioUrl} />
+          )}
           {isLastAssistant ? (
             <button
               className="msg-action msg-action-trailing"
@@ -1839,11 +1885,10 @@ function AssistantPlayButton({ url }: { url: string | null }) {
       disabled={disabled}
       aria-label={isPlaying ? '暂停播放' : '朗读'}
     >
-      {isPlaying ? (
-        <PauseIcon className="app-icon app-icon-md" />
-      ) : (
-        <PlayIcon className="app-icon app-icon-md" />
-      )}
+      {isPlaying
+        ? <PlayingBarsIcon className="app-icon app-icon-md" />
+        : <SpeakerIcon className="app-icon app-icon-md" />
+      }
     </button>
   )
 }
@@ -2402,6 +2447,7 @@ function App() {
   const [messages, setMessages] = useState<ConversationEntry[]>([])
   const [pendingReply, setPendingReply] = useState<PendingReply | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isStreamAudioPlaying, setIsStreamAudioPlaying] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isPreparingRecording, setIsPreparingRecording] = useState(false)
   const [recordingWillCancel, setRecordingWillCancel] = useState(false)
@@ -3689,6 +3735,13 @@ function App() {
       streamingStopRef.current = null
       stop()
     }
+
+    const player = streamingPlayerRef.current
+    if (player) {
+      streamingPlayerRef.current = null
+      void player.dispose()
+    }
+    setIsStreamAudioPlaying(false)
   }
 
   function persistEntryToSession(
@@ -3998,9 +4051,11 @@ function App() {
 
         if (cutPlayback) {
           void player.dispose()
+          setIsStreamAudioPlaying(false)
         } else {
           player.markFinished()
-          player.disposeAfterDrain()
+          setIsStreamAudioPlaying(true)
+          player.disposeAfterDrain(() => setIsStreamAudioPlaying(false))
         }
         player = null
       }
@@ -4820,6 +4875,16 @@ function App() {
                     key={entry.id}
                     entry={entry}
                     isLastAssistant={isLastAssistant}
+                    isStreaming={isLastAssistant && isGenerating}
+                    isStreamAudioPlaying={isLastAssistant && isStreamAudioPlaying}
+                    onStopStreamAudio={() => {
+                      const player = streamingPlayerRef.current
+                      if (player) {
+                        streamingPlayerRef.current = null
+                        void player.dispose()
+                      }
+                      setIsStreamAudioPlaying(false)
+                    }}
                     canRegenerate={!isGenerating && !isPreparingRecording}
                     onRegenerate={() => {
                       void regenerateLastReply()
