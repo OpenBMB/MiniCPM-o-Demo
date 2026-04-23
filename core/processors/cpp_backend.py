@@ -140,6 +140,50 @@ def _build_prompts_from_content(
     }
 
 
+# C++ /v1/stream/update_session_config 当前能识别的 sampling 字段。
+# 与 omni_context 中的字段一一对应；新增需同步 server.cpp + omni.h。
+_CPP_SAMPLING_KEYS = (
+    "listen_prob_scale",
+    "force_listen_count",
+    "max_new_speak_tokens_per_chunk",
+    "tts_temperature",
+)
+
+
+def _sampling_from_duplex_config(cfg: Any) -> Dict[str, Any]:
+    """从 DuplexConfig（pydantic 模型 / dict / None）抽出 C++ 能用的 sampling 字段。"""
+    if cfg is None:
+        return {}
+    out: Dict[str, Any] = {}
+    for key in _CPP_SAMPLING_KEYS:
+        val = None
+        if hasattr(cfg, key):
+            val = getattr(cfg, key, None)
+        elif isinstance(cfg, dict):
+            val = cfg.get(key)
+        if val is not None:
+            out[key] = val
+    return out
+
+
+def _sampling_from_generation(gen: Any) -> Dict[str, Any]:
+    """从 GenerationConfig（chat / half-duplex 用）抽出 C++ 能用的字段。
+
+    GenerationConfig 当前没有 listen_*/force_listen 等双工字段，所以这里只能
+    透传 max_new_tokens（映射到 max_new_speak_tokens_per_chunk）和 tts_temperature
+    （如果上层加了的话）。chat / half-duplex 的 max_new_tokens 语义是"单轮上限"，
+    与 max_new_speak_tokens_per_chunk 在非双工模式下的"无限制"不同——故暂不映射，
+    避免改变现有行为。等 C++ 加 chat_max_new_tokens 后再启用。
+    """
+    if gen is None:
+        return {}
+    out: Dict[str, Any] = {}
+    tts_t = getattr(gen, "tts_temperature", None) if not isinstance(gen, dict) else gen.get("tts_temperature")
+    if tts_t is not None:
+        out["tts_temperature"] = tts_t
+    return out
+
+
 class CppBackendWorker:
     """C++ llama-server 推理后端
 
@@ -233,8 +277,13 @@ class CppBackendWorker:
         lang: Optional[str] = None,
         system_content: Any = None,
         length_penalty: float = 1.1,
+        sampling: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Duplex 准备 → update_session_config"""
+        """Duplex 准备 → update_session_config
+
+        sampling: 上层从 DuplexConfig 抽出的 session-level sampling 旋钮
+                  （见 _call_update_session_config 文档）。
+        """
         self._reset_output_dir()
         self._duplex_chunk_counter = 0
         self._round_number = 0
@@ -249,6 +298,7 @@ class CppBackendWorker:
             voice_audio=voice_audio,
             lang=lang,
             system_content=effective_system_content,
+            sampling=sampling,
         )
         os.makedirs(os.path.join(self._output_dir, "tts_wav"), exist_ok=True)
         os.makedirs(os.path.join(self._output_dir, "tts_txt"), exist_ok=True)
@@ -674,6 +724,7 @@ class CppBackendWorker:
         lang: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         system_content: Any = None,
+        sampling: Optional[Dict[str, Any]] = None,
     ) -> None:
         """重置 Half-Duplex 会话"""
         voice_audio = ref_audio_path or self.ref_audio_path or ""
@@ -683,6 +734,7 @@ class CppBackendWorker:
             voice_audio=voice_audio,
             lang=lang,
             system_content=system_content,
+            sampling=sampling,
         )
         self._duplex_chunk_counter = 0
         self._round_number = 0
@@ -728,11 +780,13 @@ class CppBackendWorker:
 
         generation = getattr(request, "generation", None)
         length_penalty = float(getattr(generation, "length_penalty", 1.1) or 1.1)
+        sampling = _sampling_from_generation(generation)
 
         self._call_update_session_config(
             media_type=2,
             duplex_mode=False,
             voice_audio=self.ref_audio_path or "",
+            sampling=sampling,
         )
         self._reset_output_dir()
         self._round_number = 0
@@ -775,7 +829,8 @@ class CppBackendWorker:
                      use_tts_template=False, enable_thinking=False, lang: Optional[str] = None,
                      ref_audio_path: Optional[str] = None,
                      reset_context: bool = True,
-                     system_content: Any = None) -> str:
+                     system_content: Any = None,
+                     sampling: Optional[Dict[str, Any]] = None) -> str:
         """Chat prefill — reset_context=True 时重置会话上下文
 
         system_content: 如未提供，自动从 msgs 中的 system role 提取 content
@@ -799,6 +854,7 @@ class CppBackendWorker:
                 voice_audio=ref_audio_path or self.ref_audio_path or "",
                 lang=lang,
                 system_content=effective_system_content,
+                sampling=sampling,
             )
         logger.info(
             f"[ChatPrefill] session={session_id} omni_mode={omni_mode} media_type={media_type} "
@@ -1008,7 +1064,15 @@ class CppBackendWorker:
         voice_audio: str = "",
         lang: Optional[str] = None,
         system_content: Any = None,
+        sampling: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """sampling: 可选 dict，会原样下推到 /v1/stream/update_session_config，
+        当前 C++ 侧识别的字段：
+          - listen_prob_scale (float)
+          - force_listen_count (int)
+          - max_new_speak_tokens_per_chunk (int)
+          - tts_temperature (float)
+        其它字段会被 C++ 端忽略，便于将来增量扩展。"""
         duplex_mode_changed = (
             self._last_duplex_mode is not None and
             self._last_duplex_mode != duplex_mode
@@ -1063,6 +1127,18 @@ class CppBackendWorker:
             req_body["voice_audio"] = voice_audio
         if lang:
             self._last_lang = lang
+
+        # [Python -> C++ 透传] DuplexConfig / GenerationConfig 中 session-level 的
+        # sampling 旋钮。仅在明确给出时才下推，省略沿用 omni_init 默认。
+        if sampling:
+            for key in (
+                "listen_prob_scale",
+                "force_listen_count",
+                "max_new_speak_tokens_per_chunk",
+                "tts_temperature",
+            ):
+                if key in sampling and sampling[key] is not None:
+                    req_body[key] = sampling[key]
 
         resp = self._http_client.post(
             f"{self._cpp_server_url}/v1/stream/update_session_config",

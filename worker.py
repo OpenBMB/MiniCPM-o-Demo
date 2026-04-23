@@ -340,6 +340,7 @@ class MiniCPMOWorker:
         reset_context: bool = True,
         ref_audio_path: Optional[str] = None,
         system_content: Any = None,
+        sampling: Optional[Dict[str, Any]] = None,  # noqa: ARG002 — pytorch view 不消费
     ) -> str:
         """Chat prefill：一次性 prefill 所有消息到 KV cache
 
@@ -492,6 +493,7 @@ class MiniCPMOWorker:
         lang: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         system_content: Any = None,
+        sampling: Optional[Dict[str, Any]] = None,  # noqa: ARG002 — pytorch view 不消费
     ) -> None:
         """重置 Half-Duplex 模型 session（清除 KV cache）"""
         half_duplex_view = self.processor.set_half_duplex_mode()
@@ -556,6 +558,7 @@ class MiniCPMOWorker:
         lang: Optional[str] = None,
         system_content: Any = None,
         length_penalty: Optional[float] = None,
+        sampling: Optional[Dict[str, Any]] = None,  # noqa: ARG002 — pytorch view 不消费
     ) -> str:
         """Duplex 准备
 
@@ -997,6 +1000,31 @@ def _ref_audio_path_for_lang(lang: Optional[str]) -> str:
     return _LANG_REF_AUDIO_PATHS["zh"]
 
 
+# 当前 C++ /v1/stream/update_session_config 能识别的 sampling 字段。
+# 与 cpp_backend._CPP_SAMPLING_KEYS 对齐，但这里手动列出以避免在 PyTorch backend
+# 启动路径上意外 import cpp_backend（cpp_backend 会带上 llama-server 子进程相关副作用）。
+_CPP_SAMPLING_KEYS = (
+    "listen_prob_scale",
+    "force_listen_count",
+    "max_new_speak_tokens_per_chunk",
+    "tts_temperature",
+)
+
+
+def _build_cpp_sampling(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """从前端 config dict（DuplexConfig / GenerationConfig 序列化形式）抽出
+    C++ backend 能识别的 sampling 字段。pytorch backend 用不到，
+    传给 cpp backend 时按需透传。"""
+    if not cfg:
+        return {}
+    out: Dict[str, Any] = {}
+    for key in _CPP_SAMPLING_KEYS:
+        val = cfg.get(key)
+        if val is not None:
+            out[key] = val
+    return out
+
+
 def _extract_ref_audio_from_content(
     system_content_items: List[dict],
     fallback_path: str,
@@ -1127,6 +1155,7 @@ async def chat_ws(ws: WebSocket):
             gen_cfg = msg.get("generation", {})
             max_new_tokens = gen_cfg.get("max_new_tokens", 256)
             length_penalty = gen_cfg.get("length_penalty", 1.1)
+            chat_sampling = _build_cpp_sampling(gen_cfg)
 
             max_slice_nums = None
             img_cfg = msg.get("image", {})
@@ -1184,6 +1213,7 @@ async def chat_ws(ws: WebSocket):
                     reset_context=reset_context,
                     ref_audio_path=session_ref_audio_path,
                     system_content=_sys_content_items or None,
+                    sampling=chat_sampling or None,
                 )
 
             await asyncio.to_thread(_do_prefill)
@@ -1544,10 +1574,12 @@ async def half_duplex_ws(ws: WebSocket):
                     system_content_items, default_ref_audio, prefix="hdx_ref"
                 )
                 logger.info(f"[HalfDuplex] lang={session_lang} ref_audio_path={session_ref_audio_path}")
+                hd_sampling = _build_cpp_sampling(gen_cfg)
                 worker.reset_half_duplex_session(
                     lang=session_lang,
                     ref_audio_path=session_ref_audio_path,
                     system_content=system_content_items,
+                    sampling=hd_sampling or None,
                 )
                 content_items: List[ContentItem] = []
                 for item in system_content_items:
@@ -1882,10 +1914,12 @@ async def half_duplex_omni_ws(ws: WebSocket):
                     system_content_items, default_ref_audio, prefix="hdomni_ref"
                 )
                 logger.info(f"[HalfDuplexOmni] lang={session_lang} ref_audio_path={session_ref_audio_path}")
+                hdomni_sampling = _build_cpp_sampling(gen_cfg)
                 worker.reset_half_duplex_session(
                     lang=session_lang,
                     ref_audio_path=session_ref_audio_path,
                     system_content=system_content_items,
+                    sampling=hdomni_sampling or None,
                 )
 
                 content_items: List[ContentItem] = []
@@ -2414,6 +2448,7 @@ async def duplex_ws(ws: WebSocket):
 
                     # 双工目前前端只传 system_prompt 字符串，直接作为 system_content 下发
                     duplex_system_content = msg.get("system_content") or system_prompt
+                    duplex_sampling = _build_cpp_sampling(config_dict)
                     prompt = await asyncio.to_thread(
                         worker.duplex_prepare,
                         system_prompt_text=system_prompt,
@@ -2423,6 +2458,7 @@ async def duplex_ws(ws: WebSocket):
                         lang=_infer_lang_from_texts([system_prompt]),
                         system_content=duplex_system_content,
                         length_penalty=duplex_length_penalty,
+                        sampling=duplex_sampling or None,
                     )
                     logger.info(f"Duplex prepared ({duplex_type}, media_type={duplex_media_type}, deferred_finalize={use_deferred_finalize})")
                     from config import get_config
