@@ -2467,6 +2467,17 @@ function App() {
   }, [threadEntries.length])
 
   useEffect(() => {
+    if (!attachMenuOpen) return
+    // Mimic Doubao: opening the + drawer pushes the thread to the bottom
+    // so the drawer feels like it's "popping up" rather than overlaying
+    // somewhere mid-screen.
+    const id = window.requestAnimationFrame(() => {
+      threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [attachMenuOpen])
+
+  useEffect(() => {
     let cancelled = false
 
     async function refreshStatus() {
