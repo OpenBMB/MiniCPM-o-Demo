@@ -13,6 +13,12 @@ import type { DuplexIcons } from './duplex/types'
 import { StreamingPcmPlayer, float32ToWavBlobUrl } from './streaming-player'
 import './App.css'
 
+// Static AudioWorklet module used by the mobile turn-based recorder.
+// Keep this outside the Vite bundle so addModule() fetches a normal
+// same-origin JS file, just like the existing duplex/half-duplex
+// worklets in this repo.
+const PCM_WORKLET_URL = '/static/duplex/lib/pcm-capture-turnbased.js'
+
 type BackendContentItem =
   | {
       type: 'text'
@@ -2284,6 +2290,70 @@ function App() {
   const recordingWillCancelRef = useRef(false)
   const wasGeneratingAtDownRef = useRef(false)
   const [recordError, setRecordError] = useState<string | null>(null)
+
+  // ─── Recording diagnostics ──────────────────────────────────────────
+  // Every press-to-talk attempt accumulates a small event timeline that
+  // we POST to the backend on release. When a user reports "overlay
+  // came up but nothing recorded", we can read the rolling log file
+  // (.run-logs/mobile-record-trace.jsonl) instead of asking them to
+  // open devtools.
+  type RecordTraceEvent = {
+    t: number
+    tag: string
+    info?: Record<string, unknown>
+  }
+  const recordTraceRef = useRef<RecordTraceEvent[]>([])
+  const recordTraceStartRef = useRef<number>(0)
+  const recordTraceSessionIdRef = useRef<string>('')
+  const recordOnAudioProcessCountRef = useRef<number>(0)
+
+  function trace(tag: string, info?: Record<string, unknown>) {
+    if (recordTraceRef.current.length === 0) {
+      recordTraceStartRef.current = performance.now()
+    }
+    recordTraceRef.current.push({
+      t: Math.round(performance.now() - recordTraceStartRef.current),
+      tag,
+      info,
+    })
+    if (recordTraceRef.current.length > 200) {
+      recordTraceRef.current.shift()
+    }
+  }
+
+  function resetTrace(sessionId: string) {
+    recordTraceRef.current = []
+    recordTraceStartRef.current = performance.now()
+    recordTraceSessionIdRef.current = sessionId
+    recordOnAudioProcessCountRef.current = 0
+  }
+
+  function flushTrace(outcome: string, extra?: Record<string, unknown>) {
+    if (recordTraceRef.current.length === 0) return
+    const events = recordTraceRef.current
+    const payload = {
+      session_id: recordTraceSessionIdRef.current,
+      outcome,
+      ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      events,
+      extra: extra ?? null,
+    }
+    recordTraceRef.current = []
+    // Fire-and-forget. Use keepalive so the request survives if the
+    // user navigates away immediately after release.
+    try {
+      void fetch('/api/_debug/record_trace', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {
+        /* swallow */
+      })
+    } catch {
+      /* ignore */
+    }
+  }
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
@@ -2337,6 +2407,8 @@ function App() {
   const prewarmInflightRef = useRef<Promise<boolean> | null>(null)
   const audioCaptureSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const audioCaptureProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const audioCaptureWorkletRef = useRef<AudioWorkletNode | null>(null)
+  const audioCapturePathRef = useRef<'worklet' | 'script-processor' | null>(null)
   const audioCaptureChunksRef = useRef<Float32Array[]>([])
   const audioCaptureSampleRateRef = useRef<number>(16000)
   const recordingStartRef = useRef<number>(0)
@@ -2988,6 +3060,24 @@ function App() {
 
   function coldDownMic() {
     isCapturingRef.current = false
+    const worklet = audioCaptureWorkletRef.current
+    if (worklet) {
+      try {
+        worklet.port.postMessage({ type: 'capture', value: false })
+      } catch {
+        // ignore
+      }
+      try {
+        worklet.port.onmessage = null
+      } catch {
+        // ignore
+      }
+      try {
+        worklet.disconnect()
+      } catch {
+        // ignore
+      }
+    }
     try {
       audioCaptureProcessorRef.current?.disconnect()
     } catch {
@@ -3003,9 +3093,11 @@ function App() {
     } catch {
       // ignore
     }
+    audioCaptureWorkletRef.current = null
     audioCaptureProcessorRef.current = null
     audioCaptureSourceRef.current = null
     audioCaptureMuteGainRef.current = null
+    audioCapturePathRef.current = null
     const ctx = audioCaptureCtxRef.current
     if (ctx && ctx.state !== 'closed') {
       void ctx.close().catch(() => {})
@@ -3017,13 +3109,28 @@ function App() {
     mediaStreamRef.current = null
   }
 
+  // Toggle the capture gate. Mirrors isCapturingRef onto the worklet so
+  // it knows whether to forward PCM frames; the ScriptProcessor path
+  // reads isCapturingRef directly inside onaudioprocess.
+  function setCapturing(value: boolean) {
+    isCapturingRef.current = value
+    const worklet = audioCaptureWorkletRef.current
+    if (worklet) {
+      try {
+        worklet.port.postMessage({ type: 'capture', value })
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   // Soft-reset between successful presses: stop collecting and drop the
   // chunks we just consumed, but keep the MediaStream and AudioContext
   // alive so the *next* press can start recording instantly. The mic
   // is fully released later by the idle timer (or on mode switch /
   // unmount) so the OS recording indicator does eventually turn off.
   function softResetCapture() {
-    isCapturingRef.current = false
+    setCapturing(false)
     audioCaptureChunksRef.current = []
   }
 
@@ -3051,52 +3158,88 @@ function App() {
   async function prewarmMic(): Promise<boolean> {
     // Already warm and ready?
     if (audioCaptureCtxRef.current && mediaStreamRef.current) {
+      trace('prewarm.skip', { reason: 'already-warm' })
       return true
     }
     if (prewarmInflightRef.current) {
+      trace('prewarm.join', { reason: 'inflight' })
       return prewarmInflightRef.current
     }
-    if (!navigator.mediaDevices?.getUserMedia) return false
+    if (!navigator.mediaDevices?.getUserMedia) {
+      trace('prewarm.unsupported', { reason: 'no-getUserMedia' })
+      return false
+    }
     const AudioContextCtor = getAudioContextCtor()
-    if (!AudioContextCtor) return false
+    if (!AudioContextCtor) {
+      trace('prewarm.unsupported', { reason: 'no-AudioContext' })
+      return false
+    }
 
+    trace('prewarm.start')
     const job = (async (): Promise<boolean> => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        trace('prewarm.gum.ok')
         const ctx = new AudioContextCtor()
+        trace('prewarm.ctx.created', { state: ctx.state, sampleRate: ctx.sampleRate })
         if (ctx.state === 'suspended') {
           try {
             await ctx.resume()
-          } catch {
-            // ignore
+            trace('prewarm.ctx.resume.ok', { state: ctx.state })
+          } catch (err) {
+            trace('prewarm.ctx.resume.err', { err: String(err) })
           }
         }
         const source = ctx.createMediaStreamSource(stream)
-        const processor = ctx.createScriptProcessor(4096, 1, 1)
-        const muteGain = ctx.createGain()
-        muteGain.gain.value = 0
+        const useWorklet =
+          typeof AudioWorkletNode !== 'undefined' &&
+          typeof ctx.audioWorklet?.addModule === 'function'
+        trace('prewarm.path.choose', { useWorklet })
 
-        processor.onaudioprocess = (event: AudioProcessingEvent) => {
-          if (!isCapturingRef.current) return
-          const input = event.inputBuffer.getChannelData(0)
-          const copy = new Float32Array(input.length)
-          copy.set(input)
-          audioCaptureChunksRef.current.push(copy)
+        if (useWorklet) {
+          try {
+            await ctx.audioWorklet.addModule(PCM_WORKLET_URL)
+            trace('prewarm.worklet.module.ok')
+          } catch (err) {
+            trace('prewarm.worklet.module.err', { err: String(err) })
+            // Fall through to ScriptProcessor below.
+            return await setupScriptProcessor(stream, ctx, source)
+          }
+          const node = new AudioWorkletNode(ctx, 'pcm-capture-turnbased')
+          node.port.onmessage = (event: MessageEvent) => {
+            const data = event.data as
+              | { type: 'pcm'; samples: Float32Array; frame: number }
+              | undefined
+            if (!data || data.type !== 'pcm') return
+            audioCaptureChunksRef.current.push(data.samples)
+            recordOnAudioProcessCountRef.current += 1
+            if (recordOnAudioProcessCountRef.current === 1) {
+              trace('worklet.first-message', {
+                len: data.samples.length,
+                ctxState: ctx.state,
+              })
+            }
+          }
+          node.port.onmessageerror = (event) => {
+            trace('worklet.message.err', { detail: String(event) })
+          }
+          source.connect(node)
+          // No need to connect to destination — worklet runs regardless.
+
+          mediaStreamRef.current = stream
+          audioCaptureCtxRef.current = ctx
+          audioCaptureSourceRef.current = source
+          audioCaptureWorkletRef.current = node
+          audioCapturePathRef.current = 'worklet'
+          audioCaptureSampleRateRef.current = ctx.sampleRate
+          trace('prewarm.done', { state: ctx.state, path: 'worklet' })
+          return true
         }
 
-        source.connect(processor)
-        processor.connect(muteGain)
-        muteGain.connect(ctx.destination)
-
-        mediaStreamRef.current = stream
-        audioCaptureCtxRef.current = ctx
-        audioCaptureSourceRef.current = source
-        audioCaptureProcessorRef.current = processor
-        audioCaptureMuteGainRef.current = muteGain
-        audioCaptureSampleRateRef.current = ctx.sampleRate
-        return true
+        return await setupScriptProcessor(stream, ctx, source)
       } catch (err) {
         console.warn('mic prewarm failed', err)
+        trace('prewarm.err', { err: String(err) })
         return false
       } finally {
         prewarmInflightRef.current = null
@@ -3105,6 +3248,46 @@ function App() {
 
     prewarmInflightRef.current = job
     return job
+  }
+
+  // Fallback path for browsers without AudioWorklet (very old Android /
+  // iOS < 14.5). Kept around so we don't regress on those devices.
+  async function setupScriptProcessor(
+    stream: MediaStream,
+    ctx: AudioContext,
+    source: MediaStreamAudioSourceNode,
+  ): Promise<boolean> {
+    trace('prewarm.script-processor.setup')
+    const processor = ctx.createScriptProcessor(4096, 1, 1)
+    const muteGain = ctx.createGain()
+    muteGain.gain.value = 0
+
+    processor.onaudioprocess = (event: AudioProcessingEvent) => {
+      if (!isCapturingRef.current) return
+      const input = event.inputBuffer.getChannelData(0)
+      const copy = new Float32Array(input.length)
+      copy.set(input)
+      audioCaptureChunksRef.current.push(copy)
+      recordOnAudioProcessCountRef.current += 1
+      if (recordOnAudioProcessCountRef.current === 1) {
+        trace('audioprocess.first', { len: copy.length, ctxState: ctx.state })
+      }
+    }
+
+    source.connect(processor)
+    processor.connect(muteGain)
+    muteGain.connect(ctx.destination)
+    trace('prewarm.graph.connected')
+
+    mediaStreamRef.current = stream
+    audioCaptureCtxRef.current = ctx
+    audioCaptureSourceRef.current = source
+    audioCaptureProcessorRef.current = processor
+    audioCaptureMuteGainRef.current = muteGain
+    audioCapturePathRef.current = 'script-processor'
+    audioCaptureSampleRateRef.current = ctx.sampleRate
+    trace('prewarm.done', { state: ctx.state, path: 'script-processor' })
+    return true
   }
 
   function startNewSession() {
@@ -3865,11 +4048,19 @@ function App() {
       if (durationMs < SILENT_DISCARD_MS || chunks.length === 0) {
         // Defensive: pointer-up handler should have already discarded
         // anything this short. Stay silent regardless.
+        flushTrace('finalize.empty', {
+          durationMs: Math.round(durationMs),
+          chunks: chunks.length,
+        })
         return
       }
 
       const merged = concatFloat32(chunks)
       if (merged.length === 0) {
+        flushTrace('finalize.merged-empty', {
+          durationMs: Math.round(durationMs),
+          chunks: chunks.length,
+        })
         return
       }
 
@@ -3895,10 +4086,17 @@ function App() {
         },
       ]
 
+      flushTrace('finalize.send', {
+        durationMs: Math.round(durationMs),
+        chunks: chunks.length,
+        samples: merged.length,
+      })
+
       setMessages(nextMessages)
       await submitConversation(nextMessages)
     } catch (error) {
       setRecordError(`录音处理失败：${getErrorMessage(error)}`)
+      flushTrace('finalize.error', { err: getErrorMessage(error) })
     } finally {
       setIsPreparingRecording(false)
     }
@@ -3911,6 +4109,13 @@ function App() {
     // The real "we are collecting audio" flag is isCapturingRef.
     const wasCapturing = isCapturingRef.current
     const heldMs = performance.now() - recordingStartRef.current
+    trace('stopRecording', {
+      action,
+      wasCapturing,
+      heldMs: Math.round(heldMs),
+      chunks: audioCaptureChunksRef.current.length,
+      onaudioprocess: recordOnAudioProcessCountRef.current,
+    })
 
     if (wasCapturing) {
       void finalizeRecording()
@@ -3924,6 +4129,9 @@ function App() {
       if (action === 'send' && heldMs >= SILENT_DISCARD_MS) {
         console.warn('[record] long hold but never captured', { heldMs })
         setRecordError('麦克风还没准备好，请稍后再试。')
+        flushTrace('long-hold-no-capture', { heldMs: Math.round(heldMs) })
+      } else {
+        flushTrace('short-tap-discard', { heldMs: Math.round(heldMs) })
       }
     }
 
@@ -3935,7 +4143,7 @@ function App() {
   }
 
   function discardRecordingState() {
-    isCapturingRef.current = false
+    setCapturing(false)
     setIsRecording(false)
     setIsPreparingRecording(false)
     setRecordingWillCancel(false)
@@ -3966,6 +4174,16 @@ function App() {
     // We're using the mic again — cancel the pending idle release so it
     // doesn't yank the stream out from under us mid-press.
     clearIdleColdDownTimer()
+
+    resetTrace(createId('rec'))
+    trace('pointerdown', {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      isGenerating,
+      warmCtx: !!audioCaptureCtxRef.current,
+      warmStream: !!mediaStreamRef.current,
+      ctxState: audioCaptureCtxRef.current?.state ?? null,
+    })
 
     recordingPointerStartYRef.current = event.clientY
     recordingPointerIdRef.current = event.pointerId
@@ -4002,7 +4220,11 @@ function App() {
     // the user gets a long blue overlay with zero recorded audio.
     const warmCtx = audioCaptureCtxRef.current
     if (warmCtx && warmCtx.state === 'suspended') {
-      void warmCtx.resume().catch(() => {})
+      trace('pointerdown.resume.sync', { stateBefore: warmCtx.state })
+      void warmCtx
+        .resume()
+        .then(() => trace('pointerdown.resume.sync.ok', { state: warmCtx.state }))
+        .catch((err) => trace('pointerdown.resume.sync.err', { err: String(err) }))
     }
 
     // Show the overlay and arm the recording state synchronously so the
@@ -4020,43 +4242,53 @@ function App() {
 
   async function beginRecordingCapture(initiatingPointerId: number) {
     const stillHolding = () => recordingPointerIdRef.current === initiatingPointerId
+    trace('begin.enter', { warmCtx: !!audioCaptureCtxRef.current })
 
     let warm = audioCaptureCtxRef.current !== null && mediaStreamRef.current !== null
     if (!warm) warm = await prewarmMic()
-    if (!stillHolding()) return
+    if (!stillHolding()) {
+      trace('begin.abort.releasedDuringPrewarm')
+      return
+    }
 
     if (!warm || !audioCaptureCtxRef.current || !mediaStreamRef.current) {
+      trace('begin.fail.initFailed', { warm })
       console.warn('[record] mic init failed', { warm })
       setRecordError('无法开始录音：麦克风初始化失败。')
       discardRecordingState()
+      flushTrace('mic-init-failed')
       return
     }
 
     const ctx = audioCaptureCtxRef.current
+    trace('begin.ctx.check', { state: ctx.state })
     if (ctx.state === 'suspended') {
       try {
         await ctx.resume()
+        trace('begin.ctx.resume.ok', { state: ctx.state })
       } catch (err) {
+        trace('begin.ctx.resume.err', { err: String(err) })
         console.warn('[record] ctx.resume threw', err)
       }
     }
-    if (!stillHolding()) return
+    if (!stillHolding()) {
+      trace('begin.abort.releasedDuringResume')
+      return
+    }
 
-    // Verify the audio graph is actually live. iOS Safari can leave the
-    // context suspended when resume() runs outside a user gesture; in
-    // that case onaudioprocess will never fire and we'd silently
-    // accumulate zero chunks. Fail loudly instead so the user knows to
-    // try again rather than holding for nothing.
     if (ctx.state !== 'running') {
+      trace('begin.fail.notRunning', { state: ctx.state })
       console.warn('[record] AudioContext not running after resume', {
         state: ctx.state,
       })
       setRecordError('音频通道未启动，请重试。')
       discardRecordingState()
+      flushTrace('ctx-not-running', { state: ctx.state })
       return
     }
 
-    isCapturingRef.current = true
+    setCapturing(true)
+    trace('begin.capturing', { path: audioCapturePathRef.current })
   }
 
   function handleTalkPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -4085,17 +4317,26 @@ function App() {
 
     const duration = performance.now() - recordingStartRef.current
     const willCancel = recordingWillCancelRef.current
+    trace('pointerup', {
+      duration: Math.round(duration),
+      willCancel,
+      isCapturing: isCapturingRef.current,
+      chunks: audioCaptureChunksRef.current.length,
+      onaudioprocess: recordOnAudioProcessCountRef.current,
+    })
 
     if (!isRecording) {
-      // Defensive: shouldn't normally reach here, but make sure we don't
-      // leak a half-warm mic.
+      trace('pointerup.notRecording')
       discardRecordingState()
+      flushTrace('not-recording-on-up', { duration: Math.round(duration) })
       return
     }
 
     if (willCancel || duration < SILENT_DISCARD_MS) {
-      // Silent discard: no error, no tooltip, no message.
       discardRecordingState()
+      flushTrace(willCancel ? 'cancel-by-drag' : 'short-tap', {
+        duration: Math.round(duration),
+      })
       return
     }
 
@@ -4108,8 +4349,10 @@ function App() {
       recordingPointerIdRef.current !== null
     )
       return
+    trace('pointercancel', { isRecording, isPreparingRecording })
     if (isRecording || isPreparingRecording) {
       discardRecordingState()
+      flushTrace('pointercancel')
     } else {
       recordingPointerStartYRef.current = null
       recordingPointerIdRef.current = null
