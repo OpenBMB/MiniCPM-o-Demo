@@ -116,8 +116,9 @@ export class StreamingPcmPlayer {
    * 与 dispose() 不同，这不会切断仍在排队的回放。
    * 调用前应先 markFinished() 表示不会再有新 chunk push 进来。
    */
-  disposeAfterDrain(): void {
+  disposeAfterDrain(onDrained?: () => void): void {
     if (this.disposed) {
+      onDrained?.()
       return
     }
 
@@ -128,6 +129,7 @@ export class StreamingPcmPlayer {
 
     setTimeout(() => {
       void this.dispose()
+      onDrained?.()
     }, delayMs)
   }
 }

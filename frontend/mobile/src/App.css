@@ -503,6 +503,21 @@
   margin-left: auto;
 }
 
+/* Speaker-wave icon animation for playback */
+.speaker-wave-animate .sw-bar {
+  transform-origin: center center;
+  animation: sw-bounce 0.6s ease-in-out infinite alternate;
+}
+
+.speaker-wave-animate .sw-bar-1 { animation-delay: 0s; }
+.speaker-wave-animate .sw-bar-2 { animation-delay: 0.15s; }
+.speaker-wave-animate .sw-bar-3 { animation-delay: 0.3s; }
+
+@keyframes sw-bounce {
+  0%   { transform: scaleY(0.4); }
+  100% { transform: scaleY(1); }
+}
+
 .msg-attachments {
   display: flex;
   flex-wrap: wrap;
