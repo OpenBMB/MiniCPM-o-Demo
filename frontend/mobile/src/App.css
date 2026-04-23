@@ -151,7 +151,9 @@
 }
 
 .turn-topbar {
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: grid;
   grid-template-columns: 44px 1fr auto;
   align-items: center;
