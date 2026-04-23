@@ -11,7 +11,7 @@ export type VideoDuplexScreenProps = {
   onOpenSettings: () => void
 }
 
-function statusClass(status: UseDuplexSessionApi['status']): string {
+function lampClassFor(status: UseDuplexSessionApi['status']): string {
   if (status === 'live') return 'live'
   if (status === 'starting' || status === 'queueing') return 'preparing'
   if (status === 'paused') return 'paused'
@@ -19,14 +19,16 @@ function statusClass(status: UseDuplexSessionApi['status']): string {
   return 'stopped'
 }
 
-function statusLabel(status: UseDuplexSessionApi['status']): string {
-  if (status === 'live') return 'LIVE'
-  if (status === 'starting') return 'PREP'
+function lampLabelFor(
+  status: UseDuplexSessionApi['status'],
+  pause: UseDuplexSessionApi['pauseState'],
+): string {
   if (status === 'queueing') return 'QUEUE'
-  if (status === 'paused') return 'PAUSE'
+  if (status === 'starting') return 'PREP'
+  if (status === 'live') return 'LIVE'
+  if (status === 'paused' || pause === 'paused') return 'PAUSE'
   if (status === 'error') return 'ERR'
-  if (status === 'stopped') return 'STOP'
-  return 'IDLE'
+  return 'READY'
 }
 
 function formatTimer(seconds: number): string {
@@ -35,25 +37,34 @@ function formatTimer(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+function pauseLabelFor(state: UseDuplexSessionApi['pauseState']): string {
+  if (state === 'pausing') return 'Pausing...'
+  if (state === 'paused') return 'Resume'
+  return 'Pause'
+}
+
 export function VideoDuplexScreen({
   duplex,
   icons,
   onOpenSettings,
 }: VideoDuplexScreenProps) {
-  void onOpenSettings // settings sheet entry not surfaced in faithful-omni layout
-  const FlipCameraIcon = icons.FlipCamera
-  const TranscriptIcon = icons.Transcript
-  const CloseIcon = icons.Close
-  const MicIcon = icons.Mic
+  void icons
+  void onOpenSettings // settings entry not surfaced in faithful-omni layout
 
   const [elapsed, setElapsed] = useState(0)
+
   useEffect(() => {
     if (duplex.status !== 'live') {
-      if (duplex.status === 'idle' || duplex.status === 'starting') {
+      if (
+        duplex.status === 'idle' ||
+        duplex.status === 'starting' ||
+        duplex.status === 'stopped'
+      ) {
         setElapsed(0)
       }
       return
     }
+
     const start = Date.now() - elapsed * 1000
     const id = window.setInterval(() => {
       setElapsed(Math.floor((Date.now() - start) / 1000))
@@ -61,36 +72,104 @@ export function VideoDuplexScreen({
     return () => {
       window.clearInterval(id)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [duplex.status])
 
-  const recentEntries: DuplexEntry[] = duplex.entries.slice(-SUBTITLE_KEEP)
+  const aiEntries: DuplexEntry[] = duplex.entries
+    .filter((entry) => entry.role === 'assistant')
+    .slice(-SUBTITLE_KEEP)
   const subtitleOn = duplex.textPanelOpen
-  const lampClass = statusClass(duplex.status)
-  const lampLabel = statusLabel(duplex.status)
+  const lampClass = lampClassFor(duplex.status)
+  const lampLabel = lampLabelFor(duplex.status, duplex.pauseState)
   const showTimer = duplex.status === 'live' || duplex.status === 'paused'
+  const borderActive = duplex.status === 'live'
 
-  const startDisabled = duplex.hasSession || duplex.status !== 'idle'
-  const pauseDisabled = !duplex.hasSession
+  const startRunning = duplex.status === 'live' || duplex.status === 'paused'
+  const startPreparing =
+    duplex.status === 'starting' || duplex.status === 'queueing'
+  const startDisabled = duplex.hasSession || startPreparing
+  const startLabel = startRunning
+    ? '● Live'
+    : duplex.status === 'queueing'
+      ? 'Queued'
+      : duplex.status === 'starting'
+        ? 'Preparing...'
+        : 'Start'
+
+  const pauseDisabled =
+    !duplex.hasSession || duplex.pauseState === 'pausing'
   const stopDisabled = !duplex.hasSession
-  const pauseLabel = duplex.pauseState === 'active' ? 'Pause' : 'Resume'
+  const pauseLabel = pauseLabelFor(duplex.pauseState)
+
+  const videoClass = ['vd-video', duplex.mirrorEnabled ? 'mirrored' : '']
+    .filter(Boolean)
+    .join(' ')
 
   return (
     <div className="vd-screen">
       <div className="vd-stage">
         <video
           ref={duplex.videoRef}
-          className="vd-video"
+          className={videoClass}
           autoPlay
           muted
           playsInline
         />
         <canvas ref={duplex.canvasRef} className="vd-capture-canvas" />
 
+        <div
+          className={['vd-video-border', borderActive ? 'active' : '']
+            .filter(Boolean)
+            .join(' ')}
+          aria-hidden="true"
+        />
+
         <div className={['vd-status-lamp', lampClass].join(' ')}>
           <span className="vd-dot" aria-hidden="true" />
           <span className="vd-label">{lampLabel}</span>
-          {showTimer ? <span className="vd-timer">{formatTimer(elapsed)}</span> : null}
+          {showTimer ? (
+            <span className="vd-timer">{formatTimer(elapsed)}</span>
+          ) : null}
         </div>
+
+        <button
+          className={[
+            'vd-corner-btn vd-mirror',
+            duplex.mirrorEnabled ? 'active' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          type="button"
+          onClick={duplex.flipMirror}
+          aria-label="Mirror flip"
+          title="Mirror flip"
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="12" y1="3" x2="12" y2="21" strokeDasharray="2 2" />
+            <polygon
+              points="5,6 5,18 1,12"
+              fill="currentColor"
+              stroke="none"
+            />
+            <polygon
+              points="19,6 19,18 23,12"
+              fill="currentColor"
+              stroke="none"
+            />
+            <path d="M8 6h-1a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h1" />
+            <path d="M16 6h1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1" />
+          </svg>
+        </button>
 
         <button
           className="vd-corner-btn vd-cam-flip"
@@ -99,19 +178,23 @@ export function VideoDuplexScreen({
           aria-label="Flip camera"
           title="Flip camera"
         >
-          <FlipCameraIcon className="app-icon app-icon-md" />
-        </button>
-
-        <button
-          className={['vd-corner-btn vd-mic-toggle', duplex.micEnabled ? 'active' : '']
-            .filter(Boolean)
-            .join(' ')}
-          type="button"
-          onClick={duplex.toggleMic}
-          aria-label={duplex.micEnabled ? 'Mute mic' : 'Unmute mic'}
-          title="Mic"
-        >
-          <MicIcon className="app-icon app-icon-md" />
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" />
+            <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5" />
+            <circle cx="12" cy="12" r="3" />
+            <path d="m18 22-3-3 3-3" />
+            <path d="m6 2 3 3-3 3" />
+          </svg>
         </button>
 
         <div
@@ -121,10 +204,10 @@ export function VideoDuplexScreen({
           aria-live="polite"
         >
           <div className="vd-chat-inner">
-            {recentEntries.map((entry) => (
+            {aiEntries.map((entry) => (
               <div key={entry.id} className="vd-chat-msg">
                 <span className="vd-msg-icon" aria-hidden="true">
-                  {entry.role === 'user' ? '🙂' : entry.role === 'assistant' ? '🤖' : '·'}
+                  🤖
                 </span>
                 <span className="vd-msg-text">{entry.text}</span>
               </div>
@@ -133,7 +216,10 @@ export function VideoDuplexScreen({
         </div>
 
         <button
-          className={['vd-edge-btn vd-subtitle-toggle', subtitleOn ? 'active' : '']
+          className={[
+            'vd-edge-btn vd-subtitle-toggle',
+            subtitleOn ? 'active' : '',
+          ]
             .filter(Boolean)
             .join(' ')}
           type="button"
@@ -141,7 +227,20 @@ export function VideoDuplexScreen({
           aria-label={subtitleOn ? 'Hide subtitles' : 'Show subtitles'}
           title="Subtitles on/off"
         >
-          <TranscriptIcon className="app-icon app-icon-md" />
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M4 6h16" />
+            <path d="M12 6v14" />
+          </svg>
         </button>
 
         <button
@@ -153,7 +252,22 @@ export function VideoDuplexScreen({
           aria-label="Exit"
           title="Exit"
         >
-          <CloseIcon className="app-icon app-icon-md" />
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+            <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+            <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+            <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+          </svg>
         </button>
       </div>
 
@@ -175,21 +289,26 @@ export function VideoDuplexScreen({
           HD
         </button>
         <button
-          className="vd-ctrl-btn vd-start"
+          className={['vd-ctrl-btn vd-start', startRunning ? 'live' : '']
+            .filter(Boolean)
+            .join(' ')}
           type="button"
           disabled={startDisabled}
-          title="Start"
+          onClick={duplex.startSession}
+          title={startLabel}
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <polygon points="6,3 20,12 6,21" />
-          </svg>
-          Start
+          {startRunning ? null : (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <polygon points="6,3 20,12 6,21" />
+            </svg>
+          )}
+          {startLabel}
         </button>
         <button
           className="vd-ctrl-btn"
@@ -204,9 +323,7 @@ export function VideoDuplexScreen({
           className="vd-ctrl-btn vd-stop"
           type="button"
           disabled={stopDisabled}
-          onClick={() => {
-            duplex.stop()
-          }}
+          onClick={duplex.stopSession}
           title="Stop"
         >
           <svg

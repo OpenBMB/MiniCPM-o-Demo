@@ -162,7 +162,9 @@ export class MobileLiveMediaProvider {
       return
     }
 
-    if (this.running && !this.videoStream) {
+    // Open the camera as soon as it's enabled so a preview can be shown
+    // before `start()` (which only acquires the microphone) is invoked.
+    if (!this.videoStream) {
       await this.openVideoStream(this.usingFrontCamera)
     }
   }

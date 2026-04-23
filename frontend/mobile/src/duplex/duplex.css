@@ -37,11 +37,38 @@
   display: block;
 }
 
+.vd-video.mirrored {
+  transform: scaleX(-1);
+}
+
 .vd-capture-canvas {
   width: 1px;
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+/* ---------- Video border overlay (.video-border-overlay clone) ----------
+   A thin inner glow that lights up while the model is actively listening,
+   matching desktop omni's `.video-border-overlay.active` cue. */
+.vd-video-border {
+  position: absolute;
+  inset: 0;
+  border-radius: 0;
+  pointer-events: none;
+  z-index: 5;
+  box-shadow: none;
+  transition:
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+  border: 0 solid transparent;
+}
+
+.vd-video-border.active {
+  border: 2px solid rgb(74 222 128 / 85%);
+  box-shadow:
+    inset 0 0 0 1px rgb(74 222 128 / 35%),
+    inset 0 0 12px rgb(74 222 128 / 35%);
 }
 
 /* ---------- Status lamp (top-left pill, copy of .status-lamp) ---------- */
@@ -111,10 +138,9 @@
   }
 }
 
-/* ---------- Top-right corner buttons (cam flip + mic toggle) ----------
+/* ---------- Top-right corner buttons (cam flip + mirror) ----------
    .cam-flip-btn position from omni.css: top:10px right:10px 44x44.
    .mirror-btn  position from omni.css: top:10px right:62px 44x44.
-   We re-use the right:62px slot for the mobile-only mic-toggle.
 */
 .vd-corner-btn {
   position: absolute;
@@ -141,14 +167,14 @@
   right: 10px;
 }
 
-.vd-corner-btn.vd-mic-toggle {
+.vd-corner-btn.vd-mirror {
   right: 62px;
-  opacity: 0.6;
+  opacity: 0.85;
 }
 
-.vd-corner-btn.vd-mic-toggle.active {
+.vd-corner-btn.vd-mirror.active {
   opacity: 1;
-  background: rgb(255 255 255 / 35%);
+  background: rgb(255 255 255 / 40%);
 }
 
 .vd-corner-btn:active {
@@ -334,6 +360,16 @@
   background: #666;
   border-color: #666;
   color: #999;
+}
+
+/* When the session is live the Start button morphs into a passive "● Live"
+   indicator: same dark fill as desktop omni's disabled .fs-start state. */
+.vd-ctrl-btn.vd-start.live,
+.vd-ctrl-btn.vd-start.live:disabled {
+  background: #666;
+  border-color: #666;
+  color: #fff;
+  opacity: 1;
 }
 
 .vd-ctrl-btn.vd-stop {
