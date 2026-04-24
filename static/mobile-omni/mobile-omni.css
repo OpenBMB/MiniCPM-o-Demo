@@ -55,7 +55,10 @@ body.mobile-omni .app-nav {
  * Sits LEFT of the torch (which is at right: 114px, width 44px). Torch
  * is conditionally visible, so we put share at right: 170px regardless. */
 body.mobile-omni #save-share-container {
-    position: absolute !important;
+    /* Must be `fixed` (not `absolute`) — the container lives at body level,
+     * not inside #videoContainer, so `absolute` can land on the wrong
+     * containing block. `fixed` is always relative to the viewport. */
+    position: fixed !important;
     top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
     right: 170px !important;
     bottom: auto !important;
@@ -72,8 +75,9 @@ body.mobile-omni #save-share-container .ss-btn {
     width: 44px !important;
     height: 44px !important;
     padding: 0 !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
     border-radius: 12px !important;
-    background: rgba(0, 0, 0, 0.4) !important;
+    background: rgba(0, 0, 0, 0.55) !important;
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     color: #fff !important;
@@ -82,10 +86,15 @@ body.mobile-omni #save-share-container .ss-btn {
     align-items: center !important;
     justify-content: center !important;
     -webkit-tap-highlight-color: rgba(255, 255, 255, 0.3);
+    cursor: pointer;
 }
 
+/* When disabled (no active session yet) keep the icon legible — just
+ * fade slightly so the affordance is "visible but inactive". 0.35 was
+ * effectively invisible against the dark camera preview. */
 body.mobile-omni #save-share-container .ss-btn:disabled {
-    opacity: 0.35 !important;
+    opacity: 0.7 !important;
+    cursor: default;
 }
 
 body.mobile-omni #save-share-container .ss-btn:not(:disabled):active {
