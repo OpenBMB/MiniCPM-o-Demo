@@ -133,6 +133,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
   const [lengthPenalty, setLengthPenalty] = useState(1.1)
   const [playbackDelay, setPlaybackDelay] = useState(0)
   const [maxKv, setMaxKv] = useState(8192)
+  const [stopOnPrune, setStopOnPrune] = useState(true)
 
   const [presets, setPresets] = useState<PresetMetadata[]>([])
   const [userPresets, setUserPresets] = useState<UserPreset[]>([])
@@ -164,6 +165,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
     setLengthPenalty(bridge.getLengthPenalty())
     setPlaybackDelay(bridge.getPlaybackDelay())
     setMaxKv(bridge.getMaxKv())
+    setStopOnPrune(bridge.getStopOnPrune())
 
     const existingB64 = bridge.getRefAudioBase64()
     if (existingB64) {
@@ -230,12 +232,14 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
     lp?: number
     delay?: number
     kv?: number
+    stop?: boolean
     ref?: RefAudioState
   }) {
     if (patch.prompt !== undefined) bridge.setSystemPrompt(patch.prompt)
     if (patch.lp !== undefined) bridge.setLengthPenalty(patch.lp)
     if (patch.delay !== undefined) bridge.setPlaybackDelay(patch.delay)
     if (patch.kv !== undefined) bridge.setMaxKv(patch.kv)
+    if (patch.stop !== undefined) bridge.setStopOnPrune(patch.stop)
     if (patch.ref !== undefined) {
       bridge.setRefAudioBase64(patch.ref.base64, patch.ref.name, patch.ref.duration)
     }
@@ -459,6 +463,11 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
     syncToBridge({ kv: v })
   }
 
+  function handleStopOnPruneChange(value: boolean) {
+    setStopOnPrune(value)
+    syncToBridge({ stop: value })
+  }
+
   if (!open) return null
 
   return (
@@ -560,6 +569,15 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
             <label className="settings-field">
               <span>Max KV (tok)</span>
               <input className="settings-input" type="number" min="512" max="16384" step="512" value={maxKv} onChange={(e) => handleKvChange(Number(e.target.value))} />
+            </label>
+            <label className="settings-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={stopOnPrune}
+                onChange={(e) => handleStopOnPruneChange(e.target.checked)}
+                style={{ width: 18, height: 18 }}
+              />
+              <span style={{ fontSize: 13 }}>Stop on KV pruning (sliding window)</span>
             </label>
           </div>
         </div>

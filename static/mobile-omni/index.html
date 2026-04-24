@@ -197,6 +197,12 @@
                     <input type="number" class="cg-input-sm" id="maxKvTokens" value="8192" min="512" max="8192" step="512">
                     <span style="font-size:10px;color:#888;">tok</span>
                 </div>
+                <div class="cg-row inline">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;">
+                        <input type="checkbox" id="stopOnKvShrink" checked>
+                        Stop on KV pruning (sliding window)
+                    </label>
+                </div>
             </div>
         </details>
         <details class="config-group">

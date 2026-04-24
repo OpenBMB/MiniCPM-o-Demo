@@ -102,6 +102,16 @@
             setMaxKv(v) {
                 setDesktopInput('maxKvTokens', String(v));
             },
+            getStopOnPrune() {
+                const el = getDesktopInput('stopOnKvShrink');
+                return !!(el && el.checked);
+            },
+            setStopOnPrune(v) {
+                const el = getDesktopInput('stopOnKvShrink');
+                if (!el) return;
+                el.checked = !!v;
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            },
             getRefAudioBase64() {
                 return null;
             },
@@ -260,6 +270,10 @@
         if (!s || typeof s !== 'object') return;
         if (typeof s.systemPrompt === 'string') {
             setDesktopInput('systemPrompt', s.systemPrompt);
+        }
+        if (typeof s.stopOnPrune === 'boolean') {
+            const el = getDesktopInput('stopOnKvShrink');
+            if (el) el.checked = s.stopOnPrune;
         }
     }
 

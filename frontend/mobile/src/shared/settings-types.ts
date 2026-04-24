@@ -44,6 +44,8 @@ export type OmniBridge = {
   setPlaybackDelay: (v: number) => void
   getMaxKv: () => number
   setMaxKv: (v: number) => void
+  getStopOnPrune: () => boolean
+  setStopOnPrune: (v: boolean) => void
   getRefAudioBase64: () => string | null
   setRefAudioBase64: (b64: string | null, name: string, duration: number) => void
 }
