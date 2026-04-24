@@ -44,7 +44,7 @@ let media = null;
 
 // Save & Share
 const _saveShareUI = typeof SaveShareUI !== 'undefined'
-    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'omni_duplex' })
+    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'omni_duplex', collectComment: true })
     : null;
 let selectedFile = null;
 let cameraPreview = null;

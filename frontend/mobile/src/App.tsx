@@ -11,6 +11,12 @@ import { VideoDuplexScreen } from './duplex/VideoDuplexScreen'
 import { useDuplexSession } from './duplex/useDuplexSession'
 import type { DuplexIcons } from './duplex/types'
 import { StreamingPcmPlayer, float32ToWavBlobUrl } from './streaming-player'
+import {
+  addToRecentSessions,
+  buildShareUrl,
+  copyToClipboard,
+  saveSessionComment,
+} from './shared/share-helpers'
 import './App.css'
 
 // Static AudioWorklet module used by the mobile turn-based recorder.
@@ -1078,6 +1084,27 @@ function TrashIcon({ className }: IconProps) {
       />
       <path
         d="M10.5 11v5M13.5 11v5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  )
+}
+
+function ShareIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle cx="6.5" cy="12" r="2.4" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="17.5" cy="6" r="2.4" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="17.5" cy="18" r="2.4" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="m8.6 10.9 6.8-3.8M8.6 13.1l6.8 3.8"
         stroke="currentColor"
         strokeLinecap="round"
         strokeWidth="1.6"
@@ -2362,24 +2389,28 @@ type HistoryDrawerProps = {
   open: boolean
   sessions: ChatSession[]
   activeId: string
+  shareReady: boolean
   onClose: () => void
   onNewSession: () => void
   onSwitch: (id: string) => void
   onDelete: (id: string) => void
   onClearAll: () => void
   onOpenSettings: () => void
+  onOpenShare: () => void
 }
 
 function HistoryDrawer({
   open,
   sessions,
   activeId,
+  shareReady,
   onClose,
   onNewSession,
   onSwitch,
   onDelete,
   onClearAll,
   onOpenSettings,
+  onOpenShare,
 }: HistoryDrawerProps) {
   const sorted = sessions.slice().sort((a, b) => b.updatedAt - a.updatedAt)
   return (
@@ -2446,6 +2477,16 @@ function HistoryDrawer({
           <button
             type="button"
             className="history-drawer-bottom-item"
+            onClick={onOpenShare}
+            disabled={!shareReady}
+            title={shareReady ? '分享当前对话' : '当前对话还没有后端记录可分享'}
+          >
+            <ShareIcon className="app-icon app-icon-md" />
+            <span>分享对话</span>
+          </button>
+          <button
+            type="button"
+            className="history-drawer-bottom-item"
             onClick={onOpenSettings}
           >
             <SettingsIcon className="app-icon app-icon-md" />
@@ -2469,6 +2510,94 @@ function HistoryDrawer({
           </button>
         </div>
       </aside>
+    </div>
+  )
+}
+
+type ShareDialogProps = {
+  open: boolean
+  sessionId: string
+  shareUrl: string
+  comment: string
+  submitting: boolean
+  error: string | null
+  successInfo: string | null
+  onCommentChange: (next: string) => void
+  onCancel: () => void
+  onSubmit: () => void
+}
+
+function ShareDialog({
+  open,
+  sessionId,
+  shareUrl,
+  comment,
+  submitting,
+  error,
+  successInfo,
+  onCommentChange,
+  onCancel,
+  onSubmit,
+}: ShareDialogProps) {
+  if (!open) return null
+  return (
+    <div
+      className="share-dialog-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="分享对话"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !submitting) onCancel()
+      }}
+    >
+      <div className="share-dialog">
+        <div className="share-dialog-title">分享对话</div>
+        <div className="share-dialog-hint">
+          可以加一句评语（可选），帮助回看时记住这是哪段对话。
+          <br />
+          点击「分享」后，链接会复制到剪贴板。
+        </div>
+        <div className="share-dialog-meta">
+          <span className="share-dialog-meta-label">链接</span>
+          <span className="share-dialog-meta-value">{shareUrl || '—'}</span>
+        </div>
+        <div className="share-dialog-meta">
+          <span className="share-dialog-meta-label">Session</span>
+          <span className="share-dialog-meta-value">{sessionId}</span>
+        </div>
+        <textarea
+          className="share-dialog-input"
+          placeholder="评语（可选，最多 2000 字）"
+          maxLength={2000}
+          value={comment}
+          disabled={submitting}
+          onChange={(e) => onCommentChange(e.target.value)}
+        />
+        {error ? <div className="share-dialog-error">{error}</div> : null}
+        {successInfo ? (
+          <div className="share-dialog-success">{successInfo}</div>
+        ) : null}
+        <div className="share-dialog-actions">
+          <button
+            type="button"
+            className="share-dialog-btn share-dialog-cancel"
+            disabled={submitting}
+            onClick={onCancel}
+          >
+            {successInfo ? '关闭' : '取消'}
+          </button>
+          {!successInfo ? (
+            <button
+              type="button"
+              className="share-dialog-btn share-dialog-ok"
+              disabled={submitting || !sessionId}
+              onClick={onSubmit}
+            >
+              {submitting ? '分享中…' : '分享'}
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }
@@ -2605,7 +2734,13 @@ function App() {
     summary: 'Checking backend',
     detail: 'Polling /status...',
   })
-  const [, setLastSessionId] = useState<string | null>(null)
+  const [lastSessionId, setLastSessionId] = useState<string | null>(null)
+  const [shareDialogOpen, setShareDialogOpen] = useState(false)
+  const [shareSessionId, setShareSessionId] = useState<string | null>(null)
+  const [shareComment, setShareComment] = useState('')
+  const [shareSubmitting, setShareSubmitting] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
+  const [shareSuccess, setShareSuccess] = useState<string | null>(null)
 
   const messagesRef = useRef<ConversationEntry[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -2656,6 +2791,71 @@ function App() {
   const activeModePresets = presetsByMode[activePresetMode]
   const activeLengthPenalty = getLengthPenaltyForMode(settings, activePresetMode)
   const activeModeLabel = getPresetModeLabel(activePresetMode)
+
+  // Best backend session id available for sharing — prefer the most recent
+  // assistant reply that carried one (so it survives reload), fall back to
+  // the in-memory lastSessionId from the current run.
+  function getShareSessionId(): string | null {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'assistant' && 'recordingSessionId' in m && m.recordingSessionId) {
+        return m.recordingSessionId
+      }
+    }
+    return lastSessionId
+  }
+  const shareReady = Boolean(getShareSessionId())
+
+  function getShareAppType(): string {
+    if (screen === 'turn') return 'streaming'
+    if (screen === 'audio-duplex') return 'audio_duplex'
+    return 'omni_duplex'
+  }
+
+  function handleOpenShare() {
+    const sid = getShareSessionId()
+    if (!sid) {
+      setRecordError('当前对话还没有产生后端记录，先发条消息试试。')
+      return
+    }
+    setShareSessionId(sid)
+    setShareComment('')
+    setShareError(null)
+    setShareSuccess(null)
+    setShareSubmitting(false)
+    setShareDialogOpen(true)
+    setHistoryOpen(false)
+  }
+
+  function handleCloseShare() {
+    if (shareSubmitting) return
+    setShareDialogOpen(false)
+  }
+
+  async function handleSubmitShare() {
+    const sid = shareSessionId
+    if (!sid || shareSubmitting) return
+    setShareSubmitting(true)
+    setShareError(null)
+    try {
+      const trimmed = shareComment.trim()
+      if (trimmed) {
+        await saveSessionComment(sid, trimmed)
+      }
+      addToRecentSessions(sid, getShareAppType())
+      const url = buildShareUrl(sid)
+      const ok = await copyToClipboard(url)
+      setShareSuccess(
+        ok
+          ? `已复制到剪贴板：\n${url}`
+          : `分享链接（请手动复制）：\n${url}`,
+      )
+    } catch (err) {
+      setShareError(`分享失败：${getErrorMessage(err)}`)
+    } finally {
+      setShareSubmitting(false)
+    }
+  }
   const audioPresetName =
     presetsByMode.audio_duplex.find(
       (preset) => preset.id === settings.audio_duplex.presetId,
@@ -4915,6 +5115,7 @@ function App() {
         open={historyOpen}
         sessions={sessions}
         activeId={activeSessionId}
+        shareReady={shareReady}
         onClose={() => setHistoryOpen(false)}
         onNewSession={startNewSession}
         onSwitch={switchToSession}
@@ -4925,6 +5126,21 @@ function App() {
         onOpenSettings={() => {
           setHistoryOpen(false)
           setSettingsOpen(true)
+        }}
+        onOpenShare={handleOpenShare}
+      />
+      <ShareDialog
+        open={shareDialogOpen}
+        sessionId={shareSessionId ?? ''}
+        shareUrl={shareSessionId ? buildShareUrl(shareSessionId) : ''}
+        comment={shareComment}
+        submitting={shareSubmitting}
+        error={shareError}
+        successInfo={shareSuccess}
+        onCommentChange={setShareComment}
+        onCancel={handleCloseShare}
+        onSubmit={() => {
+          void handleSubmitShare()
         }}
       />
       {isRecording ? <RecordingOverlay willCancel={recordingWillCancel} /> : null}

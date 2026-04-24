@@ -30,7 +30,7 @@ from io import BytesIO
 import httpx
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Body
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -1241,6 +1241,59 @@ async def upload_session_recording(session_id: str, file: UploadFile = File(...)
 
     logger.info(f"[Session] uploaded frontend recording: {dest} ({total / 1024 / 1024:.1f} MB)")
     return {"status": "ok", "path": f"frontend_replay{ext}", "size_bytes": total}
+
+
+_COMMENT_MAX_CHARS = 2000
+
+
+@app.post("/api/sessions/{session_id}/comment")
+async def save_session_comment(session_id: str, payload: Dict[str, Any] = Body(...)):
+    """保存用户对该 session 的评语，写入 data/sessions/{session_id}/comment.txt"""
+    sdir = _session_dir(session_id)
+    if not os.path.isdir(sdir):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    raw = payload.get("comment")
+    if raw is None:
+        raw = ""
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="comment must be a string")
+    comment = raw.strip()
+    if len(comment) > _COMMENT_MAX_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Comment too long (max {_COMMENT_MAX_CHARS} chars)",
+        )
+
+    dest = os.path.join(sdir, "comment.txt")
+    if comment:
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(comment)
+    else:
+        # Empty comment ⇒ remove any prior comment file so it doesn't linger.
+        try:
+            os.remove(dest)
+        except FileNotFoundError:
+            pass
+
+    logger.info(f"[Session] comment saved: {session_id} ({len(comment)} chars)")
+    return {"status": "ok", "len": len(comment)}
+
+
+@app.get("/api/sessions/{session_id}/comment")
+async def get_session_comment(session_id: str):
+    """读取 session 的评语；不存在则返回空字符串。"""
+    sdir = _session_dir(session_id)
+    if not os.path.isdir(sdir):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    dest = os.path.join(sdir, "comment.txt")
+    if not os.path.exists(dest):
+        return {"comment": ""}
+    try:
+        with open(dest, "r", encoding="utf-8") as f:
+            return {"comment": f.read()}
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/s/{session_id}", response_class=HTMLResponse)
