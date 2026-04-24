@@ -12,6 +12,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:static": "tsc -b && vite build && node scripts/publish-static.mjs",
+    "build:widget": "vite build --config vite.widget.config.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },

@@ -3,18 +3,16 @@
  *
  * Adapts the desktop omni page DOM (loaded by omni-app.js) for mobile:
  *   1. Force `body.video-fullscreen` so the page boots in fullscreen.
- *   2. Inject a top-left ← back button (returns to /mobile/).
- *   3. Re-skin the bottom-right #fullscreenBtn as a ⚙️ settings opener
- *      that pops up a bottom-sheet with prompt / length-penalty / delay /
- *      maxKV controls bound to the underlying omni inputs.
- *   4. Camera extras: torch toggle + pinch-to-zoom on supported devices.
- *   5. Bridge `sessionStorage['mobileOmni:settings']` -> #systemPrompt.
+ *   2. Inject a top-left back button (returns to /mobile/).
+ *   3. Re-skin bottom-right #fullscreenBtn as a gear icon that opens
+ *      the React-based OmniSettingsWidget (shared with mobile app).
+ *   4. Camera extras: torch toggle + pinch-to-zoom.
+ *   5. Bridge `sessionStorage['mobileOmni:settings']` -> desktop DOM.
  * ========================================================= */
 
 (function bootstrapMobileOmni() {
     const BACK_URL = '/mobile/';
 
-    // ----- icons (inline SVG) -----
     const ICON_BACK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
     const ICON_GEAR = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
     const ICON_TORCH = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6l-1 6h-4z"/><path d="M8 8h8l-2 8h-4z"/><path d="M11 16v6"/></svg>';
@@ -24,7 +22,9 @@
         document.body.classList.add('mobile-omni');
     }
 
-    // -------- back button (top-left) --------
+    // ========================================================================
+    // Back button (top-left)
+    // ========================================================================
     function injectBackButton() {
         const container = document.getElementById('videoContainer');
         if (!container || container.querySelector('.mobile-back-btn')) return;
@@ -34,133 +34,129 @@
         btn.setAttribute('aria-label', 'Back to mobile turn page');
         btn.innerHTML = ICON_BACK;
         const goBack = (e) => {
-            if (e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-            try {
-                window.location.assign(BACK_URL);
-            } catch (_) {
-                window.location.href = BACK_URL;
-            }
+            if (e) { e.preventDefault(); e.stopPropagation(); }
+            try { window.location.assign(BACK_URL); } catch (_) { window.location.href = BACK_URL; }
         };
         btn.addEventListener('click', goBack);
         btn.addEventListener('touchend', goBack, { passive: false });
         container.appendChild(btn);
     }
 
-    // -------- settings sheet --------
-    function buildSettingsSheet() {
-        if (document.getElementById('mobileSettingsSheet')) return;
+    // ========================================================================
+    // React Settings Widget (shared with mobile app)
+    // ========================================================================
+    let widgetApi = null;
 
-        const backdrop = document.createElement('div');
-        backdrop.className = 'mobile-settings-backdrop';
-        backdrop.id = 'mobileSettingsBackdrop';
-
-        const sheet = document.createElement('div');
-        sheet.className = 'mobile-settings-sheet';
-        sheet.id = 'mobileSettingsSheet';
-        sheet.innerHTML = `
-            <div class="ms-handle"></div>
-            <h3>设置</h3>
-            <div class="ms-row">
-                <label for="mSystemPrompt">System Prompt</label>
-                <textarea id="mSystemPrompt" rows="3" placeholder="System prompt..."></textarea>
-            </div>
-            <div class="ms-row ms-inline">
-                <label for="mLengthPenalty">Length Penalty</label>
-                <input type="number" id="mLengthPenalty" min="0.1" max="5" step="0.05">
-            </div>
-            <div class="ms-row ms-inline">
-                <label for="mPlaybackDelay">Playback Delay (ms)</label>
-                <input type="number" id="mPlaybackDelay" min="0" max="2000" step="50">
-            </div>
-            <div class="ms-row ms-inline">
-                <label for="mMaxKv">Max KV (tok)</label>
-                <input type="number" id="mMaxKv" min="512" max="8192" step="512">
-            </div>
-            <button type="button" class="ms-close" id="mSettingsClose">完成</button>
-        `;
-
-        document.body.appendChild(backdrop);
-        document.body.appendChild(sheet);
-
-        // wire two-way bridges to the underlying desktop inputs
-        bindMirror('mSystemPrompt', 'systemPrompt');
-        bindMirror('mLengthPenalty', 'omniLengthPenalty');
-        bindMirror('mPlaybackDelay', 'playbackDelay');
-        bindMirror('mMaxKv', 'maxKvTokens');
-
-        const close = () => {
-            backdrop.classList.remove('open');
-            sheet.classList.remove('open');
-        };
-        backdrop.addEventListener('click', close);
-        document.getElementById('mSettingsClose').addEventListener('click', close);
+    function getDesktopInput(id) {
+        return document.getElementById(id);
     }
 
-    function bindMirror(mobileId, desktopId) {
-        const m = document.getElementById(mobileId);
-        const d = document.getElementById(desktopId);
-        if (!m || !d) return;
-        // initial sync: desktop -> mobile
-        m.value = d.value;
-        // mobile -> desktop on every input
-        m.addEventListener('input', () => {
-            d.value = m.value;
-            d.dispatchEvent(new Event('input', { bubbles: true }));
-            d.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-        // also reflect desktop changes (e.g. when a preset auto-fills)
-        d.addEventListener('input', () => {
-            if (m.value !== d.value) m.value = d.value;
-        });
-        d.addEventListener('change', () => {
-            if (m.value !== d.value) m.value = d.value;
-        });
+    function setDesktopInput(id, value) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function getDesktopRefAudioPlayer() {
+        return document.getElementById('omniRefAudioPlayer');
+    }
+
+    function buildBridge() {
+        return {
+            getSystemPrompt() {
+                return getDesktopInput('systemPrompt')?.value || '';
+            },
+            setSystemPrompt(v) {
+                setDesktopInput('systemPrompt', v);
+            },
+            getLengthPenalty() {
+                return parseFloat(getDesktopInput('omniLengthPenalty')?.value) || 1.1;
+            },
+            setLengthPenalty(v) {
+                setDesktopInput('omniLengthPenalty', String(v));
+            },
+            getPlaybackDelay() {
+                return parseInt(getDesktopInput('playbackDelay')?.value, 10) || 0;
+            },
+            setPlaybackDelay(v) {
+                setDesktopInput('playbackDelay', String(v));
+            },
+            getMaxKv() {
+                return parseInt(getDesktopInput('maxKvTokens')?.value, 10) || 8192;
+            },
+            setMaxKv(v) {
+                setDesktopInput('maxKvTokens', String(v));
+            },
+            getRefAudioBase64() {
+                return null;
+            },
+            setRefAudioBase64(b64, name, duration) {
+                const rap = getDesktopRefAudioPlayer();
+                if (!rap) return;
+                if (b64 === null) {
+                    const removeBtn = rap.querySelector('.rap-remove-btn');
+                    if (removeBtn) removeBtn.click();
+                    return;
+                }
+                const ev = new CustomEvent('mobileSetRefAudio', {
+                    detail: { base64: b64, name: name, duration: duration },
+                });
+                rap.dispatchEvent(ev);
+            },
+        };
+    }
+
+    function mountSettingsWidget() {
+        if (typeof window.mountOmniSettings !== 'function') {
+            console.warn('[mobile-omni] settings-widget.js not loaded');
+            return;
+        }
+        const container = document.createElement('div');
+        container.id = 'omniSettingsWidgetRoot';
+        document.body.appendChild(container);
+        const bridge = buildBridge();
+        widgetApi = window.mountOmniSettings(container, bridge);
     }
 
     function openSettingsSheet() {
-        const backdrop = document.getElementById('mobileSettingsBackdrop');
-        const sheet = document.getElementById('mobileSettingsSheet');
-        if (!backdrop || !sheet) return;
-        // refresh from desktop in case anything changed
-        ['mSystemPrompt:systemPrompt', 'mLengthPenalty:omniLengthPenalty',
-         'mPlaybackDelay:playbackDelay', 'mMaxKv:maxKvTokens'].forEach((pair) => {
-            const [mid, did] = pair.split(':');
-            const m = document.getElementById(mid);
-            const d = document.getElementById(did);
-            if (m && d) m.value = d.value;
-        });
-        backdrop.classList.add('open');
-        sheet.classList.add('open');
+        if (widgetApi) {
+            widgetApi.open();
+        }
     }
 
-    // -------- ⚙️ on the bottom-right --------
+    // ========================================================================
+    // Gear button on bottom-right
+    // ========================================================================
     function rebindFullscreenButtonAsGear() {
         const btn = document.getElementById('fullscreenBtn');
         if (!btn) return;
-        // clone removes all listeners registered by omni-app.js's IIFE
         const clone = btn.cloneNode(false);
-        clone.id = 'fullscreenBtn'; // keep id so omni-app.js's visibility toggles still find it
+        clone.id = 'fullscreenBtn';
         clone.className = btn.className;
         clone.classList.add('visible');
         clone.setAttribute('title', 'Settings');
         clone.setAttribute('aria-label', 'Open settings');
         clone.innerHTML = ICON_GEAR;
         btn.parentNode.replaceChild(clone, btn);
-        const open = (e) => {
-            if (e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-            openSettingsSheet();
-        };
+        const open = (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } openSettingsSheet(); };
         clone.addEventListener('click', open);
         clone.addEventListener('touchend', open, { passive: false });
     }
 
-    // -------- session storage bridge from /mobile/ -> systemPrompt --------
+    function keepGearVisible() {
+        const btn = document.getElementById('fullscreenBtn');
+        if (!btn) return;
+        const obs = new MutationObserver(() => {
+            if (!btn.classList.contains('visible')) btn.classList.add('visible');
+        });
+        obs.observe(btn, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    // ========================================================================
+    // Session storage bridge from /mobile/
+    // ========================================================================
     function applyMobileSettings() {
         let raw;
         try { raw = sessionStorage.getItem('mobileOmni:settings'); } catch (_) { return; }
@@ -169,12 +165,7 @@
         try { s = JSON.parse(raw); } catch (_) { return; }
         if (!s || typeof s !== 'object') return;
         if (typeof s.systemPrompt === 'string') {
-            const ta = document.getElementById('systemPrompt');
-            if (ta) {
-                ta.value = s.systemPrompt;
-                ta.dispatchEvent(new Event('input', { bubbles: true }));
-                ta.dispatchEvent(new Event('change', { bubbles: true }));
-            }
+            setDesktopInput('systemPrompt', s.systemPrompt);
         }
     }
 
@@ -229,13 +220,8 @@
 
     function refreshCameraCapabilities() {
         const track = getActiveVideoTrack();
-        if (track === lastVideoTrack) {
-            // same track, just re-evaluate capability visibility
-            updateTorchVisibility(track);
-            return;
-        }
+        if (track === lastVideoTrack) { updateTorchVisibility(track); return; }
         lastVideoTrack = track;
-        // turn off torch state when camera changes
         torchBtn?.classList.remove('active');
         updateTorchVisibility(track);
     }
@@ -244,29 +230,16 @@
         if (!torchBtn) return;
         let supported = false;
         if (track && typeof track.getCapabilities === 'function') {
-            try {
-                const caps = track.getCapabilities();
-                supported = !!(caps && caps.torch);
-            } catch (_) {
-                supported = false;
-            }
+            try { supported = !!(track.getCapabilities().torch); } catch (_) {}
         }
         torchBtn.classList.toggle('visible', supported);
     }
 
     function watchVideoElement() {
-        const v = document.getElementById('videoEl');
-        if (!v) return;
-        // poll srcObject changes every 1s (cheap; no MediaStream change events)
         setInterval(refreshCameraCapabilities, 1000);
     }
 
-    // -------- pinch zoom on the video container --------
-    function distance(t1, t2) {
-        const dx = t1.clientX - t2.clientX;
-        const dy = t1.clientY - t2.clientY;
-        return Math.hypot(dx, dy);
-    }
+    function distance(t1, t2) { return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY); }
 
     async function handlePinchStart(e) {
         if (e.touches.length !== 2) return;
@@ -283,7 +256,6 @@
             max: caps.zoom.max || 1,
             track,
         };
-        // prevent the browser from page-zooming while we're handling the pinch
         e.preventDefault();
     }
 
@@ -299,9 +271,7 @@
     }
 
     function handlePinchEnd(e) {
-        if (e.touches.length < 2) {
-            pinchState = null;
-        }
+        if (e.touches.length < 2) pinchState = null;
     }
 
     function bindPinchZoom() {
@@ -313,27 +283,14 @@
         v.addEventListener('touchcancel', handlePinchEnd, { passive: false });
     }
 
-    // -------- block desktop omni from killing our gear button visibility --------
-    function keepGearVisible() {
-        const btn = document.getElementById('fullscreenBtn');
-        if (!btn) return;
-        // omni-app.js calls .classList.toggle('visible', false) in some states;
-        // re-add it so the gear stays accessible.
-        const obs = new MutationObserver(() => {
-            if (!btn.classList.contains('visible')) {
-                btn.classList.add('visible');
-            }
-        });
-        obs.observe(btn, { attributes: true, attributeFilter: ['class'] });
-    }
-
+    // ========================================================================
+    // Init
+    // ========================================================================
     function init() {
         ensureFullscreenClass();
-        // omni-app.js binds its IIFE to #fullscreenBtn after DOMContentLoaded.
-        // Run our DOM mutations on the next tick to land after that binding.
         setTimeout(() => {
             injectBackButton();
-            buildSettingsSheet();
+            mountSettingsWidget();
             rebindFullscreenButtonAsGear();
             keepGearVisible();
             applyMobileSettings();
