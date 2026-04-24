@@ -1396,6 +1396,14 @@ const ATTACHMENT_SIZE_LIMIT_BYTES: Record<'image' | 'audio' | 'video', number> =
   video: 30 * 1024 * 1024,
 }
 
+// Hard duration cap for video. Backed by the model's KV-cache budget:
+// at stack_frames=1 the omni pipeline burns roughly 95 tokens per second
+// of video (64 visual + 25 audio + control), and the model's KV window
+// is 8192 tokens — leaving headroom for the system prompt, the conversation
+// history, and the generated reply, ~60 s is the practical ceiling before
+// the model starts producing garbage / off-topic replies.
+const VIDEO_DURATION_LIMIT_SECONDS = 60
+
 const ATTACHMENT_KIND_LABEL: Record<'image' | 'audio' | 'video', string> = {
   image: '图片',
   audio: '音频',
@@ -1414,6 +1422,16 @@ function checkAttachmentSize(
   if (file.size <= limit) return null
   const label = ATTACHMENT_KIND_LABEL[kind]
   return `${label}过大（${formatMiB(file.size)}），最大支持 ${formatMiB(limit)}。请重新选择。`
+}
+
+function checkVideoDuration(att: Attachment): string | null {
+  if (att.kind !== 'video') return null
+  const d = att.duration
+  // duration may legitimately be undefined / 0 / Infinity (e.g. some
+  // streaming containers). Only reject when we're confident it overruns.
+  if (typeof d !== 'number' || !Number.isFinite(d) || d <= 0) return null
+  if (d <= VIDEO_DURATION_LIMIT_SECONDS) return null
+  return `视频时长 ${d.toFixed(1)} 秒，最大支持 ${VIDEO_DURATION_LIMIT_SECONDS} 秒。请裁剪后再发送。`
 }
 
 async function mediaFileToAttachment(
@@ -4418,29 +4436,49 @@ function App() {
     await submitConversation(nextMessages)
   }
 
+  async function buildOneAttachment(
+    f: File,
+    kind: 'image' | 'audio' | 'video',
+  ): Promise<{ attachment?: Attachment; error?: string }> {
+    const sizeErr = checkAttachmentSize(f, kind)
+    if (sizeErr) return { error: sizeErr }
+    let att: Attachment
+    try {
+      att =
+        kind === 'image'
+          ? await downscaleImageToAttachment(f)
+          : await mediaFileToAttachment(f, kind)
+    } catch (err) {
+      console.warn('attach failed', f.name, err)
+      return { error: `附件处理失败：${getErrorMessage(err)}` }
+    }
+    const durErr = checkVideoDuration(att)
+    if (durErr) {
+      // Drop the half-built attachment; revoke its blob URL so the
+      // browser doesn't hold the (large) video in memory.
+      try {
+        URL.revokeObjectURL(att.previewUrl)
+      } catch {
+        /* ignore */
+      }
+      return { error: durErr }
+    }
+    return { attachment: att }
+  }
+
   async function handleAttachFiles(
     files: FileList | null,
     kind: 'image' | 'audio' | 'video',
   ) {
     if (!files || files.length === 0) return
-    const list = Array.from(files)
     const built: Attachment[] = []
-    for (const f of list) {
-      const guard = checkAttachmentSize(f, kind)
-      if (guard) {
-        setRecordError(guard)
-        continue
-      }
-      try {
-        if (kind === 'image') {
-          built.push(await downscaleImageToAttachment(f))
-        } else {
-          built.push(await mediaFileToAttachment(f, kind))
-        }
-      } catch (err) {
-        console.warn('attach failed', f.name, err)
-      }
+    let lastError: string | null = null
+    for (const f of Array.from(files)) {
+      const r = await buildOneAttachment(f, kind)
+      if (r.attachment) built.push(r.attachment)
+      else if (r.error) lastError = r.error
     }
+    if (lastError) setRecordError(lastError)
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
       setAttachMenuOpen(false)
@@ -4449,9 +4487,9 @@ function App() {
 
   async function handleAttachMixedFiles(files: FileList | null) {
     if (!files || files.length === 0) return
-    const list = Array.from(files)
     const built: Attachment[] = []
-    for (const f of list) {
+    let lastError: string | null = null
+    for (const f of Array.from(files)) {
       const t = f.type || ''
       let kind: 'image' | 'audio' | 'video' | null = null
       if (t.startsWith('image/')) kind = 'image'
@@ -4461,21 +4499,11 @@ function App() {
         console.warn('unsupported file type', f.name, t)
         continue
       }
-      const guard = checkAttachmentSize(f, kind)
-      if (guard) {
-        setRecordError(guard)
-        continue
-      }
-      try {
-        if (kind === 'image') {
-          built.push(await downscaleImageToAttachment(f))
-        } else {
-          built.push(await mediaFileToAttachment(f, kind))
-        }
-      } catch (err) {
-        console.warn('attach failed', f.name, err)
-      }
+      const r = await buildOneAttachment(f, kind)
+      if (r.attachment) built.push(r.attachment)
+      else if (r.error) lastError = r.error
     }
+    if (lastError) setRecordError(lastError)
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
       setAttachMenuOpen(false)
