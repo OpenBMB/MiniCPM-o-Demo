@@ -30,7 +30,7 @@ from io import BytesIO
 import httpx
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Body
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -169,6 +169,48 @@ async def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
     }
+
+
+# ============ 前端诊断日志 (用于排查录音故障) ============
+
+_DEBUG_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".run-logs")
+_DEBUG_LOG_PATH = os.path.join(_DEBUG_LOG_DIR, "mobile-record-trace.jsonl")
+_DEBUG_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB rolling cap
+
+
+def _append_debug_trace(payload: Dict[str, Any]) -> None:
+    """Append a single JSON line to the rolling debug log."""
+    try:
+        os.makedirs(_DEBUG_LOG_DIR, exist_ok=True)
+        # Roll over if oversized.
+        try:
+            if os.path.exists(_DEBUG_LOG_PATH) and os.path.getsize(_DEBUG_LOG_PATH) > _DEBUG_LOG_MAX_BYTES:
+                rolled = _DEBUG_LOG_PATH + ".1"
+                if os.path.exists(rolled):
+                    os.remove(rolled)
+                os.rename(_DEBUG_LOG_PATH, rolled)
+        except OSError:
+            pass
+        record = {
+            "ts": datetime.now().isoformat(timespec="milliseconds"),
+            **payload,
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("failed to write mobile record trace: %s", exc)
+
+
+@app.post("/api/_debug/record_trace")
+async def post_record_trace(payload: Dict[str, Any]):
+    """Receive a recording-session trace from the mobile frontend.
+
+    The frontend posts one record per press-to-talk attempt with the
+    full event timeline so we can diagnose failures (overlay shown but
+    no audio captured) without asking users to copy console logs.
+    """
+    _append_debug_trace(payload)
+    return {"ok": True}
 
 
 @app.get("/status", response_model=ServiceStatus)
@@ -342,7 +384,10 @@ async def chat_ws_proxy(ws: WebSocket):
         # 连接 Worker WebSocket
         import websockets
         ws_url = f"ws://{assigned_worker.host}:{assigned_worker.port}/ws/chat"
-        worker_ws = await websockets.connect(ws_url)
+        # max_size on the client side caps how large an *incoming* frame can
+        # be from the worker; chat chunks are small but we bump it for
+        # symmetry with the gateway uvicorn config.
+        worker_ws = await websockets.connect(ws_url, max_size=128 * 1024 * 1024)
 
         # 转发请求
         await worker_ws.send(raw)
@@ -1377,6 +1422,59 @@ async def upload_session_recording(session_id: str, file: UploadFile = File(...)
     return {"status": "ok", "path": f"frontend_replay{ext}", "size_bytes": total}
 
 
+_COMMENT_MAX_CHARS = 2000
+
+
+@app.post("/api/sessions/{session_id}/comment")
+async def save_session_comment(session_id: str, payload: Dict[str, Any] = Body(...)):
+    """保存用户对该 session 的评语，写入 data/sessions/{session_id}/comment.txt"""
+    sdir = _session_dir(session_id)
+    if not os.path.isdir(sdir):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    raw = payload.get("comment")
+    if raw is None:
+        raw = ""
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="comment must be a string")
+    comment = raw.strip()
+    if len(comment) > _COMMENT_MAX_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Comment too long (max {_COMMENT_MAX_CHARS} chars)",
+        )
+
+    dest = os.path.join(sdir, "comment.txt")
+    if comment:
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(comment)
+    else:
+        # Empty comment ⇒ remove any prior comment file so it doesn't linger.
+        try:
+            os.remove(dest)
+        except FileNotFoundError:
+            pass
+
+    logger.info(f"[Session] comment saved: {session_id} ({len(comment)} chars)")
+    return {"status": "ok", "len": len(comment)}
+
+
+@app.get("/api/sessions/{session_id}/comment")
+async def get_session_comment(session_id: str):
+    """读取 session 的评语；不存在则返回空字符串。"""
+    sdir = _session_dir(session_id)
+    if not os.path.isdir(sdir):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    dest = os.path.join(sdir, "comment.txt")
+    if not os.path.exists(dest):
+        return {"comment": ""}
+    try:
+        with open(dest, "r", encoding="utf-8") as f:
+            return {"comment": f.read()}
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/s/{session_id}", response_class=HTMLResponse)
 async def session_viewer(session_id: str):
     """Session 回看页面"""
@@ -1490,6 +1588,58 @@ async def audio_duplex():
     return HTMLResponse("<h1>Audio Duplex</h1><p>Page not found</p>")
 
 
+@app.get("/mobile-omni", include_in_schema=False)
+async def mobile_omni_redirect():
+    """移动版 Omni 入口重定向到带尾斜杠版本"""
+    return RedirectResponse(url="/mobile-omni/", status_code=302)
+
+
+@app.get("/mobile-omni/", response_class=HTMLResponse)
+async def mobile_omni():
+    """移动版全双工页：复用桌面 omni-app.js，外壳为 static/mobile-omni/"""
+    if not app_registry.is_enabled("omni"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "mobile-omni", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Mobile Omni</h1><p>Page not found</p>", status_code=404)
+
+
+@app.get("/mobile", include_in_schema=False)
+async def mobile_redirect():
+    """移动端入口重定向到带尾斜杠版本，确保相对资源路径正确解析"""
+    return RedirectResponse(url="/mobile/", status_code=302)
+
+
+@app.get("/mobile/", response_class=HTMLResponse)
+async def mobile():
+    """移动端 React 预览页面"""
+    page_path = os.path.join(static_dir, "mobile", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse(
+        "<h1>Mobile Preview</h1>"
+        "<p>Build output not found. Run "
+        "<code>cd frontend/mobile && bun run --bun build:static</code> "
+        "or <code>npm run build:static</code>.</p>",
+        status_code=404,
+    )
+
+
+@app.api_route("/mobile/{asset_path:path}", methods=["GET", "HEAD"])
+async def mobile_asset(asset_path: str):
+    """移动端构建产物静态资源"""
+    mobile_root = os.path.realpath(os.path.join(static_dir, "mobile"))
+    full_path = os.path.realpath(os.path.join(mobile_root, asset_path))
+
+    if not full_path.startswith(mobile_root + os.sep):
+        raise HTTPException(status_code=400, detail="Path traversal detected")
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        raise HTTPException(status_code=404, detail=f"Mobile asset not found: {asset_path}")
+
+    return FileResponse(full_path)
+
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin():
     """Admin Dashboard"""
@@ -1569,7 +1719,16 @@ def main():
     else:
         logger.warning("Running in HTTP mode (no TLS). Browser microphone/camera APIs may not work.")
 
-    uvicorn.run(app, host=args.host, port=port, **ssl_kwargs)
+    # Bump WS max payload from uvicorn's 16 MiB default to 128 MiB so that
+    # base64-encoded video attachments coming in from the browser can be
+    # proxied to a worker without being rejected with code 1009.
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=port,
+        ws_max_size=128 * 1024 * 1024,
+        **ssl_kwargs,
+    )
 
 
 if __name__ == "__main__":
