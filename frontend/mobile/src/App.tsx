@@ -4296,8 +4296,6 @@ function App() {
     }
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
-      textInputAutoFocusRef.current = true
-      setComposeMode('text')
       setAttachMenuOpen(false)
     }
   }
@@ -4324,8 +4322,6 @@ function App() {
     }
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
-      textInputAutoFocusRef.current = true
-      setComposeMode('text')
       setAttachMenuOpen(false)
     }
   }
@@ -4351,12 +4347,9 @@ function App() {
     try {
       const att = await downscaleImageToAttachment(f)
       setPendingAttachments((prev) => [...prev, att])
-      // Drop the user back into the main composer in text mode so they
-      // can either type a question or hold-to-talk on top of the photo,
-      // matching Doubao behaviour. Mark autofocus so iOS pops the
-      // keyboard inside the same user-gesture stack.
-      textInputAutoFocusRef.current = true
-      setComposeMode('text')
+      // Keep the composer in whatever mode the user is in (default voice).
+      // Adding an attachment shouldn't force them into the text keyboard;
+      // they can still hold-to-talk with attachments queued.
       setAttachMenuOpen(false)
     } catch (err) {
       console.warn('camera capture failed', err)
