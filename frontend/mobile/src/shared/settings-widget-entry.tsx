@@ -40,4 +40,4 @@ export function mountOmniSettings(
   }
 }
 
-(window as Record<string, unknown>).mountOmniSettings = mountOmniSettings
+(window as unknown as Record<string, unknown>).mountOmniSettings = mountOmniSettings
