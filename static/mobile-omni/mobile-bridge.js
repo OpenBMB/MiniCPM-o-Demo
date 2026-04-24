@@ -297,41 +297,104 @@
     }
 
     // ========================================================================
-    // Share button — re-skin desktop SaveShareUI as an icon button.
+    // Share — surfaced inside the settings sheet (proxies clicks to the
+    // hidden #save-share-container .ss-btn from save-share.js).
     //
-    // omni-app.js already instantiates SaveShareUI({ collectComment: true })
-    // inside #save-share-container and wires up setSessionId / setRecordingBlob
-    // when sessions start / stop. We just swap the "Upload & Share" text for
-    // an SVG icon so it matches the rest of the mobile top-right cluster.
+    // Why: the original button placed on the camera stage proved hard to
+    // make reliably visible across mobile devices (CSS override / dark
+    // blending issues). The settings sheet is the natural home — users
+    // already open it via the gear, and the React widget renders a
+    // predictable list of `.settings-section` cards we can append to.
     //
-    // We use a MutationObserver because SaveShareUI re-renders on state
-    // changes (._updateBtn() rewrites textContent). Observing the .ss-btn
-    // means the icon survives those rewrites.
+    // What this does: when `.settings-sheet` appears in the DOM, inject
+    // a "分享通话" section right after its head. The injected button
+    // forwards `click` to `#save-share-container .ss-btn`, which means
+    // every downstream behavior (comment modal, upload, copy link,
+    // toast) is unchanged from the desktop / turn-based experience.
+    //
+    // The injected button mirrors the source button's `disabled` state
+    // so users get the same "no session yet → grayed out" feedback.
     // ========================================================================
-    function styleShareButton() {
-        const container = document.getElementById('save-share-container');
-        if (!container) return;
-        const btn = container.querySelector('.ss-btn');
-        if (!btn) {
-            // SaveShareUI hasn't rendered yet — try again next tick.
-            setTimeout(styleShareButton, 50);
-            return;
+    let shareDomObserver = null;
+
+    function findSourceShareButton() {
+        return document.querySelector('#save-share-container .ss-btn');
+    }
+
+    function buildShareSection(sourceBtn) {
+        const section = document.createElement('div');
+        section.className = 'settings-section mb-share-section';
+        section.innerHTML = `
+            <div class="settings-section-title">分享</div>
+            <div class="mb-share-row">
+                <button class="secondary-btn compact mb-share-btn" type="button">
+                    <span class="mb-share-icon" aria-hidden="true"></span>
+                    分享通话
+                </button>
+                <span class="mb-share-hint"></span>
+            </div>
+        `;
+        const iconHost = section.querySelector('.mb-share-icon');
+        if (iconHost) iconHost.innerHTML = ICON_SHARE;
+        const btn = section.querySelector('.mb-share-btn');
+        const hint = section.querySelector('.mb-share-hint');
+
+        function syncState() {
+            const disabled = !sourceBtn || !!sourceBtn.disabled;
+            btn.disabled = disabled;
+            hint.textContent = disabled
+                ? '通话开始后可分享'
+                : '上传录制并复制链接，可附评语';
+        }
+        syncState();
+        if (sourceBtn) {
+            new MutationObserver(syncState).observe(sourceBtn, {
+                attributes: true,
+                attributeFilter: ['disabled'],
+            });
         }
 
-        function applyIcon() {
-            // Only rewrite if the icon isn't already there (avoid infinite
-            // mutation loops with the observer below).
-            if (btn.querySelector('svg')) return;
-            btn.setAttribute('aria-label', '分享通话');
-            btn.setAttribute('title', '分享');
-            btn.innerHTML = ICON_SHARE;
-        }
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!sourceBtn || sourceBtn.disabled) return;
+            // Defer so the click handler returns synchronously before
+            // SaveShareUI opens its own modal — keeps event ordering sane
+            // on touch devices that synthesize click → focus → blur.
+            setTimeout(() => sourceBtn.click(), 0);
+        });
 
-        applyIcon();
-        // Re-apply if SaveShareUI overwrites textContent (it does on
-        // setSessionId / upload state changes).
-        const obs = new MutationObserver(() => applyIcon());
-        obs.observe(btn, { childList: true, characterData: true, subtree: true });
+        return section;
+    }
+
+    function injectShareIntoSheet() {
+        const sheet = document.querySelector('.settings-sheet');
+        if (!sheet) return false;
+        if (sheet.querySelector('.mb-share-section')) return true; // already done
+        const sourceBtn = findSourceShareButton();
+        // Even if no source button yet, inject a disabled placeholder so
+        // the section is visible — it will hot-update once SaveShareUI
+        // wires up via the MutationObserver above.
+        const section = buildShareSection(sourceBtn);
+        const head = sheet.querySelector('.settings-sheet-head');
+        if (head?.nextSibling) {
+            sheet.insertBefore(section, head.nextSibling);
+        } else {
+            sheet.appendChild(section);
+        }
+        return true;
+    }
+
+    function watchForSettingsSheet() {
+        // The React widget mounts/unmounts `.settings-sheet` each open/close
+        // cycle, so we re-inject every time it appears.
+        if (shareDomObserver) return;
+        shareDomObserver = new MutationObserver(() => {
+            injectShareIntoSheet();
+        });
+        shareDomObserver.observe(document.body, { childList: true, subtree: true });
+        // First-shot in case sheet is already mounted.
+        injectShareIntoSheet();
     }
 
     // ========================================================================
@@ -348,7 +411,7 @@
             injectTorchButton();
             watchVideoElement();
             bindPinchZoom();
-            styleShareButton();
+            watchForSettingsSheet();
         }, 0);
     }
 

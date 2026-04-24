@@ -54,69 +54,73 @@ body.mobile-omni .app-nav {
  *
  * Sits LEFT of the torch (which is at right: 114px, width 44px). Torch
  * is conditionally visible, so we put share at right: 170px regardless. */
-/* Sit immediately to the LEFT of the gear (.fullscreen-btn) in the
- * bottom-right. Gear is `position: absolute` inside .panel-media which
- * itself is `position: fixed; bottom: 56px`, so the gear's effective
- * viewport bottom = 56 + 70 + safe-area = 126 + safe-area.
+/* The original SaveShareUI button is presented INSIDE the settings
+ * sheet (injected by mobile-bridge.js) instead of on the camera stage,
+ * because the camera-stage placement was unreliable across devices
+ * (probably some combination of CSS overrides + dark blending).
  *
- * Share container is at body level so we use `position: fixed` and
- * mirror that math directly. Size matched to gear (36x36) and offset
- * by gear-width(36) + gap(8) + gear-right(12) = 56px. */
+ * We still need #save-share-container to exist in the DOM with a live
+ * .ss-btn child, because the share section in the settings sheet just
+ * proxies its click → .ss-btn.click(), letting all the existing
+ * comment-modal / upload / clipboard / toast logic run unchanged.
+ *
+ * So: collapse the original container to 0×0 in a corner (still in the
+ * DOM, still clickable programmatically) and re-publish only the toast
+ * which positions itself with its own `position: fixed`. */
 body.mobile-omni #save-share-container {
     position: fixed !important;
+    bottom: 0 !important;
+    right: 0 !important;
     top: auto !important;
     left: auto !important;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 126px) !important;
-    right: 56px !important;
-    width: 36px !important;
-    height: 36px !important;
+    width: 0 !important;
+    height: 0 !important;
     max-width: none !important;
     z-index: 200 !important;
-    display: block !important;
-    overflow: visible;
-    /* DEBUG: red outline so we can see the container even when empty.
-     * Remove once we've confirmed the share button renders. */
-    outline: 2px solid red !important;
+    display: block !important; /* override inline `display:none` */
+    overflow: visible !important;
+    pointer-events: none;
 }
 
 body.mobile-omni #save-share-container .ss-btn {
-    width: 36px !important;
-    height: 36px !important;
+    /* Hidden visually but still clickable via `.click()` from JS. */
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
     padding: 0 !important;
-    border: none !important;
-    border-radius: 10px !important;
-    background: rgba(255, 255, 255, 0.2) !important;
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
-    color: #fff !important;
-    font-size: 0 !important; /* hide fallback text */
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.3);
-    cursor: pointer;
+    margin: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: transparent !important;
+    font-size: 0 !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    pointer-events: none;
 }
 
-body.mobile-omni #save-share-container .ss-btn:disabled {
-    opacity: 0.5 !important;
-    cursor: default;
-}
-
-body.mobile-omni #save-share-container .ss-btn:not(:disabled):active {
-    transform: scale(0.9);
-}
-
-body.mobile-omni #save-share-container .ss-btn svg {
-    width: 20px;
-    height: 20px;
-}
-
-/* Toast position above the bottom controls strip (which is fixed at the
- * very bottom). */
+/* The toast is `position: fixed` so it floats over the viewport even
+ * though its DOM parent is collapsed. Re-anchor above the bottom strip
+ * and re-enable pointer events for select/copy. */
 body.mobile-omni #save-share-container .ss-toast {
+    position: fixed !important;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 76px) !important;
     right: 12px !important;
     max-width: calc(100vw - 24px) !important;
+    pointer-events: auto;
+}
+
+/* ─────────── Settings-sheet share section (injected by JS) ─────────── */
+.mb-share-section .mb-share-row {
+    display: flex; align-items: center; gap: 10px;
+}
+.mb-share-section .mb-share-btn {
+    flex: 0 0 auto;
+}
+.mb-share-section .mb-share-hint {
+    flex: 1 1 auto;
+    font-size: 12.5px;
+    color: #888;
+    line-height: 1.4;
 }
 
 /* Per spec 4.2.2: HD / File mode buttons removed on mobile.
