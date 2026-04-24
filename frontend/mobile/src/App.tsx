@@ -3835,43 +3835,85 @@ function App() {
 
     abortRef.current = controller
 
-    try {
+    // Auto-retry semantics for the non-streaming HTTP path: silently retry
+    // network-level failures up to MAX_ATTEMPTS before surfacing to the user.
+    // We deliberately do NOT retry on backend-reported errors (HTTP 4xx/5xx
+    // with a parsed payload) because those are deterministic and re-issuing
+    // the same request won't help.
+    const MAX_ATTEMPTS = 3
+    const RETRY_BASE_DELAY_MS = 400
+    const requestBody = JSON.stringify(
+      buildChatRequestBody(nextMessages, systemMessage, false),
+    )
+
+    type ChatPayload = {
+      text?: string
+      error?: string
+      success?: boolean
+      audio_data?: string | null
+      audio_sample_rate?: number
+      recording_session_id?: string | null
+    }
+
+    const fetchOnce = async (): Promise<ChatPayload> => {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(
-          buildChatRequestBody(nextMessages, systemMessage, false),
-        ),
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
         signal: controller.signal,
       })
 
       const rawText = await response.text()
-      let payload: {
-        text?: string
-        error?: string
-        success?: boolean
-        audio_data?: string | null
-        audio_sample_rate?: number
-        recording_session_id?: string | null
-      }
-
+      let payload: ChatPayload
       try {
-        payload = JSON.parse(rawText) as {
-          text?: string
-          error?: string
-          success?: boolean
-          audio_data?: string | null
-          audio_sample_rate?: number
-          recording_session_id?: string | null
-        }
+        payload = JSON.parse(rawText) as ChatPayload
       } catch {
         throw new Error(rawText || `HTTP ${response.status}`)
       }
 
       if (!response.ok || payload.success === false) {
         throw new Error(payload.error || `HTTP ${response.status}`)
+      }
+
+      return payload
+    }
+
+    const isTransientNetworkError = (err: unknown): boolean => {
+      if (controller.signal.aborted) return false
+      // TypeError covers Fetch's "Failed to fetch" / network failure.
+      // We treat any error that isn't an HTTP-with-payload error as
+      // transient — fetchOnce throws Error('HTTP ...') / Error(payload.error)
+      // for those, so they end up here looking like transient too. To keep
+      // the surface narrow we only retry true TypeError network failures.
+      return err instanceof TypeError
+    }
+
+    try {
+      let payload: ChatPayload | null = null
+      let lastError: unknown = null
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+        try {
+          payload = await fetchOnce()
+          break
+        } catch (err) {
+          lastError = err
+          if (controller.signal.aborted) {
+            throw err
+          }
+          if (
+            !isTransientNetworkError(err) ||
+            attempt + 1 >= MAX_ATTEMPTS
+          ) {
+            throw err
+          }
+          await new Promise((r) =>
+            setTimeout(r, RETRY_BASE_DELAY_MS * (attempt + 1)),
+          )
+        }
+      }
+
+      if (!payload) {
+        throw lastError ?? new Error('请求失败')
       }
 
       let assistantAudioUrl: string | null = null
@@ -3964,28 +4006,12 @@ function App() {
       window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${wsProto}//${window.location.host}/ws/chat`
 
-    let ws: WebSocket
-    try {
-      ws = new WebSocket(wsUrl)
-    } catch (error) {
-      if (isStillActive()) {
-        setMessages([
-          ...nextMessages,
-          {
-            id: createId('assistant'),
-            role: 'assistant',
-            kind: 'assistant',
-            text: `连接失败：${getErrorMessage(error)}`,
-            error: true,
-          },
-        ])
-      }
-      setPendingReply(null)
-      setIsGenerating(false)
-      return
-    }
-
-    streamingWsRef.current = ws
+    // Auto-retry semantics: while no streaming data has been received yet,
+    // a connection-level error / unexpected close is treated as a transient
+    // failure and we silently retry up to MAX_ATTEMPTS times. Only when all
+    // retries are exhausted do we surface the failure to the user.
+    const MAX_ATTEMPTS = 3
+    const RETRY_BASE_DELAY_MS = 400
 
     let player: StreamingPcmPlayer | null = null
     if (settings.turnTtsEnabled) {
@@ -4002,6 +4028,9 @@ function App() {
     let stoppedByUser = false
     let finished = false
     let lastSampleRate = 24000
+    let receivedAnyData = false
+    let currentWs: WebSocket | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
 
     const finalize = (
       entry: ConversationEntry | null,
@@ -4011,6 +4040,11 @@ function App() {
         return
       }
       finished = true
+
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
 
       const { errorMessage, cutPlayback = false } = options
 
@@ -4088,7 +4122,7 @@ function App() {
         ])
       }
 
-      if (streamingWsRef.current === ws) {
+      if (currentWs && streamingWsRef.current === currentWs) {
         streamingWsRef.current = null
       }
 
@@ -4103,150 +4137,227 @@ function App() {
 
     streamingStopRef.current = () => {
       stoppedByUser = true
-      try {
-        ws.close()
-      } catch {
-        /* ignore */
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer)
+        retryTimer = null
       }
-    }
-
-    ws.onopen = () => {
-      try {
-        ws.send(
-          JSON.stringify(buildChatRequestBody(nextMessages, systemMessage, true)),
-        )
-      } catch (error) {
-        finalize(null, {
-          errorMessage: `发送失败：${getErrorMessage(error)}`,
-          cutPlayback: true,
-        })
+      if (currentWs) {
         try {
-          ws.close()
+          currentWs.close()
         } catch {
           /* ignore */
         }
       }
     }
 
-    ws.onmessage = (event) => {
-      let msg: {
-        type?: string
-        text_delta?: string
-        text?: string
-        audio_data?: string
-        audio_sample_rate?: number
-        recording_session_id?: string | null
-        error?: string
+    const requestBody = JSON.stringify(
+      buildChatRequestBody(nextMessages, systemMessage, true),
+    )
+
+    const runAttempt = (attempt: number) => {
+      if (finished || stoppedByUser) {
+        return
       }
 
+      let ws: WebSocket
       try {
-        msg = JSON.parse(event.data)
-      } catch {
+        ws = new WebSocket(wsUrl)
+      } catch (error) {
+        // Constructor itself blew up (rare). Treat as a retryable failure
+        // until MAX_ATTEMPTS is reached.
+        scheduleRetryOrFail(attempt, `连接失败：${getErrorMessage(error)}`)
         return
       }
 
-      if (msg.type === 'prefill_done') {
-        return
-      }
+      currentWs = ws
+      streamingWsRef.current = ws
 
-      if (msg.type === 'chunk') {
-        if (typeof msg.text_delta === 'string' && msg.text_delta) {
-          fullText += msg.text_delta
-          if (isStillActive()) {
-            setPendingReply({
-              id: pendingId,
-              role: 'assistant',
-              kind: 'pending',
-              text: fullText,
-            })
-          }
-        }
-
-        if (msg.audio_data && player) {
-          if (typeof msg.audio_sample_rate === 'number') {
-            lastSampleRate = msg.audio_sample_rate
-          }
+      ws.onopen = () => {
+        try {
+          ws.send(requestBody)
+        } catch (error) {
+          finalize(null, {
+            errorMessage: `发送失败：${getErrorMessage(error)}`,
+            cutPlayback: true,
+          })
           try {
-            player.pushBase64(msg.audio_data)
+            ws.close()
           } catch {
             /* ignore */
           }
         }
-        return
       }
 
-      if (msg.type === 'done') {
-        const finalText = (fullText || msg.text || '').trim() || '(空回复)'
-        const recordingSessionId = msg.recording_session_id ?? null
-
-        if (recordingSessionId) {
-          setLastSessionId(recordingSessionId)
+      ws.onmessage = (event) => {
+        let msg: {
+          type?: string
+          text_delta?: string
+          text?: string
+          audio_data?: string
+          audio_sample_rate?: number
+          recording_session_id?: string | null
+          error?: string
         }
-
-        finalize(
-          {
-            id: createId('assistant'),
-            role: 'assistant',
-            kind: 'assistant',
-            text: finalText,
-            audioPreviewUrl: null,
-            recordingSessionId,
-          },
-          { cutPlayback: false },
-        )
 
         try {
-          ws.close()
+          msg = JSON.parse(event.data)
         } catch {
-          /* ignore */
+          return
         }
-        return
+
+        if (msg.type === 'prefill_done') {
+          // prefill_done is a backend-side acknowledgement; treat it as
+          // proof that the connection is alive, so subsequent failures
+          // can no longer be silently retried (the model has started
+          // doing work for this request).
+          receivedAnyData = true
+          return
+        }
+
+        if (msg.type === 'chunk') {
+          receivedAnyData = true
+          if (typeof msg.text_delta === 'string' && msg.text_delta) {
+            fullText += msg.text_delta
+            if (isStillActive()) {
+              setPendingReply({
+                id: pendingId,
+                role: 'assistant',
+                kind: 'pending',
+                text: fullText,
+              })
+            }
+          }
+
+          if (msg.audio_data && player) {
+            if (typeof msg.audio_sample_rate === 'number') {
+              lastSampleRate = msg.audio_sample_rate
+            }
+            try {
+              player.pushBase64(msg.audio_data)
+            } catch {
+              /* ignore */
+            }
+          }
+          return
+        }
+
+        if (msg.type === 'done') {
+          receivedAnyData = true
+          const finalText = (fullText || msg.text || '').trim() || '(空回复)'
+          const recordingSessionId = msg.recording_session_id ?? null
+
+          if (recordingSessionId) {
+            setLastSessionId(recordingSessionId)
+          }
+
+          finalize(
+            {
+              id: createId('assistant'),
+              role: 'assistant',
+              kind: 'assistant',
+              text: finalText,
+              audioPreviewUrl: null,
+              recordingSessionId,
+            },
+            { cutPlayback: false },
+          )
+
+          try {
+            ws.close()
+          } catch {
+            /* ignore */
+          }
+          return
+        }
+
+        if (msg.type === 'error') {
+          // Backend-reported error: don't retry, surface immediately.
+          receivedAnyData = true
+          finalize(null, {
+            errorMessage: `请求失败：${msg.error || 'unknown error'}`,
+            cutPlayback: true,
+          })
+          try {
+            ws.close()
+          } catch {
+            /* ignore */
+          }
+        }
       }
 
-      if (msg.type === 'error') {
-        finalize(null, {
-          errorMessage: `请求失败：${msg.error || 'unknown error'}`,
-          cutPlayback: true,
-        })
-        try {
-          ws.close()
-        } catch {
-          /* ignore */
+      ws.onerror = () => {
+        if (finished || stoppedByUser) {
+          return
+        }
+        if (!receivedAnyData) {
+          // Likely a transient connection failure (e.g. handshake aborted).
+          // Close this socket and let onclose drive the retry decision.
+          try {
+            ws.close()
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      ws.onclose = () => {
+        if (finished) {
+          return
+        }
+
+        if (stoppedByUser) {
+          finalize(
+            {
+              id: createId('assistant'),
+              role: 'assistant',
+              kind: 'assistant',
+              text: fullText.trim() || '已停止当前回复。',
+              audioPreviewUrl: null,
+              recordingSessionId: null,
+            },
+            { cutPlayback: true },
+          )
+          return
+        }
+
+        if (!receivedAnyData) {
+          scheduleRetryOrFail(attempt, 'WebSocket 连接异常')
+        } else {
+          // Stream started and then the socket dropped — that's a real
+          // mid-stream failure; surface it instead of silently retrying.
+          finalize(null, {
+            errorMessage: '连接已关闭',
+            cutPlayback: true,
+          })
         }
       }
     }
 
-    ws.onerror = () => {
+    const scheduleRetryOrFail = (
+      attempt: number,
+      finalErrorMessage: string,
+    ) => {
+      if (finished || stoppedByUser) {
+        return
+      }
+
+      if (attempt + 1 < MAX_ATTEMPTS) {
+        const delay = RETRY_BASE_DELAY_MS * (attempt + 1)
+        retryTimer = setTimeout(() => {
+          retryTimer = null
+          runAttempt(attempt + 1)
+        }, delay)
+        return
+      }
+
+      // Exhausted retries — surface the failure to the user.
       finalize(null, {
-        errorMessage: 'WebSocket 连接异常',
+        errorMessage: finalErrorMessage,
         cutPlayback: true,
       })
     }
 
-    ws.onclose = () => {
-      if (finished) {
-        return
-      }
-
-      if (stoppedByUser) {
-        finalize(
-          {
-            id: createId('assistant'),
-            role: 'assistant',
-            kind: 'assistant',
-            text: fullText.trim() || '已停止当前回复。',
-            audioPreviewUrl: null,
-            recordingSessionId: null,
-          },
-          { cutPlayback: true },
-        )
-      } else {
-        finalize(null, {
-          errorMessage: '连接已关闭',
-          cutPlayback: true,
-        })
-      }
-    }
+    runAttempt(0)
   }
 
   async function sendTextMessage() {
