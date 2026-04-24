@@ -74,6 +74,9 @@ body.mobile-omni #save-share-container {
     z-index: 200 !important;
     display: block !important;
     overflow: visible;
+    /* DEBUG: red outline so we can see the container even when empty.
+     * Remove once we've confirmed the share button renders. */
+    outline: 2px solid red !important;
 }
 
 body.mobile-omni #save-share-container .ss-btn {

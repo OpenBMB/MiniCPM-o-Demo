@@ -84,6 +84,11 @@ function clearRecentSessions() {
     localStorage.removeItem(RECENT_SESSIONS_KEY);
 }
 
+/* Explicitly publish to window so ES modules (e.g. omni-app.js) can see
+ * us. Top-level `class X` in a classic script lives in the global
+ * lexical environment, which modules *should* also see — but a couple
+ * of older mobile WebViews have been observed to miss it. Belt-and-
+ * braces: also expose on window. */
 class SaveShareUI {
     /**
      * @param {Object} opts
@@ -246,6 +251,11 @@ class SaveShareUI {
     static uploadRecording(sid, blob, ext) { return uploadRecording(sid, blob, ext); }
     static saveComment(sid, comment) { return saveComment(sid, comment); }
     static fetchComment(sid) { return fetchComment(sid); }
+}
+
+// Belt-and-braces: also expose on window so ES modules can find us.
+if (typeof window !== 'undefined') {
+    window.SaveShareUI = SaveShareUI;
 }
 
 /* Inject minimal styles */
