@@ -1797,6 +1797,7 @@ type MessageBubbleProps = {
   onStopStreamAudio?: () => void
   canRegenerate?: boolean
   onRegenerate?: () => void
+  queueHint?: string | null
 }
 
 function MessageBubble({
@@ -1807,6 +1808,7 @@ function MessageBubble({
   onStopStreamAudio,
   canRegenerate,
   onRegenerate,
+  queueHint,
 }: MessageBubbleProps) {
   if (entry.kind === 'pending') {
     return (
@@ -1817,6 +1819,11 @@ function MessageBubble({
           <span />
           <span />
         </span>
+        {queueHint ? (
+          <div className="msg-queue-hint" aria-live="polite">
+            {queueHint}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -2734,6 +2741,12 @@ function App() {
     summary: 'Checking backend',
     detail: 'Polling /status...',
   })
+  // Lightweight queue indicator for the turn-based screen. Mirrors the desktop
+  // heuristic in static/turnbased.html: when a turn request is pending and the
+  // gateway reports zero idle workers + a positive queue length, show a small
+  // "排队中 N 人, 预计 ~Xs" hint inside the pending bubble. Cleared when the
+  // request finishes or a worker is assigned.
+  const [queueHint, setQueueHint] = useState<string | null>(null)
   const [lastSessionId, setLastSessionId] = useState<string | null>(null)
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
   const [shareSessionId, setShareSessionId] = useState<string | null>(null)
@@ -3024,6 +3037,63 @@ function App() {
       window.clearInterval(interval)
     }
   }, [])
+
+  // Faster /status polling while a turn request is in flight, to surface a
+  // queue indicator in the pending bubble. We only poll when there's an
+  // active pending reply (i.e. the user just submitted) AND we haven't
+  // received any streamed text yet — once the worker starts emitting tokens,
+  // we know we've been assigned and the queue hint is no longer relevant.
+  useEffect(() => {
+    if (!pendingReply || !isGenerating) {
+      setQueueHint(null)
+      return
+    }
+
+    // Once we've started receiving text from the model, suppress queue hints.
+    if (pendingReply.text && pendingReply.text.trim().length > 0) {
+      setQueueHint(null)
+      return
+    }
+
+    let cancelled = false
+    const startedAt = Date.now()
+
+    async function poll() {
+      try {
+        const response = await fetch('/status')
+        if (!response.ok) return
+        const data = (await response.json()) as ServiceStatusResponse
+        if (cancelled) return
+
+        const inQueue = data.idle_workers === 0 && data.queue_length > 0
+        if (!inQueue) {
+          setQueueHint(null)
+          return
+        }
+
+        // Heuristic estimate: ~15s per request ahead of us, plus a small
+        // buffer for the currently-running request. Matches the desktop
+        // implementation in static/turnbased.html.
+        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000)
+        const eta = Math.max(1, data.queue_length * 15 - elapsedSec)
+        setQueueHint(
+          `排队中：前面 ${data.queue_length} 人，预计 ~${eta}s`,
+        )
+      } catch {
+        // Silent — main /status poller surfaces gateway-down state.
+      }
+    }
+
+    void poll()
+    const interval = window.setInterval(() => {
+      void poll()
+    }, 3000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [pendingReply, isGenerating])
 
   useEffect(() => {
     let cancelled = false
@@ -5291,6 +5361,7 @@ function App() {
                     onRegenerate={() => {
                       void regenerateLastReply()
                     }}
+                    queueHint={entry.kind === 'pending' ? queueHint : null}
                   />
                 )
               })}

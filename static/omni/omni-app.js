@@ -1810,9 +1810,22 @@ if (document.readyState !== 'loading') {
     document.addEventListener('DOMContentLoaded', () => mixerCtrl.init());
 }
 
-// Cleanup on page unload (release media, WS, AudioContext)
-window.addEventListener('beforeunload', () => {
-    if (session?.running) session.stop();
-});
+// Cleanup on page unload (release media, WS, AudioContext).
+// IMPORTANT: also tear down the live camera preview. If we leave it dangling,
+// the OS-level camera handle may not be released before the next page (e.g.
+// /mobile/ → /mobile-omni/) calls getUserMedia again, producing a black/empty
+// stream on the second entry (especially on Android WebView and iOS Safari).
+// Use pagehide too because iOS Safari is unreliable with beforeunload during
+// same-origin navigations.
+function _cleanupOmniMedia() {
+    try { if (session?.running) session.stop(); } catch (_) {}
+    try { if (media) { media.stop(); media = null; } } catch (_) {}
+    try {
+        if (cameraPreview) { cameraPreview.stopPreview(); cameraPreview = null; }
+    } catch (_) {}
+}
+window.addEventListener('beforeunload', _cleanupOmniMedia);
+window.addEventListener('pagehide', _cleanupOmniMedia);
+window.__omniCleanupMedia = _cleanupOmniMedia;
 
 /* ---------- end of file ---------- */

@@ -35,6 +35,16 @@
         btn.innerHTML = ICON_BACK;
         const goBack = (e) => {
             if (e) { e.preventDefault(); e.stopPropagation(); }
+            // Eagerly release camera + mic before navigating away so the OS
+            // camera handle is freed by the time the user returns. Without
+            // this we observed a black-screen camera on the *second* entry
+            // into /mobile-omni/ — beforeunload alone is too late on some
+            // mobile browsers (Android WebView / iOS Safari).
+            try {
+                if (typeof window.__omniCleanupMedia === 'function') {
+                    window.__omniCleanupMedia();
+                }
+            } catch (_) {}
             try { window.location.assign(BACK_URL); } catch (_) { window.location.href = BACK_URL; }
         };
         btn.addEventListener('click', goBack);

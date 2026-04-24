@@ -376,10 +376,19 @@
 
 .msg.assistant.pending {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 12px 14px;
   background: #f4f5f7;
+}
+
+.msg-queue-hint {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+  letter-spacing: 0.2px;
 }
 
 .pending-dots {
