@@ -168,6 +168,54 @@
     }
 
     // ========================================================================
+    // DEBUG probe: a magenta square right next to the gear, sharing the
+    // gear's exact parent (#videoContainer) and coordinate system. If the
+    // user can see it, then the spot itself is reachable and the previous
+    // share-button invisibility was specifically about #save-share-container
+    // living at <body> level. If the user CAN'T see this either, then the
+    // spot itself is being covered by something on their device and we need
+    // to chase z-index / stacking context.
+    // ========================================================================
+    function injectProbeButton() {
+        const container = document.getElementById('videoContainer');
+        if (!container) return;
+        if (container.querySelector('.mb-probe-btn')) return;
+        const probe = document.createElement('button');
+        probe.type = 'button';
+        probe.className = 'mb-probe-btn';
+        probe.setAttribute('aria-label', 'probe');
+        probe.title = 'probe';
+        // Inline styles so we don't depend on external CSS load order
+        // for this particular diagnostic.
+        probe.style.cssText = [
+            'position:absolute',
+            'bottom:calc(env(safe-area-inset-bottom, 0px) + 70px)',
+            'right:56px',
+            'width:36px',
+            'height:36px',
+            'border:0',
+            'border-radius:10px',
+            'background:#ff00ff',
+            'color:#fff',
+            'font-size:14px',
+            'font-weight:700',
+            'z-index:9999',
+            'display:flex',
+            'align-items:center',
+            'justify-content:center',
+            'cursor:pointer',
+            'box-shadow:0 0 0 2px #fff, 0 0 8px rgba(255,0,255,0.7)',
+        ].join(';');
+        probe.textContent = 'P';
+        probe.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            alert('probe clicked — this spot IS reachable');
+        });
+        container.appendChild(probe);
+    }
+
+    // ========================================================================
     // Session storage bridge from /mobile/
     // ========================================================================
     function applyMobileSettings() {
@@ -412,6 +460,7 @@
             watchVideoElement();
             bindPinchZoom();
             watchForSettingsSheet();
+            injectProbeButton();
         }, 0);
     }
 
