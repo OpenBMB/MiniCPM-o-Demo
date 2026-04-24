@@ -1865,7 +1865,10 @@ def main():
     })
 
     logger.info(f"Starting Worker on port {port}, GPU {gpu_id}")
-    uvicorn.run(app, host=args.host, port=port)
+    # Bump WS max payload from uvicorn's 16 MiB default to 128 MiB so that
+    # base64-encoded video attachments (commonly 30-60 MiB after inflation)
+    # can be received without the connection being torn down with code 1009.
+    uvicorn.run(app, host=args.host, port=port, ws_max_size=128 * 1024 * 1024)
 
 
 if __name__ == "__main__":

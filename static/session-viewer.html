@@ -204,6 +204,18 @@
 
         .center-msg { text-align: center; padding: 60px 20px; font-size: 15px; color: #999; }
         .error-msg { color: #ef4444; }
+
+        /* User comment block (optional, only rendered when present) */
+        .user-comment {
+            margin: 12px auto 0; padding: 12px 14px;
+            background: #fffbe6; border: 1px solid #f5e6a8; border-radius: 10px;
+            font-size: 13.5px; line-height: 1.55; color: #5b4a00;
+            white-space: pre-wrap; word-break: break-word;
+        }
+        .user-comment .uc-label {
+            display: block; font-size: 11px; font-weight: 600; color: #8a6c00;
+            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
+        }
     </style>
 </head>
 <body>
@@ -222,6 +234,7 @@
         <div id="error" class="center-msg error-msg" style="display:none;"></div>
         <div id="content" style="display:none;">
             <div id="session-info" class="session-info"></div>
+            <div id="user-comment-host"></div>
             <div id="area-backend"></div>
             <div id="area-frontend"></div>
             <div id="timeline"></div>
@@ -483,6 +496,18 @@
         document.title = `${meta.title||SID} — Session Viewer`;
 
         renderInfo(meta);
+        // Render optional user comment (forward-compat: missing comment.txt → empty → nothing rendered).
+        try {
+            const cr = await fetch(`/api/sessions/${SID}/comment`);
+            if (cr.ok) {
+                const cj = await cr.json();
+                const txt = (cj && typeof cj.comment === 'string') ? cj.comment.trim() : '';
+                if (txt) {
+                    const host = document.getElementById('user-comment-host');
+                    host.innerHTML = `<div class="user-comment"><span class="uc-label">用户评语</span>${esc(txt)}</div>`;
+                }
+            }
+        } catch { /* silent — comment is optional */ }
 
         if (rec) {
             if (rec.mode === 'duplex') {

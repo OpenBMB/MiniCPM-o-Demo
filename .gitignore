@@ -12,10 +12,13 @@ build/
 
 # Node
 node_modules/
+static/mobile/
 
 # 本地配置与运行时（用户从 config.example.json 复制）
 config.json
 # certs/
+certs/mobile-remote-*.pem
+mobile_gateway_*.log
 
 # 运行时数据
 data/
@@ -47,3 +50,4 @@ AutoAWQ/
 dev_tools/
 
 benchmark.json
+.run-logs/

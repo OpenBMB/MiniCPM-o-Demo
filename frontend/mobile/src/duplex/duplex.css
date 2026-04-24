@@ -1,0 +1,407 @@
+/* ==========================================================================
+   Video duplex screen — faithful replica of desktop omni fullscreen mode.
+   Source of truth: static/omni/omni.css `body.video-fullscreen` styles +
+                    static/omni/omni.html DOM order.
+   Class prefix `vd-` so this file stays self-contained and never collides
+   with App.css.
+   ========================================================================== */
+
+.vd-screen {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+  z-index: 1000;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* video stage = .panel-media in fullscreen mode (top:0; bottom:56px) */
+.vd-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 56px;
+  background: #000;
+  overflow: hidden;
+}
+
+.vd-video,
+.vd-capture-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.vd-video.mirrored {
+  transform: scaleX(-1);
+}
+
+.vd-capture-canvas {
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- Status lamp (top-left pill, copy of .status-lamp) ---------- */
+.vd-status-lamp {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  background: rgb(0 0 0 / 55%);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  z-index: 10;
+  letter-spacing: 0.5px;
+}
+
+.vd-status-lamp .vd-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #888;
+}
+
+.vd-status-lamp.live .vd-dot {
+  background: #ef4444;
+  animation: vd-pulse-dot 1.5s ease-in-out infinite;
+}
+
+.vd-status-lamp.preparing .vd-dot {
+  background: #eab308;
+  animation: vd-pulse-dot 1s ease-in-out infinite;
+}
+
+.vd-status-lamp.stopped .vd-dot,
+.vd-status-lamp.paused .vd-dot {
+  background: #888;
+}
+
+.vd-status-lamp.error .vd-dot {
+  background: #ef4444;
+}
+
+.vd-status-lamp .vd-timer {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes vd-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
+}
+
+/* ---------- Top-right corner buttons (cam flip + mirror) ----------
+   .cam-flip-btn position from omni.css: top:10px right:10px 44x44.
+   .mirror-btn  position from omni.css: top:10px right:62px 44x44.
+*/
+.vd-corner-btn {
+  position: absolute;
+  top: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 0;
+  background: rgb(255 255 255 / 25%);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgb(255 255 255 / 30%);
+}
+
+.vd-corner-btn.vd-cam-flip {
+  right: 10px;
+}
+
+.vd-corner-btn.vd-mirror {
+  right: 62px;
+  opacity: 0.85;
+}
+
+.vd-corner-btn.vd-mirror.active {
+  opacity: 1;
+  background: rgb(255 255 255 / 40%);
+}
+
+.vd-corner-btn:active {
+  transform: scale(0.9);
+  background: rgb(255 255 255 / 50%);
+}
+
+/* ---------- Bottom-corner small buttons (subtitle toggle + exit) ---------- */
+.vd-edge-btn {
+  position: absolute;
+  bottom: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 0;
+  background: rgb(255 255 255 / 20%);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: opacity 0.15s;
+}
+
+.vd-edge-btn.vd-subtitle-toggle {
+  left: 10px;
+  opacity: 0.5;
+}
+
+.vd-edge-btn.vd-subtitle-toggle.active {
+  opacity: 1;
+}
+
+.vd-edge-btn.vd-fullscreen-exit {
+  right: 10px;
+}
+
+.vd-edge-btn:active {
+  transform: scale(0.9);
+}
+
+/* ---------- Subtitle overlay (.fs-chat-overlay clone) ---------- */
+.vd-chat-overlay {
+  display: flex;
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  right: 0;
+  height: 20vh;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 50;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgb(0 0 0 / 30%) 0%,
+    rgb(0 0 0 / 45%) 30%,
+    rgb(0 0 0 / 65%) 60%,
+    rgb(0 0 0 / 80%) 85%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    rgb(0 0 0 / 30%) 0%,
+    rgb(0 0 0 / 45%) 30%,
+    rgb(0 0 0 / 65%) 60%,
+    rgb(0 0 0 / 80%) 85%
+  );
+}
+
+.vd-chat-overlay.hidden {
+  display: none;
+}
+
+.vd-chat-inner {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  width: 100%;
+  height: 100%;
+  padding: 0 20px 8px;
+  gap: 6px;
+}
+
+.vd-chat-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 50%);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: rgb(255 255 255 / 92%);
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 92%;
+  word-break: break-word;
+  animation: vd-msg-pop 0.25s ease-out;
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+
+.vd-chat-msg .vd-msg-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+
+.vd-chat-msg .vd-msg-text {
+  flex: 1;
+  min-width: 0;
+}
+
+@keyframes vd-msg-pop {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------- Bottom 56px control strip (.fullscreen-controls clone) ---------- */
+.vd-controls {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 200;
+  pointer-events: auto;
+}
+
+.vd-ctrl-btn {
+  padding: 10px 24px;
+  min-width: 100px;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  border: 1px solid rgb(255 255 255 / 20%);
+  background: transparent;
+  color: rgb(255 255 255 / 70%);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  touch-action: manipulation;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.vd-ctrl-btn:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+  background: rgb(255 255 255 / 15%);
+  color: #fff;
+}
+
+.vd-ctrl-btn:active {
+  transform: scale(0.95);
+}
+
+.vd-ctrl-btn.vd-start {
+  background: #fff;
+  color: #2d2d2d;
+  border-color: #fff;
+}
+
+.vd-ctrl-btn.vd-start:disabled {
+  background: #666;
+  border-color: #666;
+  color: #999;
+}
+
+/* When the session is live the Start button morphs into a passive "● Live"
+   indicator: same dark fill as desktop omni's disabled .fs-start state. */
+.vd-ctrl-btn.vd-start.live,
+.vd-ctrl-btn.vd-start.live:disabled {
+  background: #666;
+  border-color: #666;
+  color: #fff;
+  opacity: 1;
+}
+
+.vd-ctrl-btn.vd-stop {
+  color: #f87171;
+  border-color: #f87171;
+}
+
+.vd-ctrl-btn.vd-stop:not(:disabled):active {
+  background: rgb(239 68 68 / 15%);
+}
+
+/* "Cancel" appearance while a queued session is being torn down. */
+.vd-ctrl-btn.vd-stop.cancel {
+  background: rgb(239 68 68 / 90%);
+  color: #fff;
+  border-color: rgb(239 68 68 / 90%);
+}
+
+.vd-ctrl-btn.vd-force-listen-active {
+  background: #e85d04;
+  color: #fff;
+  border-color: #e85d04;
+}
+
+/* small-screen tweaks for narrow phones (mirror omni mobile @ <=768px) */
+@media (max-width: 480px) {
+  .vd-controls {
+    height: 48px;
+    gap: 8px;
+  }
+
+  .vd-stage {
+    bottom: 48px;
+  }
+
+  .vd-ctrl-btn {
+    padding: 7px 12px;
+    min-width: 70px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 360px) {
+  .vd-controls {
+    height: 44px;
+    gap: 6px;
+  }
+
+  .vd-stage {
+    bottom: 44px;
+  }
+
+  .vd-ctrl-btn {
+    padding: 6px 8px;
+    min-width: 60px;
+    font-size: 12px;
+  }
+}

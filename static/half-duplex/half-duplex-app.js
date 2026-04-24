@@ -51,7 +51,7 @@ let turnIndex = 0;
 let sessionRecorder = null;
 let lastRecordingBlob = null;
 const _saveShareUI = typeof SaveShareUI !== 'undefined'
-    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'half_duplex_audio' })
+    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'half_duplex_audio', collectComment: true })
     : null;
 
 // ============================================================
