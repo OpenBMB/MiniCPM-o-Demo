@@ -14,6 +14,14 @@
 
 const _NAV_SELECTOR = '.nav-links';
 
+// Apps to hide from the global nav (still reachable by direct route).
+const _NAV_HIDDEN_APP_IDS = new Set(['half_duplex_audio']);
+
+// Extra static links injected after Home and before the dynamic apps list.
+const _NAV_EXTRA_LINKS = [
+    { route: '/mobile', name: 'Mobile' },
+];
+
 async function _fetchApps() {
     try {
         const resp = await fetch('/api/apps');
@@ -30,12 +38,19 @@ function _renderNav(apps, currentAppId) {
     if (!navEl) return;
 
     const homeActive = !currentAppId ? ' class="active"' : '';
-    const links = apps.map(a => {
-        const active = a.app_id === currentAppId ? ' class="active"' : '';
-        return `<a href="${a.route}"${active}>${a.name}</a>`;
+
+    const extras = _NAV_EXTRA_LINKS.map(e => {
+        return `<a href="${e.route}">${e.name}</a>`;
     });
 
-    navEl.innerHTML = `<a href="/"${homeActive}>Home</a>` + links.join('');
+    const links = apps
+        .filter(a => !_NAV_HIDDEN_APP_IDS.has(a.app_id))
+        .map(a => {
+            const active = a.app_id === currentAppId ? ' class="active"' : '';
+            return `<a href="${a.route}"${active}>${a.name}</a>`;
+        });
+
+    navEl.innerHTML = `<a href="/"${homeActive}>Home</a>` + extras.join('') + links.join('');
 }
 
 /**
