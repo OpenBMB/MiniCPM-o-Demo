@@ -2135,6 +2135,19 @@
   color: #aac6ff;
 }
 
+.halfduplex-top-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: rgb(255 255 255 / 4%);
+  color: rgb(205 215 240 / 50%);
+}
+
+.halfduplex-top-btn:disabled:hover,
+.halfduplex-top-btn:disabled:active {
+  background: rgb(255 255 255 / 4%);
+  color: rgb(205 215 240 / 50%);
+}
+
 .halfduplex-top-actions {
   display: flex;
   gap: 6px;

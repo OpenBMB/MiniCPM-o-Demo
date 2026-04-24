@@ -16,6 +16,9 @@
     const ICON_BACK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
     const ICON_GEAR = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
     const ICON_TORCH = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6l-1 6h-4z"/><path d="M8 8h8l-2 8h-4z"/><path d="M11 16v6"/></svg>';
+    // Outward-pointing arrow over a tray — matches iOS-style "share" idiom
+    // and is recognizable at 22px.
+    const ICON_SHARE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>';
 
     function ensureFullscreenClass() {
         document.body.classList.add('video-fullscreen');
@@ -294,6 +297,44 @@
     }
 
     // ========================================================================
+    // Share button — re-skin desktop SaveShareUI as an icon button.
+    //
+    // omni-app.js already instantiates SaveShareUI({ collectComment: true })
+    // inside #save-share-container and wires up setSessionId / setRecordingBlob
+    // when sessions start / stop. We just swap the "Upload & Share" text for
+    // an SVG icon so it matches the rest of the mobile top-right cluster.
+    //
+    // We use a MutationObserver because SaveShareUI re-renders on state
+    // changes (._updateBtn() rewrites textContent). Observing the .ss-btn
+    // means the icon survives those rewrites.
+    // ========================================================================
+    function styleShareButton() {
+        const container = document.getElementById('save-share-container');
+        if (!container) return;
+        const btn = container.querySelector('.ss-btn');
+        if (!btn) {
+            // SaveShareUI hasn't rendered yet — try again next tick.
+            setTimeout(styleShareButton, 50);
+            return;
+        }
+
+        function applyIcon() {
+            // Only rewrite if the icon isn't already there (avoid infinite
+            // mutation loops with the observer below).
+            if (btn.querySelector('svg')) return;
+            btn.setAttribute('aria-label', '分享通话');
+            btn.setAttribute('title', '分享');
+            btn.innerHTML = ICON_SHARE;
+        }
+
+        applyIcon();
+        // Re-apply if SaveShareUI overwrites textContent (it does on
+        // setSessionId / upload state changes).
+        const obs = new MutationObserver(() => applyIcon());
+        obs.observe(btn, { childList: true, characterData: true, subtree: true });
+    }
+
+    // ========================================================================
     // Init
     // ========================================================================
     function init() {
@@ -307,6 +348,7 @@
             injectTorchButton();
             watchVideoElement();
             bindPinchZoom();
+            styleShareButton();
         }, 0);
     }
 

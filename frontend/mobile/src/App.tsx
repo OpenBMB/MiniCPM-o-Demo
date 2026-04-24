@@ -2808,7 +2808,16 @@ function App() {
   // Best backend session id available for sharing — prefer the most recent
   // assistant reply that carried one (so it survives reload), fall back to
   // the in-memory lastSessionId from the current run.
+  //
+  // For duplex screens we skip the messages[] scan because those entries
+  // belong to a turn-based session that lives in a *different* recording
+  // dir than the current call. The duplex code path stores its own
+  // recordingSessionId via setLastSessionId in useDuplexSession, so
+  // lastSessionId is the right pick on those screens.
   function getShareSessionId(): string | null {
+    if (screen !== 'turn') {
+      return lastSessionId
+    }
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]
       if (m.role === 'assistant' && 'recordingSessionId' in m && m.recordingSessionId) {
@@ -5684,6 +5693,8 @@ function App() {
           onOpenSettings={() => {
             setSettingsOpen(true)
           }}
+          shareReady={shareReady}
+          onOpenShare={handleOpenShare}
         />
       ) : (
         <VideoDuplexScreen

@@ -35,13 +35,74 @@ body.mobile-omni .panel-sysconfig,
 body.mobile-omni .panel-dialog,
 body.mobile-omni .omni-waveform-bar,
 body.mobile-omni .mixer-panel,
-body.mobile-omni #save-share-container,
 body.mobile-omni .fs-faq-bubble,
 body.mobile-omni .fs-faq-toggle,
 body.mobile-omni #faqSidebar,
 body.mobile-omni #appNav,
 body.mobile-omni .app-nav {
     display: none !important;
+}
+
+/* Share button — reuse the desktop SaveShareUI machinery (which already
+ * wires up the comment dialog + upload + clipboard copy via /api/sessions
+ * /{sid}/comment + /upload-recording), but re-skin it as a 44x44 glass
+ * icon button on the video stage so it matches the rest of the mobile
+ * top-right cluster (mirror / torch / cam-flip).
+ *
+ * mobile-bridge.js swaps the button label "Upload & Share" for an SVG
+ * icon at runtime; here we just lay out the container + size the button.
+ *
+ * Sits LEFT of the torch (which is at right: 114px, width 44px). Torch
+ * is conditionally visible, so we put share at right: 170px regardless. */
+body.mobile-omni #save-share-container {
+    position: absolute !important;
+    top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
+    right: 170px !important;
+    bottom: auto !important;
+    left: auto !important;
+    width: 44px !important;
+    height: 44px !important;
+    max-width: none !important;
+    z-index: 200 !important;
+    display: block !important;
+    overflow: visible;
+}
+
+body.mobile-omni #save-share-container .ss-btn {
+    width: 44px !important;
+    height: 44px !important;
+    padding: 0 !important;
+    border-radius: 12px !important;
+    background: rgba(0, 0, 0, 0.4) !important;
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    color: #fff !important;
+    font-size: 0 !important; /* hide fallback text */
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.3);
+}
+
+body.mobile-omni #save-share-container .ss-btn:disabled {
+    opacity: 0.35 !important;
+}
+
+body.mobile-omni #save-share-container .ss-btn:not(:disabled):active {
+    transform: scale(0.92);
+}
+
+body.mobile-omni #save-share-container .ss-btn svg {
+    width: 22px;
+    height: 22px;
+}
+
+/* Toast position above the bottom controls strip (which is fixed at the
+ * very bottom). */
+body.mobile-omni #save-share-container .ss-toast {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 76px) !important;
+    right: 12px !important;
+    max-width: calc(100vw - 24px) !important;
 }
 
 /* Per spec 4.2.2: HD / File mode buttons removed on mobile.
