@@ -168,51 +168,84 @@
     }
 
     // ========================================================================
-    // DEBUG probe: a magenta square right next to the gear, sharing the
-    // gear's exact parent (#videoContainer) and coordinate system. If the
-    // user can see it, then the spot itself is reachable and the previous
-    // share-button invisibility was specifically about #save-share-container
-    // living at <body> level. If the user CAN'T see this either, then the
-    // spot itself is being covered by something on their device and we need
-    // to chase z-index / stacking context.
+    // Stage share button — sits inside #videoContainer right next to the
+    // gear. We learned the hard way that a body-level position:fixed
+    // element gets covered by something in this WebView, but injecting
+    // into #videoContainer (same parent + stacking context as the gear)
+    // works reliably. The button's click is forwarded to the original
+    // hidden #save-share-container .ss-btn so all downstream logic
+    // (comment modal, upload, copy link, toast) runs unchanged via
+    // SaveShareUI from save-share.js.
     // ========================================================================
-    function injectProbeButton() {
+    function injectStageShareButton() {
         const container = document.getElementById('videoContainer');
         if (!container) return;
-        if (container.querySelector('.mb-probe-btn')) return;
-        const probe = document.createElement('button');
-        probe.type = 'button';
-        probe.className = 'mb-probe-btn';
-        probe.setAttribute('aria-label', 'probe');
-        probe.title = 'probe';
-        // Inline styles so we don't depend on external CSS load order
-        // for this particular diagnostic.
-        probe.style.cssText = [
+        if (container.querySelector('.mb-stage-share-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'mb-stage-share-btn';
+        btn.setAttribute('aria-label', '分享通话');
+        btn.title = '分享';
+        btn.innerHTML = ICON_SHARE;
+        // Inline styles to bypass any specificity / load-order surprises.
+        // Mirrors the gear's geometry (.fullscreen-btn): 36x36 at bottom:70
+        // with a glass background. Sits at right:56 (gear-right 12 + gear
+        // width 36 + gap 8).
+        btn.style.cssText = [
             'position:absolute',
             'bottom:calc(env(safe-area-inset-bottom, 0px) + 70px)',
             'right:56px',
             'width:36px',
             'height:36px',
+            'padding:0',
             'border:0',
             'border-radius:10px',
-            'background:#ff00ff',
+            'background:rgba(255,255,255,0.2)',
+            '-webkit-backdrop-filter:blur(8px)',
+            'backdrop-filter:blur(8px)',
             'color:#fff',
-            'font-size:14px',
-            'font-weight:700',
-            'z-index:9999',
             'display:flex',
             'align-items:center',
             'justify-content:center',
+            'z-index:200',
             'cursor:pointer',
-            'box-shadow:0 0 0 2px #fff, 0 0 8px rgba(255,0,255,0.7)',
+            '-webkit-tap-highlight-color:rgba(255,255,255,0.3)',
         ].join(';');
-        probe.textContent = 'P';
-        probe.addEventListener('click', (e) => {
+
+        function syncDisabled() {
+            const src = document.querySelector('#save-share-container .ss-btn');
+            const disabled = !src || !!src.disabled;
+            btn.disabled = disabled;
+            btn.style.opacity = disabled ? '0.5' : '1';
+            btn.style.cursor = disabled ? 'default' : 'pointer';
+        }
+
+        btn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            alert('probe clicked — this spot IS reachable');
+            const src = document.querySelector('#save-share-container .ss-btn');
+            if (!src || src.disabled) return;
+            setTimeout(() => src.click(), 0);
         });
-        container.appendChild(probe);
+
+        container.appendChild(btn);
+        syncDisabled();
+
+        // SaveShareUI may not be ready yet — re-check until it lands,
+        // then attach a MutationObserver for live disabled-state sync.
+        const tryAttach = () => {
+            const src = document.querySelector('#save-share-container .ss-btn');
+            if (!src) {
+                setTimeout(tryAttach, 100);
+                return;
+            }
+            syncDisabled();
+            new MutationObserver(syncDisabled).observe(src, {
+                attributes: true,
+                attributeFilter: ['disabled'],
+            });
+        };
+        tryAttach();
     }
 
     // ========================================================================
@@ -345,23 +378,10 @@
     }
 
     // ========================================================================
-    // Share — surfaced inside the settings sheet (proxies clicks to the
-    // hidden #save-share-container .ss-btn from save-share.js).
-    //
-    // Why: the original button placed on the camera stage proved hard to
-    // make reliably visible across mobile devices (CSS override / dark
-    // blending issues). The settings sheet is the natural home — users
-    // already open it via the gear, and the React widget renders a
-    // predictable list of `.settings-section` cards we can append to.
-    //
-    // What this does: when `.settings-sheet` appears in the DOM, inject
-    // a "分享通话" section right after its head. The injected button
-    // forwards `click` to `#save-share-container .ss-btn`, which means
-    // every downstream behavior (comment modal, upload, copy link,
-    // toast) is unchanged from the desktop / turn-based experience.
-    //
-    // The injected button mirrors the source button's `disabled` state
-    // so users get the same "no session yet → grayed out" feedback.
+    // (legacy) settings-sheet share injection — kept as an alternate access
+    // point in case the stage button proves problematic again on some
+    // device. injectStageShareButton() is the canonical entry, this is a
+    // backup that re-injects every time .settings-sheet remounts.
     // ========================================================================
     let shareDomObserver = null;
 
@@ -406,9 +426,6 @@
             e.preventDefault();
             e.stopPropagation();
             if (!sourceBtn || sourceBtn.disabled) return;
-            // Defer so the click handler returns synchronously before
-            // SaveShareUI opens its own modal — keeps event ordering sane
-            // on touch devices that synthesize click → focus → blur.
             setTimeout(() => sourceBtn.click(), 0);
         });
 
@@ -418,11 +435,8 @@
     function injectShareIntoSheet() {
         const sheet = document.querySelector('.settings-sheet');
         if (!sheet) return false;
-        if (sheet.querySelector('.mb-share-section')) return true; // already done
+        if (sheet.querySelector('.mb-share-section')) return true;
         const sourceBtn = findSourceShareButton();
-        // Even if no source button yet, inject a disabled placeholder so
-        // the section is visible — it will hot-update once SaveShareUI
-        // wires up via the MutationObserver above.
         const section = buildShareSection(sourceBtn);
         const head = sheet.querySelector('.settings-sheet-head');
         if (head?.nextSibling) {
@@ -459,8 +473,8 @@
             injectTorchButton();
             watchVideoElement();
             bindPinchZoom();
+            injectStageShareButton();
             watchForSettingsSheet();
-            injectProbeButton();
         }, 0);
     }
 
