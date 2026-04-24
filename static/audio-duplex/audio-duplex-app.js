@@ -45,7 +45,7 @@ let media = null;          // current MediaProvider
 
 // Save & Share
 const _saveShareUI = typeof SaveShareUI !== 'undefined'
-    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'audio_duplex' })
+    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'audio_duplex', collectComment: true })
     : null;
 let selectedFile = null;
 
