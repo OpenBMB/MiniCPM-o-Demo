@@ -159,7 +159,27 @@ export function useDuplexSession(
   }
 
   async function attachPreview(nextMode: DuplexMode) {
-    if (mediaRef.current || !videoRef.current || !canvasRef.current) {
+    if (!videoRef.current || !canvasRef.current) {
+      return
+    }
+
+    // If a media provider already exists (e.g. user navigated away and came
+    // back, or stopSession() re-attached preview), make sure it's bound to
+    // the *current* DOM nodes. React may have re-mounted the <video> element
+    // with a fresh node, leaving the previous srcObject pointer dangling on
+    // a detached element — which renders as a black screen on re-entry.
+    if (mediaRef.current) {
+      mediaRef.current.rebindElements({
+        videoEl: videoRef.current,
+        canvasEl: canvasRef.current,
+      })
+      if (nextMode === 'video') {
+        try {
+          await mediaRef.current.setCameraEnabled(true)
+        } catch (error) {
+          appendEntry('system', `相机预览失败：${getErrorMessage(error)}`)
+        }
+      }
       return
     }
 
@@ -262,17 +282,29 @@ export function useDuplexSession(
 
     try {
       const runtime = await loadDuplexRuntime()
-      const media = new MobileLiveMediaProvider({
-        videoEl: videoRef.current,
-        canvasEl: canvasRef.current,
-      })
+      // Reuse the preview-time media provider when present (video mode opens a
+      // camera stream during attachPreview). Recreating one here orphans the
+      // preview MediaStream and leaks live camera tracks, which on a second
+      // entry produces a black-screen camera. See fix-d / fix-e.
+      let media = mediaRef.current
+      if (media) {
+        media.rebindElements({
+          videoEl: videoRef.current,
+          canvasEl: canvasRef.current,
+        })
+      } else {
+        media = new MobileLiveMediaProvider({
+          videoEl: videoRef.current,
+          canvasEl: canvasRef.current,
+        })
+        mediaRef.current = media
+      }
       const session = new runtime.DuplexSession(withVideo ? 'omni' : 'adx', {
         getMaxKvTokens: () => 8192,
         getPlaybackDelayMs: () => 200,
         outputSampleRate: 24000,
       })
 
-      mediaRef.current = media
       sessionRef.current = session
       setHasSession(true)
 

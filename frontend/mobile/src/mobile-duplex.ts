@@ -109,11 +109,11 @@ type MobileLiveMediaProviderOptions = {
 }
 
 export class MobileLiveMediaProvider {
-  private readonly videoEl: HTMLVideoElement
+  private videoEl: HTMLVideoElement
 
-  private readonly canvasEl: HTMLCanvasElement
+  private canvasEl: HTMLCanvasElement
 
-  private readonly ctx2d: CanvasRenderingContext2D
+  private ctx2d: CanvasRenderingContext2D
 
   private readonly sampleRate: number
 
@@ -153,6 +153,57 @@ export class MobileLiveMediaProvider {
     }
 
     this.ctx2d = ctx2d
+  }
+
+  /**
+   * Re-attach this media provider to a new pair of DOM elements (e.g. when
+   * React re-mounted the duplex screen and gave us fresh `<video>` /
+   * `<canvas>` nodes). Keeps the underlying MediaStream + AudioContext so we
+   * don't lose the camera permission or trigger another getUserMedia prompt.
+   */
+  rebindElements(elements: {
+    videoEl: HTMLVideoElement
+    canvasEl: HTMLCanvasElement
+  }) {
+    const sameVideo = this.videoEl === elements.videoEl
+    const sameCanvas = this.canvasEl === elements.canvasEl
+    if (sameVideo && sameCanvas) return
+
+    if (!sameVideo) {
+      // Detach from the old <video> so it doesn't keep painting a frozen frame.
+      try {
+        this.videoEl.pause()
+      } catch {
+        /* ignore — element may already be removed */
+      }
+      try {
+        this.videoEl.srcObject = null
+      } catch {
+        /* ignore */
+      }
+      this.videoEl = elements.videoEl
+      if (this.videoStream) {
+        this.videoEl.srcObject = this.videoStream
+        this.videoEl.style.display = 'block'
+        this.videoEl.style.transform = this.usingFrontCamera
+          ? 'scaleX(-1)'
+          : 'none'
+        void this.videoEl.play().catch(() => {
+          /* iOS / autoplay restrictions: keep stream attached */
+        })
+      } else {
+        this.videoEl.style.display = 'none'
+      }
+    }
+
+    if (!sameCanvas) {
+      this.canvasEl = elements.canvasEl
+      const ctx2d = this.canvasEl.getContext('2d')
+      if (!ctx2d) {
+        throw new Error('Unable to initialize duplex frame canvas.')
+      }
+      this.ctx2d = ctx2d
+    }
   }
 
   setMicEnabled(enabled: boolean) {

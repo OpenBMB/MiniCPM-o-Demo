@@ -11,6 +11,12 @@ import { VideoDuplexScreen } from './duplex/VideoDuplexScreen'
 import { useDuplexSession } from './duplex/useDuplexSession'
 import type { DuplexIcons } from './duplex/types'
 import { StreamingPcmPlayer, float32ToWavBlobUrl } from './streaming-player'
+import {
+  addToRecentSessions,
+  buildShareUrl,
+  copyToClipboard,
+  saveSessionComment,
+} from './shared/share-helpers'
 import './App.css'
 
 // Static AudioWorklet module used by the mobile turn-based recorder.
@@ -1086,6 +1092,27 @@ function TrashIcon({ className }: IconProps) {
   )
 }
 
+function ShareIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle cx="6.5" cy="12" r="2.4" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="17.5" cy="6" r="2.4" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="17.5" cy="18" r="2.4" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="m8.6 10.9 6.8-3.8M8.6 13.1l6.8 3.8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  )
+}
+
 function EditSquareIcon({ className }: IconProps) {
   return (
     <svg
@@ -1383,6 +1410,55 @@ async function downscaleImageToAttachment(
     base64,
     name: file.name || 'photo.jpg',
   }
+}
+
+// Hard upload-size caps per attachment kind. The gateway/worker WebSocket
+// frame limit is 128 MiB, but base64 encoding inflates by 4/3 and we still
+// want headroom for other items + JSON overhead. Picked so that even a
+// few attachments together stay well under the wire limit, and so a giant
+// raw video doesn't silently kill the connection.
+const ATTACHMENT_SIZE_LIMIT_BYTES: Record<'image' | 'audio' | 'video', number> = {
+  image: 20 * 1024 * 1024,
+  audio: 30 * 1024 * 1024,
+  video: 30 * 1024 * 1024,
+}
+
+// Hard duration cap for video. Backed by the model's KV-cache budget:
+// at stack_frames=1 the omni pipeline burns roughly 95 tokens per second
+// of video (64 visual + 25 audio + control), and the model's KV window
+// is 8192 tokens — leaving headroom for the system prompt, the conversation
+// history, and the generated reply, ~60 s is the practical ceiling before
+// the model starts producing garbage / off-topic replies.
+const VIDEO_DURATION_LIMIT_SECONDS = 60
+
+const ATTACHMENT_KIND_LABEL: Record<'image' | 'audio' | 'video', string> = {
+  image: '图片',
+  audio: '音频',
+  video: '视频',
+}
+
+function formatMiB(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function checkAttachmentSize(
+  file: File,
+  kind: 'image' | 'audio' | 'video',
+): string | null {
+  const limit = ATTACHMENT_SIZE_LIMIT_BYTES[kind]
+  if (file.size <= limit) return null
+  const label = ATTACHMENT_KIND_LABEL[kind]
+  return `${label}过大（${formatMiB(file.size)}），最大支持 ${formatMiB(limit)}。请重新选择。`
+}
+
+function checkVideoDuration(att: Attachment): string | null {
+  if (att.kind !== 'video') return null
+  const d = att.duration
+  // duration may legitimately be undefined / 0 / Infinity (e.g. some
+  // streaming containers). Only reject when we're confident it overruns.
+  if (typeof d !== 'number' || !Number.isFinite(d) || d <= 0) return null
+  if (d <= VIDEO_DURATION_LIMIT_SECONDS) return null
+  return `视频时长 ${d.toFixed(1)} 秒，最大支持 ${VIDEO_DURATION_LIMIT_SECONDS} 秒。请裁剪后再发送。`
 }
 
 async function mediaFileToAttachment(
@@ -1721,6 +1797,7 @@ type MessageBubbleProps = {
   onStopStreamAudio?: () => void
   canRegenerate?: boolean
   onRegenerate?: () => void
+  queueHint?: string | null
 }
 
 function MessageBubble({
@@ -1731,6 +1808,7 @@ function MessageBubble({
   onStopStreamAudio,
   canRegenerate,
   onRegenerate,
+  queueHint,
 }: MessageBubbleProps) {
   if (entry.kind === 'pending') {
     return (
@@ -1741,6 +1819,11 @@ function MessageBubble({
           <span />
           <span />
         </span>
+        {queueHint ? (
+          <div className="msg-queue-hint" aria-live="polite">
+            {queueHint}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -2313,24 +2396,28 @@ type HistoryDrawerProps = {
   open: boolean
   sessions: ChatSession[]
   activeId: string
+  shareReady: boolean
   onClose: () => void
   onNewSession: () => void
   onSwitch: (id: string) => void
   onDelete: (id: string) => void
   onClearAll: () => void
   onOpenSettings: () => void
+  onOpenShare: () => void
 }
 
 function HistoryDrawer({
   open,
   sessions,
   activeId,
+  shareReady,
   onClose,
   onNewSession,
   onSwitch,
   onDelete,
   onClearAll,
   onOpenSettings,
+  onOpenShare,
 }: HistoryDrawerProps) {
   const sorted = sessions.slice().sort((a, b) => b.updatedAt - a.updatedAt)
   return (
@@ -2397,6 +2484,16 @@ function HistoryDrawer({
           <button
             type="button"
             className="history-drawer-bottom-item"
+            onClick={onOpenShare}
+            disabled={!shareReady}
+            title={shareReady ? '分享当前对话' : '当前对话还没有后端记录可分享'}
+          >
+            <ShareIcon className="app-icon app-icon-md" />
+            <span>分享对话</span>
+          </button>
+          <button
+            type="button"
+            className="history-drawer-bottom-item"
             onClick={onOpenSettings}
           >
             <SettingsIcon className="app-icon app-icon-md" />
@@ -2420,6 +2517,94 @@ function HistoryDrawer({
           </button>
         </div>
       </aside>
+    </div>
+  )
+}
+
+type ShareDialogProps = {
+  open: boolean
+  sessionId: string
+  shareUrl: string
+  comment: string
+  submitting: boolean
+  error: string | null
+  successInfo: string | null
+  onCommentChange: (next: string) => void
+  onCancel: () => void
+  onSubmit: () => void
+}
+
+function ShareDialog({
+  open,
+  sessionId,
+  shareUrl,
+  comment,
+  submitting,
+  error,
+  successInfo,
+  onCommentChange,
+  onCancel,
+  onSubmit,
+}: ShareDialogProps) {
+  if (!open) return null
+  return (
+    <div
+      className="share-dialog-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="分享对话"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !submitting) onCancel()
+      }}
+    >
+      <div className="share-dialog">
+        <div className="share-dialog-title">分享对话</div>
+        <div className="share-dialog-hint">
+          可以加一句评语（可选），帮助回看时记住这是哪段对话。
+          <br />
+          点击「分享」后，链接会复制到剪贴板。
+        </div>
+        <div className="share-dialog-meta">
+          <span className="share-dialog-meta-label">链接</span>
+          <span className="share-dialog-meta-value">{shareUrl || '—'}</span>
+        </div>
+        <div className="share-dialog-meta">
+          <span className="share-dialog-meta-label">Session</span>
+          <span className="share-dialog-meta-value">{sessionId}</span>
+        </div>
+        <textarea
+          className="share-dialog-input"
+          placeholder="评语（可选，最多 2000 字）"
+          maxLength={2000}
+          value={comment}
+          disabled={submitting}
+          onChange={(e) => onCommentChange(e.target.value)}
+        />
+        {error ? <div className="share-dialog-error">{error}</div> : null}
+        {successInfo ? (
+          <div className="share-dialog-success">{successInfo}</div>
+        ) : null}
+        <div className="share-dialog-actions">
+          <button
+            type="button"
+            className="share-dialog-btn share-dialog-cancel"
+            disabled={submitting}
+            onClick={onCancel}
+          >
+            {successInfo ? '关闭' : '取消'}
+          </button>
+          {!successInfo ? (
+            <button
+              type="button"
+              className="share-dialog-btn share-dialog-ok"
+              disabled={submitting || !sessionId}
+              onClick={onSubmit}
+            >
+              {submitting ? '分享中…' : '分享'}
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }
@@ -2556,7 +2741,19 @@ function App() {
     summary: 'Checking backend',
     detail: 'Polling /status...',
   })
-  const [, setLastSessionId] = useState<string | null>(null)
+  // Lightweight queue indicator for the turn-based screen. Mirrors the desktop
+  // heuristic in static/turnbased.html: when a turn request is pending and the
+  // gateway reports zero idle workers + a positive queue length, show a small
+  // "排队中 N 人, 预计 ~Xs" hint inside the pending bubble. Cleared when the
+  // request finishes or a worker is assigned.
+  const [queueHint, setQueueHint] = useState<string | null>(null)
+  const [lastSessionId, setLastSessionId] = useState<string | null>(null)
+  const [shareDialogOpen, setShareDialogOpen] = useState(false)
+  const [shareSessionId, setShareSessionId] = useState<string | null>(null)
+  const [shareComment, setShareComment] = useState('')
+  const [shareSubmitting, setShareSubmitting] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
+  const [shareSuccess, setShareSuccess] = useState<string | null>(null)
 
   const messagesRef = useRef<ConversationEntry[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -2607,6 +2804,80 @@ function App() {
   const activeModePresets = presetsByMode[activePresetMode]
   const activeLengthPenalty = getLengthPenaltyForMode(settings, activePresetMode)
   const activeModeLabel = getPresetModeLabel(activePresetMode)
+
+  // Best backend session id available for sharing — prefer the most recent
+  // assistant reply that carried one (so it survives reload), fall back to
+  // the in-memory lastSessionId from the current run.
+  //
+  // For duplex screens we skip the messages[] scan because those entries
+  // belong to a turn-based session that lives in a *different* recording
+  // dir than the current call. The duplex code path stores its own
+  // recordingSessionId via setLastSessionId in useDuplexSession, so
+  // lastSessionId is the right pick on those screens.
+  function getShareSessionId(): string | null {
+    if (screen !== 'turn') {
+      return lastSessionId
+    }
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'assistant' && 'recordingSessionId' in m && m.recordingSessionId) {
+        return m.recordingSessionId
+      }
+    }
+    return lastSessionId
+  }
+  const shareReady = Boolean(getShareSessionId())
+
+  function getShareAppType(): string {
+    if (screen === 'turn') return 'streaming'
+    if (screen === 'audio-duplex') return 'audio_duplex'
+    return 'omni_duplex'
+  }
+
+  function handleOpenShare() {
+    const sid = getShareSessionId()
+    if (!sid) {
+      setRecordError('当前对话还没有产生后端记录，先发条消息试试。')
+      return
+    }
+    setShareSessionId(sid)
+    setShareComment('')
+    setShareError(null)
+    setShareSuccess(null)
+    setShareSubmitting(false)
+    setShareDialogOpen(true)
+    setHistoryOpen(false)
+  }
+
+  function handleCloseShare() {
+    if (shareSubmitting) return
+    setShareDialogOpen(false)
+  }
+
+  async function handleSubmitShare() {
+    const sid = shareSessionId
+    if (!sid || shareSubmitting) return
+    setShareSubmitting(true)
+    setShareError(null)
+    try {
+      const trimmed = shareComment.trim()
+      if (trimmed) {
+        await saveSessionComment(sid, trimmed)
+      }
+      addToRecentSessions(sid, getShareAppType())
+      const url = buildShareUrl(sid)
+      const ok = await copyToClipboard(url)
+      setShareSuccess(
+        ok
+          ? `已复制到剪贴板：\n${url}`
+          : `分享链接（请手动复制）：\n${url}`,
+      )
+    } catch (err) {
+      setShareError(`分享失败：${getErrorMessage(err)}`)
+    } finally {
+      setShareSubmitting(false)
+    }
+  }
   const audioPresetName =
     presetsByMode.audio_duplex.find(
       (preset) => preset.id === settings.audio_duplex.presetId,
@@ -2775,6 +3046,63 @@ function App() {
       window.clearInterval(interval)
     }
   }, [])
+
+  // Faster /status polling while a turn request is in flight, to surface a
+  // queue indicator in the pending bubble. We only poll when there's an
+  // active pending reply (i.e. the user just submitted) AND we haven't
+  // received any streamed text yet — once the worker starts emitting tokens,
+  // we know we've been assigned and the queue hint is no longer relevant.
+  useEffect(() => {
+    if (!pendingReply || !isGenerating) {
+      setQueueHint(null)
+      return
+    }
+
+    // Once we've started receiving text from the model, suppress queue hints.
+    if (pendingReply.text && pendingReply.text.trim().length > 0) {
+      setQueueHint(null)
+      return
+    }
+
+    let cancelled = false
+    const startedAt = Date.now()
+
+    async function poll() {
+      try {
+        const response = await fetch('/status')
+        if (!response.ok) return
+        const data = (await response.json()) as ServiceStatusResponse
+        if (cancelled) return
+
+        const inQueue = data.idle_workers === 0 && data.queue_length > 0
+        if (!inQueue) {
+          setQueueHint(null)
+          return
+        }
+
+        // Heuristic estimate: ~15s per request ahead of us, plus a small
+        // buffer for the currently-running request. Matches the desktop
+        // implementation in static/turnbased.html.
+        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000)
+        const eta = Math.max(1, data.queue_length * 15 - elapsedSec)
+        setQueueHint(
+          `排队中：前面 ${data.queue_length} 人，预计 ~${eta}s`,
+        )
+      } catch {
+        // Silent — main /status poller surfaces gateway-down state.
+      }
+    }
+
+    void poll()
+    const interval = window.setInterval(() => {
+      void poll()
+    }, 3000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [pendingReply, isGenerating])
 
   useEffect(() => {
     let cancelled = false
@@ -3835,43 +4163,85 @@ function App() {
 
     abortRef.current = controller
 
-    try {
+    // Auto-retry semantics for the non-streaming HTTP path: silently retry
+    // network-level failures up to MAX_ATTEMPTS before surfacing to the user.
+    // We deliberately do NOT retry on backend-reported errors (HTTP 4xx/5xx
+    // with a parsed payload) because those are deterministic and re-issuing
+    // the same request won't help.
+    const MAX_ATTEMPTS = 3
+    const RETRY_BASE_DELAY_MS = 400
+    const requestBody = JSON.stringify(
+      buildChatRequestBody(nextMessages, systemMessage, false),
+    )
+
+    type ChatPayload = {
+      text?: string
+      error?: string
+      success?: boolean
+      audio_data?: string | null
+      audio_sample_rate?: number
+      recording_session_id?: string | null
+    }
+
+    const fetchOnce = async (): Promise<ChatPayload> => {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(
-          buildChatRequestBody(nextMessages, systemMessage, false),
-        ),
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
         signal: controller.signal,
       })
 
       const rawText = await response.text()
-      let payload: {
-        text?: string
-        error?: string
-        success?: boolean
-        audio_data?: string | null
-        audio_sample_rate?: number
-        recording_session_id?: string | null
-      }
-
+      let payload: ChatPayload
       try {
-        payload = JSON.parse(rawText) as {
-          text?: string
-          error?: string
-          success?: boolean
-          audio_data?: string | null
-          audio_sample_rate?: number
-          recording_session_id?: string | null
-        }
+        payload = JSON.parse(rawText) as ChatPayload
       } catch {
         throw new Error(rawText || `HTTP ${response.status}`)
       }
 
       if (!response.ok || payload.success === false) {
         throw new Error(payload.error || `HTTP ${response.status}`)
+      }
+
+      return payload
+    }
+
+    const isTransientNetworkError = (err: unknown): boolean => {
+      if (controller.signal.aborted) return false
+      // TypeError covers Fetch's "Failed to fetch" / network failure.
+      // We treat any error that isn't an HTTP-with-payload error as
+      // transient — fetchOnce throws Error('HTTP ...') / Error(payload.error)
+      // for those, so they end up here looking like transient too. To keep
+      // the surface narrow we only retry true TypeError network failures.
+      return err instanceof TypeError
+    }
+
+    try {
+      let payload: ChatPayload | null = null
+      let lastError: unknown = null
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+        try {
+          payload = await fetchOnce()
+          break
+        } catch (err) {
+          lastError = err
+          if (controller.signal.aborted) {
+            throw err
+          }
+          if (
+            !isTransientNetworkError(err) ||
+            attempt + 1 >= MAX_ATTEMPTS
+          ) {
+            throw err
+          }
+          await new Promise((r) =>
+            setTimeout(r, RETRY_BASE_DELAY_MS * (attempt + 1)),
+          )
+        }
+      }
+
+      if (!payload) {
+        throw lastError ?? new Error('请求失败')
       }
 
       let assistantAudioUrl: string | null = null
@@ -3964,28 +4334,12 @@ function App() {
       window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${wsProto}//${window.location.host}/ws/chat`
 
-    let ws: WebSocket
-    try {
-      ws = new WebSocket(wsUrl)
-    } catch (error) {
-      if (isStillActive()) {
-        setMessages([
-          ...nextMessages,
-          {
-            id: createId('assistant'),
-            role: 'assistant',
-            kind: 'assistant',
-            text: `连接失败：${getErrorMessage(error)}`,
-            error: true,
-          },
-        ])
-      }
-      setPendingReply(null)
-      setIsGenerating(false)
-      return
-    }
-
-    streamingWsRef.current = ws
+    // Auto-retry semantics: while no streaming data has been received yet,
+    // a connection-level error / unexpected close is treated as a transient
+    // failure and we silently retry up to MAX_ATTEMPTS times. Only when all
+    // retries are exhausted do we surface the failure to the user.
+    const MAX_ATTEMPTS = 3
+    const RETRY_BASE_DELAY_MS = 400
 
     let player: StreamingPcmPlayer | null = null
     if (settings.turnTtsEnabled) {
@@ -4002,6 +4356,9 @@ function App() {
     let stoppedByUser = false
     let finished = false
     let lastSampleRate = 24000
+    let receivedAnyData = false
+    let currentWs: WebSocket | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
 
     const finalize = (
       entry: ConversationEntry | null,
@@ -4011,6 +4368,11 @@ function App() {
         return
       }
       finished = true
+
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
 
       const { errorMessage, cutPlayback = false } = options
 
@@ -4088,7 +4450,7 @@ function App() {
         ])
       }
 
-      if (streamingWsRef.current === ws) {
+      if (currentWs && streamingWsRef.current === currentWs) {
         streamingWsRef.current = null
       }
 
@@ -4103,150 +4465,227 @@ function App() {
 
     streamingStopRef.current = () => {
       stoppedByUser = true
-      try {
-        ws.close()
-      } catch {
-        /* ignore */
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer)
+        retryTimer = null
       }
-    }
-
-    ws.onopen = () => {
-      try {
-        ws.send(
-          JSON.stringify(buildChatRequestBody(nextMessages, systemMessage, true)),
-        )
-      } catch (error) {
-        finalize(null, {
-          errorMessage: `发送失败：${getErrorMessage(error)}`,
-          cutPlayback: true,
-        })
+      if (currentWs) {
         try {
-          ws.close()
+          currentWs.close()
         } catch {
           /* ignore */
         }
       }
     }
 
-    ws.onmessage = (event) => {
-      let msg: {
-        type?: string
-        text_delta?: string
-        text?: string
-        audio_data?: string
-        audio_sample_rate?: number
-        recording_session_id?: string | null
-        error?: string
+    const requestBody = JSON.stringify(
+      buildChatRequestBody(nextMessages, systemMessage, true),
+    )
+
+    const runAttempt = (attempt: number) => {
+      if (finished || stoppedByUser) {
+        return
       }
 
+      let ws: WebSocket
       try {
-        msg = JSON.parse(event.data)
-      } catch {
+        ws = new WebSocket(wsUrl)
+      } catch (error) {
+        // Constructor itself blew up (rare). Treat as a retryable failure
+        // until MAX_ATTEMPTS is reached.
+        scheduleRetryOrFail(attempt, `连接失败：${getErrorMessage(error)}`)
         return
       }
 
-      if (msg.type === 'prefill_done') {
-        return
-      }
+      currentWs = ws
+      streamingWsRef.current = ws
 
-      if (msg.type === 'chunk') {
-        if (typeof msg.text_delta === 'string' && msg.text_delta) {
-          fullText += msg.text_delta
-          if (isStillActive()) {
-            setPendingReply({
-              id: pendingId,
-              role: 'assistant',
-              kind: 'pending',
-              text: fullText,
-            })
-          }
-        }
-
-        if (msg.audio_data && player) {
-          if (typeof msg.audio_sample_rate === 'number') {
-            lastSampleRate = msg.audio_sample_rate
-          }
+      ws.onopen = () => {
+        try {
+          ws.send(requestBody)
+        } catch (error) {
+          finalize(null, {
+            errorMessage: `发送失败：${getErrorMessage(error)}`,
+            cutPlayback: true,
+          })
           try {
-            player.pushBase64(msg.audio_data)
+            ws.close()
           } catch {
             /* ignore */
           }
         }
-        return
       }
 
-      if (msg.type === 'done') {
-        const finalText = (fullText || msg.text || '').trim() || '(空回复)'
-        const recordingSessionId = msg.recording_session_id ?? null
-
-        if (recordingSessionId) {
-          setLastSessionId(recordingSessionId)
+      ws.onmessage = (event) => {
+        let msg: {
+          type?: string
+          text_delta?: string
+          text?: string
+          audio_data?: string
+          audio_sample_rate?: number
+          recording_session_id?: string | null
+          error?: string
         }
-
-        finalize(
-          {
-            id: createId('assistant'),
-            role: 'assistant',
-            kind: 'assistant',
-            text: finalText,
-            audioPreviewUrl: null,
-            recordingSessionId,
-          },
-          { cutPlayback: false },
-        )
 
         try {
-          ws.close()
+          msg = JSON.parse(event.data)
         } catch {
-          /* ignore */
+          return
         }
-        return
+
+        if (msg.type === 'prefill_done') {
+          // prefill_done is a backend-side acknowledgement; treat it as
+          // proof that the connection is alive, so subsequent failures
+          // can no longer be silently retried (the model has started
+          // doing work for this request).
+          receivedAnyData = true
+          return
+        }
+
+        if (msg.type === 'chunk') {
+          receivedAnyData = true
+          if (typeof msg.text_delta === 'string' && msg.text_delta) {
+            fullText += msg.text_delta
+            if (isStillActive()) {
+              setPendingReply({
+                id: pendingId,
+                role: 'assistant',
+                kind: 'pending',
+                text: fullText,
+              })
+            }
+          }
+
+          if (msg.audio_data && player) {
+            if (typeof msg.audio_sample_rate === 'number') {
+              lastSampleRate = msg.audio_sample_rate
+            }
+            try {
+              player.pushBase64(msg.audio_data)
+            } catch {
+              /* ignore */
+            }
+          }
+          return
+        }
+
+        if (msg.type === 'done') {
+          receivedAnyData = true
+          const finalText = (fullText || msg.text || '').trim() || '(空回复)'
+          const recordingSessionId = msg.recording_session_id ?? null
+
+          if (recordingSessionId) {
+            setLastSessionId(recordingSessionId)
+          }
+
+          finalize(
+            {
+              id: createId('assistant'),
+              role: 'assistant',
+              kind: 'assistant',
+              text: finalText,
+              audioPreviewUrl: null,
+              recordingSessionId,
+            },
+            { cutPlayback: false },
+          )
+
+          try {
+            ws.close()
+          } catch {
+            /* ignore */
+          }
+          return
+        }
+
+        if (msg.type === 'error') {
+          // Backend-reported error: don't retry, surface immediately.
+          receivedAnyData = true
+          finalize(null, {
+            errorMessage: `请求失败：${msg.error || 'unknown error'}`,
+            cutPlayback: true,
+          })
+          try {
+            ws.close()
+          } catch {
+            /* ignore */
+          }
+        }
       }
 
-      if (msg.type === 'error') {
-        finalize(null, {
-          errorMessage: `请求失败：${msg.error || 'unknown error'}`,
-          cutPlayback: true,
-        })
-        try {
-          ws.close()
-        } catch {
-          /* ignore */
+      ws.onerror = () => {
+        if (finished || stoppedByUser) {
+          return
+        }
+        if (!receivedAnyData) {
+          // Likely a transient connection failure (e.g. handshake aborted).
+          // Close this socket and let onclose drive the retry decision.
+          try {
+            ws.close()
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      ws.onclose = () => {
+        if (finished) {
+          return
+        }
+
+        if (stoppedByUser) {
+          finalize(
+            {
+              id: createId('assistant'),
+              role: 'assistant',
+              kind: 'assistant',
+              text: fullText.trim() || '已停止当前回复。',
+              audioPreviewUrl: null,
+              recordingSessionId: null,
+            },
+            { cutPlayback: true },
+          )
+          return
+        }
+
+        if (!receivedAnyData) {
+          scheduleRetryOrFail(attempt, 'WebSocket 连接异常')
+        } else {
+          // Stream started and then the socket dropped — that's a real
+          // mid-stream failure; surface it instead of silently retrying.
+          finalize(null, {
+            errorMessage: '连接已关闭',
+            cutPlayback: true,
+          })
         }
       }
     }
 
-    ws.onerror = () => {
+    const scheduleRetryOrFail = (
+      attempt: number,
+      finalErrorMessage: string,
+    ) => {
+      if (finished || stoppedByUser) {
+        return
+      }
+
+      if (attempt + 1 < MAX_ATTEMPTS) {
+        const delay = RETRY_BASE_DELAY_MS * (attempt + 1)
+        retryTimer = setTimeout(() => {
+          retryTimer = null
+          runAttempt(attempt + 1)
+        }, delay)
+        return
+      }
+
+      // Exhausted retries — surface the failure to the user.
       finalize(null, {
-        errorMessage: 'WebSocket 连接异常',
+        errorMessage: finalErrorMessage,
         cutPlayback: true,
       })
     }
 
-    ws.onclose = () => {
-      if (finished) {
-        return
-      }
-
-      if (stoppedByUser) {
-        finalize(
-          {
-            id: createId('assistant'),
-            role: 'assistant',
-            kind: 'assistant',
-            text: fullText.trim() || '已停止当前回复。',
-            audioPreviewUrl: null,
-            recordingSessionId: null,
-          },
-          { cutPlayback: true },
-        )
-      } else {
-        finalize(null, {
-          errorMessage: '连接已关闭',
-          cutPlayback: true,
-        })
-      }
-    }
+    runAttempt(0)
   }
 
   async function sendTextMessage() {
@@ -4276,56 +4715,76 @@ function App() {
     await submitConversation(nextMessages)
   }
 
+  async function buildOneAttachment(
+    f: File,
+    kind: 'image' | 'audio' | 'video',
+  ): Promise<{ attachment?: Attachment; error?: string }> {
+    const sizeErr = checkAttachmentSize(f, kind)
+    if (sizeErr) return { error: sizeErr }
+    let att: Attachment
+    try {
+      att =
+        kind === 'image'
+          ? await downscaleImageToAttachment(f)
+          : await mediaFileToAttachment(f, kind)
+    } catch (err) {
+      console.warn('attach failed', f.name, err)
+      return { error: `附件处理失败：${getErrorMessage(err)}` }
+    }
+    const durErr = checkVideoDuration(att)
+    if (durErr) {
+      // Drop the half-built attachment; revoke its blob URL so the
+      // browser doesn't hold the (large) video in memory.
+      try {
+        URL.revokeObjectURL(att.previewUrl)
+      } catch {
+        /* ignore */
+      }
+      return { error: durErr }
+    }
+    return { attachment: att }
+  }
+
   async function handleAttachFiles(
     files: FileList | null,
     kind: 'image' | 'audio' | 'video',
   ) {
     if (!files || files.length === 0) return
-    const list = Array.from(files)
     const built: Attachment[] = []
-    for (const f of list) {
-      try {
-        if (kind === 'image') {
-          built.push(await downscaleImageToAttachment(f))
-        } else {
-          built.push(await mediaFileToAttachment(f, kind))
-        }
-      } catch (err) {
-        console.warn('attach failed', f.name, err)
-      }
+    let lastError: string | null = null
+    for (const f of Array.from(files)) {
+      const r = await buildOneAttachment(f, kind)
+      if (r.attachment) built.push(r.attachment)
+      else if (r.error) lastError = r.error
     }
+    if (lastError) setRecordError(lastError)
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
-      textInputAutoFocusRef.current = true
-      setComposeMode('text')
       setAttachMenuOpen(false)
     }
   }
 
   async function handleAttachMixedFiles(files: FileList | null) {
     if (!files || files.length === 0) return
-    const list = Array.from(files)
     const built: Attachment[] = []
-    for (const f of list) {
+    let lastError: string | null = null
+    for (const f of Array.from(files)) {
       const t = f.type || ''
-      try {
-        if (t.startsWith('image/')) {
-          built.push(await downscaleImageToAttachment(f))
-        } else if (t.startsWith('audio/')) {
-          built.push(await mediaFileToAttachment(f, 'audio'))
-        } else if (t.startsWith('video/')) {
-          built.push(await mediaFileToAttachment(f, 'video'))
-        } else {
-          console.warn('unsupported file type', f.name, t)
-        }
-      } catch (err) {
-        console.warn('attach failed', f.name, err)
+      let kind: 'image' | 'audio' | 'video' | null = null
+      if (t.startsWith('image/')) kind = 'image'
+      else if (t.startsWith('audio/')) kind = 'audio'
+      else if (t.startsWith('video/')) kind = 'video'
+      if (!kind) {
+        console.warn('unsupported file type', f.name, t)
+        continue
       }
+      const r = await buildOneAttachment(f, kind)
+      if (r.attachment) built.push(r.attachment)
+      else if (r.error) lastError = r.error
     }
+    if (lastError) setRecordError(lastError)
     if (built.length > 0) {
       setPendingAttachments((prev) => [...prev, ...built])
-      textInputAutoFocusRef.current = true
-      setComposeMode('text')
       setAttachMenuOpen(false)
     }
   }
@@ -4351,12 +4810,9 @@ function App() {
     try {
       const att = await downscaleImageToAttachment(f)
       setPendingAttachments((prev) => [...prev, att])
-      // Drop the user back into the main composer in text mode so they
-      // can either type a question or hold-to-talk on top of the photo,
-      // matching Doubao behaviour. Mark autofocus so iOS pops the
-      // keyboard inside the same user-gesture stack.
-      textInputAutoFocusRef.current = true
-      setComposeMode('text')
+      // Keep the composer in whatever mode the user is in (default voice).
+      // Adding an attachment shouldn't force them into the text keyboard;
+      // they can still hold-to-talk with attachments queued.
       setAttachMenuOpen(false)
     } catch (err) {
       console.warn('camera capture failed', err)
@@ -4738,6 +5194,7 @@ function App() {
         open={historyOpen}
         sessions={sessions}
         activeId={activeSessionId}
+        shareReady={shareReady}
         onClose={() => setHistoryOpen(false)}
         onNewSession={startNewSession}
         onSwitch={switchToSession}
@@ -4748,6 +5205,21 @@ function App() {
         onOpenSettings={() => {
           setHistoryOpen(false)
           setSettingsOpen(true)
+        }}
+        onOpenShare={handleOpenShare}
+      />
+      <ShareDialog
+        open={shareDialogOpen}
+        sessionId={shareSessionId ?? ''}
+        shareUrl={shareSessionId ? buildShareUrl(shareSessionId) : ''}
+        comment={shareComment}
+        submitting={shareSubmitting}
+        error={shareError}
+        successInfo={shareSuccess}
+        onCommentChange={setShareComment}
+        onCancel={handleCloseShare}
+        onSubmit={() => {
+          void handleSubmitShare()
         }}
       />
       {isRecording ? <RecordingOverlay willCancel={recordingWillCancel} /> : null}
@@ -4898,6 +5370,7 @@ function App() {
                     onRegenerate={() => {
                       void regenerateLastReply()
                     }}
+                    queueHint={entry.kind === 'pending' ? queueHint : null}
                   />
                 )
               })}
@@ -5220,6 +5693,8 @@ function App() {
           onOpenSettings={() => {
             setSettingsOpen(true)
           }}
+          shareReady={shareReady}
+          onOpenShare={handleOpenShare}
         />
       ) : (
         <VideoDuplexScreen

@@ -376,10 +376,19 @@
 
 .msg.assistant.pending {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 12px 14px;
   background: #f4f5f7;
+}
+
+.msg-queue-hint {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+  letter-spacing: 0.2px;
 }
 
 .pending-dots {
@@ -862,8 +871,166 @@
   background: #f5f6f8;
 }
 
+.history-drawer-bottom-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .history-drawer-bottom-item.is-danger {
   color: #dc2626;
+}
+
+.share-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 24px 16px;
+  animation: share-fade-in 0.18s ease;
+}
+
+.share-dialog {
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px 22px 18px;
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+}
+
+.share-dialog-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.share-dialog-hint {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.share-dialog-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: #64748b;
+  align-items: baseline;
+  word-break: break-all;
+}
+
+.share-dialog-meta-label {
+  flex-shrink: 0;
+  color: #94a3b8;
+  font-weight: 500;
+  min-width: 52px;
+}
+
+.share-dialog-meta-value {
+  flex: 1;
+  color: #1e293b;
+  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.share-dialog-input {
+  min-height: 96px;
+  max-height: 240px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  font-family: inherit;
+  color: #0f172a;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.share-dialog-input:focus {
+  border-color: #2563eb;
+}
+
+.share-dialog-input:disabled {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.share-dialog-error {
+  font-size: 12.5px;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  padding: 8px 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+}
+
+.share-dialog-success {
+  font-size: 12.5px;
+  color: #166534;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  user-select: all;
+  word-break: break-all;
+}
+
+.share-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.share-dialog-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.share-dialog-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.share-dialog-cancel {
+  background: #f1f5f9;
+  color: #334155;
+  border-color: #e2e8f0;
+}
+
+.share-dialog-cancel:not(:disabled):hover {
+  background: #e2e8f0;
+}
+
+.share-dialog-ok {
+  background: #2563eb;
+  color: #fff;
+}
+
+.share-dialog-ok:not(:disabled):hover {
+  background: #1d4ed8;
+}
+
+@keyframes share-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .audio-replay {
@@ -1966,6 +2133,19 @@
 .halfduplex-top-btn.active {
   background: rgb(120 170 255 / 22%);
   color: #aac6ff;
+}
+
+.halfduplex-top-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: rgb(255 255 255 / 4%);
+  color: rgb(205 215 240 / 50%);
+}
+
+.halfduplex-top-btn:disabled:hover,
+.halfduplex-top-btn:disabled:active {
+  background: rgb(255 255 255 / 4%);
+  color: rgb(205 215 240 / 50%);
 }
 
 .halfduplex-top-actions {

@@ -18,6 +18,10 @@ export type AudioDuplexScreenProps = {
     lengthPenalty: number
   }
   onOpenSettings: () => void
+  /** True once a backend session id is available to share. */
+  shareReady?: boolean
+  /** Open the shared App-level ShareDialog (comment + upload + clipboard). */
+  onOpenShare?: () => void
 }
 
 function EarIcon({ className }: { className?: string }) {
@@ -84,11 +88,32 @@ function BackIcon({ className }: { className?: string }) {
   )
 }
 
+function ShareIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 3v12" />
+      <path d="m7 8 5-5 5 5" />
+      <path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" />
+    </svg>
+  )
+}
+
 export function AudioDuplexScreen({
   duplex,
   icons,
   settingsSummary,
   onOpenSettings,
+  shareReady = false,
+  onOpenShare,
 }: AudioDuplexScreenProps) {
   const SettingsIcon = icons.Settings
   const TranscriptIcon = icons.Transcript
@@ -282,6 +307,18 @@ export function AudioDuplexScreen({
           >
             <TranscriptIcon className="app-icon app-icon-md" />
           </button>
+          {onOpenShare ? (
+            <button
+              className="halfduplex-top-btn"
+              type="button"
+              onClick={onOpenShare}
+              disabled={!shareReady}
+              aria-label="分享通话"
+              title={shareReady ? '分享通话' : '通话开始后可分享'}
+            >
+              <ShareIcon className="app-icon app-icon-md" />
+            </button>
+          ) : null}
           <button
             className="halfduplex-top-btn"
             type="button"
