@@ -1385,6 +1385,37 @@ async function downscaleImageToAttachment(
   }
 }
 
+// Hard upload-size caps per attachment kind. The gateway/worker WebSocket
+// frame limit is 128 MiB, but base64 encoding inflates by 4/3 and we still
+// want headroom for other items + JSON overhead. Picked so that even a
+// few attachments together stay well under the wire limit, and so a giant
+// raw video doesn't silently kill the connection.
+const ATTACHMENT_SIZE_LIMIT_BYTES: Record<'image' | 'audio' | 'video', number> = {
+  image: 20 * 1024 * 1024,
+  audio: 30 * 1024 * 1024,
+  video: 30 * 1024 * 1024,
+}
+
+const ATTACHMENT_KIND_LABEL: Record<'image' | 'audio' | 'video', string> = {
+  image: '图片',
+  audio: '音频',
+  video: '视频',
+}
+
+function formatMiB(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function checkAttachmentSize(
+  file: File,
+  kind: 'image' | 'audio' | 'video',
+): string | null {
+  const limit = ATTACHMENT_SIZE_LIMIT_BYTES[kind]
+  if (file.size <= limit) return null
+  const label = ATTACHMENT_KIND_LABEL[kind]
+  return `${label}过大（${formatMiB(file.size)}），最大支持 ${formatMiB(limit)}。请重新选择。`
+}
+
 async function mediaFileToAttachment(
   file: File,
   kind: 'audio' | 'video',
@@ -4395,6 +4426,11 @@ function App() {
     const list = Array.from(files)
     const built: Attachment[] = []
     for (const f of list) {
+      const guard = checkAttachmentSize(f, kind)
+      if (guard) {
+        setRecordError(guard)
+        continue
+      }
       try {
         if (kind === 'image') {
           built.push(await downscaleImageToAttachment(f))
@@ -4417,15 +4453,24 @@ function App() {
     const built: Attachment[] = []
     for (const f of list) {
       const t = f.type || ''
+      let kind: 'image' | 'audio' | 'video' | null = null
+      if (t.startsWith('image/')) kind = 'image'
+      else if (t.startsWith('audio/')) kind = 'audio'
+      else if (t.startsWith('video/')) kind = 'video'
+      if (!kind) {
+        console.warn('unsupported file type', f.name, t)
+        continue
+      }
+      const guard = checkAttachmentSize(f, kind)
+      if (guard) {
+        setRecordError(guard)
+        continue
+      }
       try {
-        if (t.startsWith('image/')) {
+        if (kind === 'image') {
           built.push(await downscaleImageToAttachment(f))
-        } else if (t.startsWith('audio/')) {
-          built.push(await mediaFileToAttachment(f, 'audio'))
-        } else if (t.startsWith('video/')) {
-          built.push(await mediaFileToAttachment(f, 'video'))
         } else {
-          console.warn('unsupported file type', f.name, t)
+          built.push(await mediaFileToAttachment(f, kind))
         }
       } catch (err) {
         console.warn('attach failed', f.name, err)

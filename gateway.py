@@ -384,7 +384,10 @@ async def chat_ws_proxy(ws: WebSocket):
         # 连接 Worker WebSocket
         import websockets
         ws_url = f"ws://{assigned_worker.host}:{assigned_worker.port}/ws/chat"
-        worker_ws = await websockets.connect(ws_url)
+        # max_size on the client side caps how large an *incoming* frame can
+        # be from the worker; chat chunks are small but we bump it for
+        # symmetry with the gateway uvicorn config.
+        worker_ws = await websockets.connect(ws_url, max_size=128 * 1024 * 1024)
 
         # 转发请求
         await worker_ws.send(raw)
@@ -1472,7 +1475,16 @@ def main():
     else:
         logger.warning("Running in HTTP mode (no TLS). Browser microphone/camera APIs may not work.")
 
-    uvicorn.run(app, host=args.host, port=port, **ssl_kwargs)
+    # Bump WS max payload from uvicorn's 16 MiB default to 128 MiB so that
+    # base64-encoded video attachments coming in from the browser can be
+    # proxied to a worker without being rejected with code 1009.
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=port,
+        ws_max_size=128 * 1024 * 1024,
+        **ssl_kwargs,
+    )
 
 
 if __name__ == "__main__":
