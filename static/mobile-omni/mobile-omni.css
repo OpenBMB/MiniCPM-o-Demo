@@ -54,17 +54,22 @@ body.mobile-omni .app-nav {
  *
  * Sits LEFT of the torch (which is at right: 114px, width 44px). Torch
  * is conditionally visible, so we put share at right: 170px regardless. */
+/* Sit immediately to the LEFT of the gear (.fullscreen-btn) in the
+ * bottom-right. Gear is `position: absolute` inside .panel-media which
+ * itself is `position: fixed; bottom: 56px`, so the gear's effective
+ * viewport bottom = 56 + 70 + safe-area = 126 + safe-area.
+ *
+ * Share container is at body level so we use `position: fixed` and
+ * mirror that math directly. Size matched to gear (36x36) and offset
+ * by gear-width(36) + gap(8) + gear-right(12) = 56px. */
 body.mobile-omni #save-share-container {
-    /* Must be `fixed` (not `absolute`) — the container lives at body level,
-     * not inside #videoContainer, so `absolute` can land on the wrong
-     * containing block. `fixed` is always relative to the viewport. */
     position: fixed !important;
-    top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
-    right: 170px !important;
-    bottom: auto !important;
+    top: auto !important;
     left: auto !important;
-    width: 44px !important;
-    height: 44px !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 126px) !important;
+    right: 56px !important;
+    width: 36px !important;
+    height: 36px !important;
     max-width: none !important;
     z-index: 200 !important;
     display: block !important;
@@ -72,12 +77,12 @@ body.mobile-omni #save-share-container {
 }
 
 body.mobile-omni #save-share-container .ss-btn {
-    width: 44px !important;
-    height: 44px !important;
+    width: 36px !important;
+    height: 36px !important;
     padding: 0 !important;
-    border: 1px solid rgba(255, 255, 255, 0.18) !important;
-    border-radius: 12px !important;
-    background: rgba(0, 0, 0, 0.55) !important;
+    border: none !important;
+    border-radius: 10px !important;
+    background: rgba(255, 255, 255, 0.2) !important;
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     color: #fff !important;
@@ -89,21 +94,18 @@ body.mobile-omni #save-share-container .ss-btn {
     cursor: pointer;
 }
 
-/* When disabled (no active session yet) keep the icon legible — just
- * fade slightly so the affordance is "visible but inactive". 0.35 was
- * effectively invisible against the dark camera preview. */
 body.mobile-omni #save-share-container .ss-btn:disabled {
-    opacity: 0.7 !important;
+    opacity: 0.5 !important;
     cursor: default;
 }
 
 body.mobile-omni #save-share-container .ss-btn:not(:disabled):active {
-    transform: scale(0.92);
+    transform: scale(0.9);
 }
 
 body.mobile-omni #save-share-container .ss-btn svg {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
 }
 
 /* Toast position above the bottom controls strip (which is fixed at the
