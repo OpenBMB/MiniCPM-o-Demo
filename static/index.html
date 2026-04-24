@@ -256,21 +256,26 @@
         </a>`;
     }
 
+    // Apps to hide from the homepage (kept available via direct route).
+    const HIDDEN_APP_IDS = new Set(['half_duplex_audio']);
+
     (async function() {
         const cardsEl = document.getElementById('mode-cards');
         const apps = await initNav(null);
-        const appCards = apps ? apps.map(a => {
-            const m = APP_CARD_META[a.app_id] || { css: '', icon: '📦', desc: '' };
-            return renderCard({
-                route: a.route,
-                css: m.css,
-                icon: m.icon,
-                title: a.name,
-                desc: m.desc,
-            });
-        }) : [];
+        const appCards = apps ? apps
+            .filter(a => !HIDDEN_APP_IDS.has(a.app_id))
+            .map(a => {
+                const m = APP_CARD_META[a.app_id] || { css: '', icon: '📦', desc: '' };
+                return renderCard({
+                    route: a.route,
+                    css: m.css,
+                    icon: m.icon,
+                    title: a.name,
+                    desc: m.desc,
+                });
+            }) : [];
 
-        cardsEl.innerHTML = [...appCards, renderCard(MOBILE_PREVIEW_CARD)].join('');
+        cardsEl.innerHTML = [renderCard(MOBILE_PREVIEW_CARD), ...appCards].join('');
     })();
 
     (function() {
