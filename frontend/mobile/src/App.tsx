@@ -2443,6 +2443,7 @@ function HistoryDrawer({
   onOpenSettings,
   onOpenShare,
 }: HistoryDrawerProps) {
+  const { t: i18n } = useI18n()
   const sorted = sessions.slice().sort((a, b) => b.updatedAt - a.updatedAt)
   return (
     <div
