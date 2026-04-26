@@ -1692,9 +1692,12 @@ type AudioPlayPillProps = {
 function AudioPlayPill({
   url,
   className,
-  playLabel,
-  pauseLabel,
+  playLabel: playLabelProp,
+  pauseLabel: pauseLabelProp,
 }: AudioPlayPillProps) {
+  const { t: i18n } = useI18n()
+  const playLabel = playLabelProp ?? i18n.play
+  const pauseLabel = pauseLabelProp ?? i18n.pause
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
 
@@ -2160,7 +2163,7 @@ function SettingsSheet({
   onPlayRefAudio,
   onToggleRecordRefAudio,
 }: SettingsSheetProps) {
-  const { t: i18n } = useI18n()
+  const { lang, setLang: onSetLang, t: i18n } = useI18n()
   if (!open) {
     return null
   }
@@ -2376,6 +2379,26 @@ function SettingsSheet({
               </label>
             </>
           ) : null}
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">{lang === 'zh' ? '语言 / Language' : 'Language / 语言'}</div>
+        <div className="settings-lang-toggle">
+          <button
+            className={`lang-chip${lang === 'zh' ? ' active' : ''}`}
+            type="button"
+            onClick={() => onSetLang('zh')}
+          >
+            中文
+          </button>
+          <button
+            className={`lang-chip${lang === 'en' ? ' active' : ''}`}
+            type="button"
+            onClick={() => onSetLang('en')}
+          >
+            English
+          </button>
         </div>
       </div>
     </div>
