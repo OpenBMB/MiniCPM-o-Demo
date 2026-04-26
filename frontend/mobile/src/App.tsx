@@ -17,6 +17,8 @@ import {
   copyToClipboard,
   saveSessionComment,
 } from './shared/share-helpers'
+import { I18nContext, detectLang, persistLang, t as getT } from './i18n'
+import type { Lang, Translations } from './i18n'
 import './App.css'
 
 // Static AudioWorklet module used by the mobile turn-based recorder.
@@ -262,22 +264,22 @@ type ChatSession = {
   messages: ConversationEntry[]
 }
 
-function deriveSessionTitle(messages: ConversationEntry[]): string {
+function deriveSessionTitle(messages: ConversationEntry[], tr: Translations): string {
   for (const m of messages) {
     if (m.role !== 'user') continue
     if (m.kind === 'text' && m.text.trim()) {
-      const t = m.text.trim().replace(/\s+/g, ' ')
-      return t.length > 28 ? `${t.slice(0, 28)}…` : t
+      const txt = m.text.trim().replace(/\s+/g, ' ')
+      return txt.length > 28 ? `${txt.slice(0, 28)}…` : txt
     }
-    if (m.kind === 'voice') return '语音对话'
+    if (m.kind === 'voice') return tr.sessionTitle_voice
     if (m.kind === 'text' && m.attachments && m.attachments.length > 0) {
       const a = m.attachments[0]
-      if (a.kind === 'image') return '图片对话'
-      if (a.kind === 'audio') return '音频对话'
-      if (a.kind === 'video') return '视频对话'
+      if (a.kind === 'image') return tr.sessionTitle_image
+      if (a.kind === 'audio') return tr.sessionTitle_audio
+      if (a.kind === 'video') return tr.sessionTitle_video
     }
   }
-  return '新对话'
+  return tr.newChat
 }
 
 function stripBlobUrls(messages: ConversationEntry[]): ConversationEntry[] {
@@ -415,7 +417,7 @@ async function idbGetAllSessions(): Promise<ChatSession[]> {
             .filter((s) => s && typeof s.id === 'string' && Array.isArray(s.messages))
             .map((s) => ({
               id: s.id,
-              title: s.title || '新对话',
+              title: s.title || 'New Chat',
               createdAt: Number(s.createdAt) || Date.now(),
               updatedAt: Number(s.updatedAt) || Number(s.createdAt) || Date.now(),
               messages: rehydrateMessages(s.messages),
@@ -525,10 +527,10 @@ async function idbClearAll(): Promise<void> {
   }
 }
 
-function formatRelativeTime(ts: number): string {
+function formatRelativeTime(ts: number, tr: Translations): string {
   const diff = Date.now() - ts
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 60_000) return tr.justNow
+  if (diff < 3_600_000) return tr.minutesAgo(Math.floor(diff / 60_000))
   const today = new Date()
   const d = new Date(ts)
   if (
@@ -547,7 +549,7 @@ function formatRelativeTime(ts: number): string {
     yesterday.getMonth() === d.getMonth() &&
     yesterday.getDate() === d.getDate()
   ) {
-    return '昨天'
+    return tr.yesterday
   }
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
@@ -568,12 +570,12 @@ function getPresetModeForScreen(screen: Screen): PresetMode {
   return screen === 'audio-duplex' ? 'audio_duplex' : 'omni'
 }
 
-function getPresetModeLabel(mode: PresetMode): string {
+function getPresetModeLabel(mode: PresetMode, tr: Translations): string {
   if (mode === 'turnbased') {
-    return 'Turn-based'
+    return tr.turnBased
   }
 
-  return mode === 'audio_duplex' ? '音频双工' : '视频双工'
+  return mode === 'audio_duplex' ? tr.audioDuplex : tr.videoDuplex
 }
 
 function getLengthPenaltyForMode(
@@ -589,11 +591,11 @@ function getLengthPenaltyForMode(
     : settings.videoDuplexLengthPenalty
 }
 
-function summarizePrompt(prompt: string): string {
+function summarizePrompt(prompt: string, tr: Translations): string {
   const compact = prompt.replace(/\s+/g, ' ').trim()
 
   if (!compact) {
-    return '未设置'
+    return tr.notSet
   }
 
   return compact.length > 48 ? `${compact.slice(0, 48)}...` : compact
@@ -634,11 +636,11 @@ function extractPromptFromPreset(preset: PresetMetadata): string {
   return textParts.join('\n\n').trim()
 }
 
-function extractRefAudioFromPreset(preset: PresetMetadata): RefAudioState {
+function extractRefAudioFromPreset(preset: PresetMetadata, tr: Translations): RefAudioState {
   if (preset.ref_audio?.data) {
     return {
       source: 'preset',
-      name: preset.ref_audio.name || '预设参考音频',
+      name: preset.ref_audio.name || tr.presetRefAudio,
       duration: preset.ref_audio.duration || 0,
       base64: preset.ref_audio.data,
     }
@@ -654,7 +656,7 @@ function extractRefAudioFromPreset(preset: PresetMetadata): RefAudioState {
   if (systemAudio?.data) {
     return {
       source: 'preset',
-      name: systemAudio.name || '预设参考音频',
+      name: systemAudio.name || tr.presetRefAudio,
       duration: systemAudio.duration || 0,
       base64: systemAudio.data,
     }
@@ -1431,12 +1433,6 @@ const ATTACHMENT_SIZE_LIMIT_BYTES: Record<'image' | 'audio' | 'video', number> =
 // the model starts producing garbage / off-topic replies.
 const VIDEO_DURATION_LIMIT_SECONDS = 60
 
-const ATTACHMENT_KIND_LABEL: Record<'image' | 'audio' | 'video', string> = {
-  image: '图片',
-  audio: '音频',
-  video: '视频',
-}
-
 function formatMiB(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
@@ -1444,21 +1440,20 @@ function formatMiB(bytes: number): string {
 function checkAttachmentSize(
   file: File,
   kind: 'image' | 'audio' | 'video',
+  tr: Translations,
 ): string | null {
   const limit = ATTACHMENT_SIZE_LIMIT_BYTES[kind]
   if (file.size <= limit) return null
-  const label = ATTACHMENT_KIND_LABEL[kind]
-  return `${label}过大（${formatMiB(file.size)}），最大支持 ${formatMiB(limit)}。请重新选择。`
+  const label = kind === 'image' ? tr.imageLabel : kind === 'audio' ? tr.audioLabel : tr.videoLabel
+  return tr.fileTooLarge(label, formatMiB(file.size), formatMiB(limit))
 }
 
-function checkVideoDuration(att: Attachment): string | null {
+function checkVideoDuration(att: Attachment, tr: Translations): string | null {
   if (att.kind !== 'video') return null
   const d = att.duration
-  // duration may legitimately be undefined / 0 / Infinity (e.g. some
-  // streaming containers). Only reject when we're confident it overruns.
   if (typeof d !== 'number' || !Number.isFinite(d) || d <= 0) return null
   if (d <= VIDEO_DURATION_LIMIT_SECONDS) return null
-  return `视频时长 ${d.toFixed(1)} 秒，最大支持 ${VIDEO_DURATION_LIMIT_SECONDS} 秒。请裁剪后再发送。`
+  return tr.videoTooLong(Math.round(d * 10) / 10, VIDEO_DURATION_LIMIT_SECONDS)
 }
 
 async function mediaFileToAttachment(
@@ -1697,8 +1692,8 @@ type AudioPlayPillProps = {
 function AudioPlayPill({
   url,
   className,
-  playLabel = '播放',
-  pauseLabel = '暂停',
+  playLabel,
+  pauseLabel,
 }: AudioPlayPillProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -2610,6 +2605,10 @@ function ShareDialog({
 }
 
 function App() {
+  const [lang, setLangState] = useState<Lang>(detectLang)
+  const i18n = getT(lang)
+  const setLang = (l: Lang) => { setLangState(l); persistLang(l) }
+
   const [screen, setScreen] = useState<Screen>('turn')
   const [composeMode, setComposeMode] = useState<'voice' | 'text'>('voice')
   // Release the mic when the user leaves voice mode so the OS recording
@@ -2738,7 +2737,7 @@ function App() {
   })
   const [serviceState, setServiceState] = useState<ServiceState>({
     phase: 'loading',
-    summary: 'Checking backend',
+    summary: '',
     detail: 'Polling /status...',
   })
   // Lightweight queue indicator for the turn-based screen. Mirrors the desktop
@@ -2803,7 +2802,7 @@ function App() {
   const activeModeSettings = settings[activePresetMode]
   const activeModePresets = presetsByMode[activePresetMode]
   const activeLengthPenalty = getLengthPenaltyForMode(settings, activePresetMode)
-  const activeModeLabel = getPresetModeLabel(activePresetMode)
+  const activeModeLabel = getPresetModeLabel(activePresetMode, i18n)
 
   // Best backend session id available for sharing — prefer the most recent
   // assistant reply that carried one (so it survives reload), fall back to
@@ -2837,7 +2836,7 @@ function App() {
   function handleOpenShare() {
     const sid = getShareSessionId()
     if (!sid) {
-      setRecordError('当前对话还没有产生后端记录，先发条消息试试。')
+      setRecordError(i18n.noBackendRecord)
       return
     }
     setShareSessionId(sid)
@@ -2869,11 +2868,11 @@ function App() {
       const ok = await copyToClipboard(url)
       setShareSuccess(
         ok
-          ? `已复制到剪贴板：\n${url}`
-          : `分享链接（请手动复制）：\n${url}`,
+          ? i18n.copiedToClipboard(url)
+          : i18n.copyManually(url),
       )
     } catch (err) {
-      setShareError(`分享失败：${getErrorMessage(err)}`)
+      setShareError(i18n.shareFailed(getErrorMessage(err)))
     } finally {
       setShareSubmitting(false)
     }
@@ -2881,7 +2880,7 @@ function App() {
   const audioPresetName =
     presetsByMode.audio_duplex.find(
       (preset) => preset.id === settings.audio_duplex.presetId,
-    )?.name ?? '自定义'
+    )?.name ?? i18n.custom
 
   useEffect(() => {
     messagesRef.current = messages
@@ -2950,14 +2949,14 @@ function App() {
           ...prev[idx],
           messages,
           updatedAt: now,
-          title: '新对话',
+          title: i18n.newChat,
         }
         const next = prev.slice()
         next[idx] = updated
         void idbPutSession(updated)
         return next
       }
-      const title = deriveSessionTitle(messages)
+      const title = deriveSessionTitle(messages, i18n)
       if (idx === -1) {
         const created: ChatSession = {
           id: activeSessionId,
@@ -3019,7 +3018,7 @@ function App() {
 
         setServiceState({
           phase: 'ready',
-          summary: data.gateway_healthy ? 'Backend ready' : 'Gateway degraded',
+          summary: data.gateway_healthy ? i18n.backendReady : i18n.gatewayDegraded,
           detail: `${data.idle_workers}/${data.total_workers} idle, queue ${data.queue_length}, offline ${data.offline_workers}`,
         })
       } catch (error) {
@@ -3029,7 +3028,7 @@ function App() {
 
         setServiceState({
           phase: 'error',
-          summary: 'Backend unreachable',
+          summary: i18n.backendUnreachable,
           detail: getErrorMessage(error),
         })
       }
@@ -3085,9 +3084,7 @@ function App() {
         // implementation in static/turnbased.html.
         const elapsedSec = Math.floor((Date.now() - startedAt) / 1000)
         const eta = Math.max(1, data.queue_length * 15 - elapsedSec)
-        setQueueHint(
-          `排队中：前面 ${data.queue_length} 人，预计 ~${eta}s`,
-        )
+        setQueueHint(i18n.queueHint(data.queue_length, eta))
       } catch {
         // Silent — main /status poller surfaces gateway-down state.
       }
@@ -3198,7 +3195,7 @@ function App() {
         const nextDefaultRefAudio: RefAudioState | null = defaultRefPayload?.base64
           ? {
               source: 'default',
-              name: defaultRefPayload.name || '默认参考音频',
+              name: defaultRefPayload.name || i18n.defaultRefAudio,
               duration: defaultRefPayload.duration || 0,
               base64: defaultRefPayload.base64,
             }
@@ -3255,7 +3252,7 @@ function App() {
               continue
             }
 
-            const extractedRefAudio = extractRefAudioFromPreset(firstPreset)
+            const extractedRefAudio = extractRefAudioFromPreset(firstPreset, i18n)
 
             nextSettings[mode] = buildModeSettings(nextSettings[mode], {
               presetId: firstPreset.id,
@@ -3413,7 +3410,7 @@ function App() {
 
     try {
       const loadedPreset = await ensurePresetLoaded(mode, preset)
-      const extractedRefAudio = extractRefAudioFromPreset(loadedPreset)
+      const extractedRefAudio = extractRefAudioFromPreset(loadedPreset, i18n)
 
       updateModeSettings(mode, {
         presetId: loadedPreset.id,
@@ -3432,7 +3429,7 @@ function App() {
 
   function handleSaveCurrentAsPreset(mode: PresetMode) {
     const modeSettings = settings[mode]
-    const name = window.prompt('为这个预设起个名字', '')?.trim()
+    const name = window.prompt(i18n.presetNamePrompt, '')?.trim()
     if (!name) return
     const now = Date.now()
     const preset: UserPreset = {
@@ -3447,7 +3444,7 @@ function App() {
     setUserPresets((prev) => [...prev, preset])
     void idbPutUserPreset(preset)
     updateModeSettings(mode, { presetId: `user:${preset.id}` })
-    reportSettingsMessage(`已保存预设"${name}"`)
+    reportSettingsMessage(i18n.presetSaved(name))
   }
 
   function handleSelectUserPreset(mode: PresetMode, presetId: string) {
@@ -3480,7 +3477,7 @@ function App() {
 
   function handleUseDefaultRefAudio(mode: PresetMode) {
     if (!defaultRefAudio?.base64) {
-      reportSettingsMessage('当前没有可用的默认参考音频。')
+      reportSettingsMessage(i18n.refAudioNoDefault)
       return
     }
 
@@ -3535,7 +3532,7 @@ function App() {
         URL.revokeObjectURL(durationAudio.src)
       }
     } catch (error) {
-      reportSettingsMessage(`处理参考音频失败：${getErrorMessage(error)}`)
+      reportSettingsMessage(i18n.refAudioProcessFailed(getErrorMessage(error)))
     } finally {
       event.target.value = ''
     }
@@ -3562,13 +3559,13 @@ function App() {
       refRecStreamRef.current = null
 
       if (chunks.length === 0) {
-        reportSettingsMessage('录制时间太短，请重试。')
+        reportSettingsMessage(i18n.refAudioRecordTooShort)
         return
       }
 
       const merged = concatFloat32(chunks)
       if (merged.length === 0) {
-        reportSettingsMessage('录制失败：没有采集到音频。')
+        reportSettingsMessage(i18n.refAudioRecordFailed)
         return
       }
 
@@ -3580,23 +3577,23 @@ function App() {
         presetId: null,
         refAudio: {
           source: 'upload',
-          name: `录制 ${new Date().toLocaleTimeString()}`,
+          name: i18n.refAudioRecordDuration(new Date().toLocaleTimeString()),
           duration: Math.round(durationSec * 10) / 10,
           base64,
         },
       })
-      reportSettingsMessage(`已录制 ${durationSec.toFixed(1)}s 参考音频`)
+      reportSettingsMessage(i18n.refAudioRecorded(durationSec.toFixed(1)))
       return
     }
 
     // ── Start recording ──
     if (!navigator.mediaDevices?.getUserMedia) {
-      reportSettingsMessage('当前环境不支持麦克风。')
+      reportSettingsMessage(i18n.refAudioMicUnsupported)
       return
     }
     const AudioContextCtor = getAudioContextCtor()
     if (!AudioContextCtor) {
-      reportSettingsMessage('当前浏览器不支持录音。')
+      reportSettingsMessage(i18n.refAudioRecordUnsupported)
       return
     }
 
@@ -3640,7 +3637,7 @@ function App() {
       refRecStartRef.current = performance.now()
       setRefAudioRecording(true)
     } catch (err) {
-      reportSettingsMessage(`无法开始录制：${getErrorMessage(err)}`)
+      reportSettingsMessage(i18n.refAudioRecordError(getErrorMessage(err)))
     }
   }
 
@@ -3729,7 +3726,7 @@ function App() {
 
   function handlePlayActiveRefAudio() {
     if (!activeModeSettings.refAudio.base64) {
-      reportSettingsMessage('当前没有可播放的参考音频。')
+      reportSettingsMessage(i18n.refAudioNoPlayable)
       return
     }
 
@@ -4077,11 +4074,11 @@ function App() {
     const now = Date.now()
     setSessions((prev) => {
       const idx = prev.findIndex((s) => s.id === sessionId)
-      const title = deriveSessionTitle(finalMessages)
+      const title = deriveSessionTitle(finalMessages, i18n)
       if (idx === -1) {
         const created: ChatSession = {
           id: sessionId,
-          title: title || '新对话',
+          title: title || i18n.newChat,
           createdAt: now,
           updatedAt: now,
           messages: finalMessages,
@@ -4155,7 +4152,7 @@ function App() {
       id: createId('pending'),
       role: 'assistant',
       kind: 'pending',
-      text: '正在思考',
+      text: i18n.thinking,
     })
     setIsGenerating(true)
 
@@ -4241,7 +4238,7 @@ function App() {
       }
 
       if (!payload) {
-        throw lastError ?? new Error('请求失败')
+        throw lastError ?? new Error(i18n.requestFailed)
       }
 
       let assistantAudioUrl: string | null = null
@@ -4262,7 +4259,7 @@ function App() {
         id: createId('assistant'),
         role: 'assistant',
         kind: 'assistant',
-        text: payload.text?.trim() || '(空回复)',
+        text: payload.text?.trim() || i18n.emptyReply,
         audioPreviewUrl: assistantAudioUrl,
         // Keep the raw bytes so we can rebuild the Blob URL after a
         // page reload (Blob URLs themselves don't survive).
@@ -4286,8 +4283,8 @@ function App() {
     } catch (error) {
       const errorText =
         controller.signal.aborted
-          ? '已停止当前回复。'
-          : `请求失败：${getErrorMessage(error)}`
+          ? i18n.stoppedReply
+          : i18n.requestFailedDetail(getErrorMessage(error))
 
       if (isStillActive() && !controller.signal.aborted) {
         setMessages([
@@ -4326,7 +4323,7 @@ function App() {
       id: pendingId,
       role: 'assistant',
       kind: 'pending',
-      text: '正在生成…',
+      text: i18n.generating,
     })
     setIsGenerating(true)
 
@@ -4493,7 +4490,7 @@ function App() {
       } catch (error) {
         // Constructor itself blew up (rare). Treat as a retryable failure
         // until MAX_ATTEMPTS is reached.
-        scheduleRetryOrFail(attempt, `连接失败：${getErrorMessage(error)}`)
+        scheduleRetryOrFail(attempt, i18n.connectFailed(getErrorMessage(error)))
         return
       }
 
@@ -4505,7 +4502,7 @@ function App() {
           ws.send(requestBody)
         } catch (error) {
           finalize(null, {
-            errorMessage: `发送失败：${getErrorMessage(error)}`,
+            errorMessage: i18n.sendFailed(getErrorMessage(error)),
             cutPlayback: true,
           })
           try {
@@ -4571,7 +4568,7 @@ function App() {
 
         if (msg.type === 'done') {
           receivedAnyData = true
-          const finalText = (fullText || msg.text || '').trim() || '(空回复)'
+          const finalText = (fullText || msg.text || '').trim() || i18n.emptyReply
           const recordingSessionId = msg.recording_session_id ?? null
 
           if (recordingSessionId) {
@@ -4602,7 +4599,7 @@ function App() {
           // Backend-reported error: don't retry, surface immediately.
           receivedAnyData = true
           finalize(null, {
-            errorMessage: `请求失败：${msg.error || 'unknown error'}`,
+            errorMessage: i18n.requestFailedDetail(msg.error || 'unknown error'),
             cutPlayback: true,
           })
           try {
@@ -4639,7 +4636,7 @@ function App() {
               id: createId('assistant'),
               role: 'assistant',
               kind: 'assistant',
-              text: fullText.trim() || '已停止当前回复。',
+              text: fullText.trim() || i18n.stoppedReply,
               audioPreviewUrl: null,
               recordingSessionId: null,
             },
@@ -4649,12 +4646,10 @@ function App() {
         }
 
         if (!receivedAnyData) {
-          scheduleRetryOrFail(attempt, 'WebSocket 连接异常')
+          scheduleRetryOrFail(attempt, i18n.wsError)
         } else {
-          // Stream started and then the socket dropped — that's a real
-          // mid-stream failure; surface it instead of silently retrying.
           finalize(null, {
-            errorMessage: '连接已关闭',
+            errorMessage: i18n.wsClosed,
             cutPlayback: true,
           })
         }
@@ -4719,7 +4714,7 @@ function App() {
     f: File,
     kind: 'image' | 'audio' | 'video',
   ): Promise<{ attachment?: Attachment; error?: string }> {
-    const sizeErr = checkAttachmentSize(f, kind)
+    const sizeErr = checkAttachmentSize(f, kind, i18n)
     if (sizeErr) return { error: sizeErr }
     let att: Attachment
     try {
@@ -4729,9 +4724,9 @@ function App() {
           : await mediaFileToAttachment(f, kind)
     } catch (err) {
       console.warn('attach failed', f.name, err)
-      return { error: `附件处理失败：${getErrorMessage(err)}` }
+      return { error: i18n.attachProcessFailed(getErrorMessage(err)) }
     }
-    const durErr = checkVideoDuration(att)
+    const durErr = checkVideoDuration(att, i18n)
     if (durErr) {
       // Drop the half-built attachment; revoke its blob URL so the
       // browser doesn't hold the (large) video in memory.
@@ -4910,7 +4905,7 @@ function App() {
       setMessages(nextMessages)
       await submitConversation(nextMessages)
     } catch (error) {
-      setRecordError(`录音处理失败：${getErrorMessage(error)}`)
+      setRecordError(i18n.recordingFailed(getErrorMessage(error)))
       flushTrace('finalize.error', { err: getErrorMessage(error) })
     } finally {
       setIsPreparingRecording(false)

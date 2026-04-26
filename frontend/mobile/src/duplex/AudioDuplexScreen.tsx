@@ -6,6 +6,7 @@ import type {
   SettingsSummaryComponent,
 } from './types'
 import type { UseDuplexSessionApi } from './useDuplexSession'
+import { useI18n } from '../i18n'
 
 export type AudioDuplexScreenProps = {
   duplex: UseDuplexSessionApi
@@ -115,6 +116,7 @@ export function AudioDuplexScreen({
   shareReady = false,
   onOpenShare,
 }: AudioDuplexScreenProps) {
+  const { t: i18n } = useI18n()
   const SettingsIcon = icons.Settings
   const TranscriptIcon = icons.Transcript
   const PauseIcon = icons.Pause
