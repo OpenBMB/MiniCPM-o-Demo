@@ -24,6 +24,10 @@
 const RECENT_SESSIONS_KEY = 'minicpmo45_recent_sessions';
 const MAX_RECENT = 20;
 
+function _ssT(key, fallback) {
+    return window.I18n?.t?.[key] ?? fallback;
+}
+
 /* ─────────── 静态 helpers（与移动端共用同一协议） ─────────── */
 async function uploadRecording(sessionId, blob, ext) {
     const form = new FormData();
@@ -128,13 +132,15 @@ class SaveShareUI {
         const btn = this._container?.querySelector('.ss-btn');
         if (btn) {
             btn.disabled = !this._sessionId || this._uploading;
-            btn.textContent = this._uploading ? 'Uploading...' : 'Upload & Share';
+            btn.textContent = this._uploading
+                ? _ssT('uploading', 'Uploading…')
+                : _ssT('uploadAndShare', 'Upload & Share');
         }
     }
 
     _render() {
         this._container.innerHTML = `
-            <button class="ss-btn" disabled>Upload & Share</button>
+            <button class="ss-btn" disabled>${_ssT('uploadAndShare', 'Upload & Share')}</button>
             <div class="ss-toast" style="display:none;"></div>
         `;
         this._container.querySelector('.ss-btn').addEventListener('click', () => this._onClick());
@@ -157,12 +163,12 @@ class SaveShareUI {
             overlay.className = 'ss-modal-overlay';
             overlay.innerHTML = `
                 <div class="ss-modal" role="dialog" aria-modal="true" aria-labelledby="ss-modal-title">
-                    <div class="ss-modal-title" id="ss-modal-title">分享对话</div>
-                    <div class="ss-modal-hint">可以加一句评语（可选），帮助回看时记住这是哪段对话。</div>
-                    <textarea class="ss-modal-input" maxlength="2000" placeholder="评语（可选）"></textarea>
+                    <div class="ss-modal-title" id="ss-modal-title">${_ssT('shareDialog', 'Share Conversation')}</div>
+                    <div class="ss-modal-hint">${_ssT('shareHint', 'Upload session recording to server and copy shareable link.')}</div>
+                    <textarea class="ss-modal-input" maxlength="2000" placeholder="${_ssT('commentOptional', 'Comment (optional)')}"></textarea>
                     <div class="ss-modal-actions">
-                        <button type="button" class="ss-modal-btn ss-modal-cancel">取消</button>
-                        <button type="button" class="ss-modal-btn ss-modal-ok">分享</button>
+                        <button type="button" class="ss-modal-btn ss-modal-cancel">${_ssT('cancel', 'Cancel')}</button>
+                        <button type="button" class="ss-modal-btn ss-modal-ok">${_ssT('share', 'Share')}</button>
                     </div>
                 </div>
             `;
@@ -202,7 +208,7 @@ class SaveShareUI {
             try { await saveComment(sid, comment); }
             catch (e) {
                 console.warn('[SaveShare] saveComment failed:', e);
-                this._showToast(`评语保存失败：${e.message}\n继续生成分享链接...`, true);
+                this._showToast(`${_ssT('commentSaveFailed', 'Comment save failed: ')}${e.message}`, true);
             }
         }
 
@@ -210,12 +216,12 @@ class SaveShareUI {
         if (this._recordingBlob && this._recordingBlob.size > 0) {
             this._uploading = true;
             this._updateBtn();
-            this._showToast('上传前端录制中...');
+            this._showToast(_ssT('uploading', 'Uploading…'));
             try {
                 await uploadRecording(sid, this._recordingBlob, this._recordingExt);
             } catch (e) {
                 console.error('[SaveShare] upload error:', e);
-                this._showToast(`上传失败: ${e.message}\n链接仍可用（无前端录制）: ${url}`, true);
+                this._showToast(`${_ssT('uploadFailed', 'Upload failed: ')}${e.message}\n${url}`, true);
                 this._uploading = false;
                 this._updateBtn();
                 addToRecent(sid, this.appType);
@@ -228,9 +234,9 @@ class SaveShareUI {
         // 3. Add to recent + copy link.
         addToRecent(sid, this.appType);
         navigator.clipboard.writeText(url).then(() => {
-            this._showToast(`已复制到剪贴板\n${url}`);
+            this._showToast(`${_ssT('copiedToClipboard', 'Copied to clipboard')}\n${url}`);
         }).catch(() => {
-            this._showToast(`分享链接: ${url}`, true);
+            this._showToast(`${_ssT('shareLink', 'Share link: ')}${url}`, true);
         });
     }
 

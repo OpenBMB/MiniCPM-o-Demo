@@ -28,7 +28,7 @@
 <div class="notice-banner" id="noticeBanner">
     <span class="notice-icon">&#x1F3A7;</span>
     <span>Audio Full-Duplex is an experimental feature for MiniCPM-o 4.5, it may not respond to new query when it is speaking. Using headphones may help. We will optimize it in the next version.</span>
-    <button class="notice-dismiss" onclick="this.parentElement.style.display='none'" title="Dismiss">&times;</button>
+    <button class="notice-dismiss" id="noticeDismissBtn" onclick="this.parentElement.style.display='none'" title="Dismiss">&times;</button>
 </div>
 
 <!-- ========== Two-Column Layout ========== -->
@@ -218,7 +218,44 @@
 <script type="module" src="/static/audio-duplex/audio-duplex-app.js"></script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
+import { t } from '/static/shared/i18n.js';
 initNav('audio_duplex');
+
+const _i18n = (sel, text) => { const el = document.querySelector(sel); if (el) el.textContent = text; };
+_i18n('#serviceStatus', t.connecting);
+_i18n('#btnResetSettings', t.resetSettings);
+_i18n('#noticeBanner > span:nth-child(2)', t.experimentalNotice);
+document.getElementById('noticeDismissBtn')?.setAttribute('title', t.dismiss);
+_i18n('.status-lamp .label', t.live);
+_i18n('#waveformPlaceholder span', t.micWaveform);
+_i18n('#waveformOverlay span', t.listeningHint);
+_i18n('#btnForceListen', t.forceListen);
+_i18n('#btnPause', t.pause_);
+_i18n('#btnStop', t.stop_);
+_i18n('#btnStart', t.start);
+
+for (const btn of document.querySelectorAll('[data-mode="live"]')) {
+    btn.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = n.textContent.replace('Live', t.liveMode); });
+}
+for (const btn of document.querySelectorAll('[data-mode="file"]')) {
+    btn.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = n.textContent.replace('File', t.fileMode); });
+}
+
+_i18n('.fo-file-btn', t.chooseAudio);
+_i18n('#fileName', t.noFile);
+
+for (const s of document.querySelectorAll('.config-group > summary')) {
+    const txt = s.textContent.trim();
+    const map = {
+        'Session': t.session,
+        'Audio Devices': t.audioDevices,
+        'System Prompt Details': t.systemPromptDetails,
+    };
+    if (map[txt]) s.textContent = map[txt];
+}
+
+_i18n('.conv-header span:first-child', t.conversation);
+_i18n('#chatEmpty', t.startVoiceConversation);
 </script>
 <script type="module">
 import { initFaqSidebar } from '/static/shared/faq-sidebar.js';

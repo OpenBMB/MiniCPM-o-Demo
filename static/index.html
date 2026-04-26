@@ -231,35 +231,33 @@
         </div>
     </main>
 
-    <script src="/static/shared/i18n.js"></script>
     <script type="module">
     import { initNav } from '/static/shared/app-nav.js';
+    import { t } from '/static/shared/i18n.js';
 
-    const t = window.I18n?.t || {};
     const APP_CARD_META = {
-        turnbased: { css: 'turnbased', icon: '💬', desc: t.turnbasedDesc || '' },
-        omni:      { css: 'omni',      icon: '🎥', desc: t.omniDesc || '' },
-        audio_duplex: { css: 'audio', icon: '🎤', desc: t.audioDuplexDesc || '' },
+        turnbased: { css: 'turnbased', icon: '💬', desc: t.turnbasedDesc },
+        omni:      { css: 'omni',      icon: '🎥', desc: t.omniDesc },
+        audio_duplex: { css: 'audio', icon: '🎤', desc: t.audioDuplexDesc },
     };
     const MOBILE_PREVIEW_CARD = {
         route: '/mobile',
         css: 'mobile',
         icon: '📱',
-        title: t.mobileName || 'Mobile',
-        desc: t.mobileDesc || '',
+        title: t.mobileName,
+        desc: t.mobileDesc,
     };
 
-    // Apply i18n to static elements
-    if (t.chooseMode) document.getElementById('home-title').textContent = t.chooseMode;
-    if (t.recentSessions) document.getElementById('recent-title').textContent = t.recentSessions;
-    document.getElementById('recent-clear-btn').textContent = t.clearRecent || 'Clear';
+    document.getElementById('home-title').textContent = t.chooseMode;
+    document.getElementById('recent-title').textContent = t.recentSessions;
+    document.getElementById('recent-clear-btn').textContent = t.clearRecent;
 
     function renderCard(card) {
         return `<a href="${card.route}" class="mode-card ${card.css}">
             <div class="card-icon" aria-hidden="true">${card.icon}</div>
             <div class="card-title">${card.title}</div>
             <div class="card-desc">${card.desc}</div>
-            <div class="card-enter">${t.enter || 'Enter →'}</div>
+            <div class="card-enter">${t.enter}</div>
         </a>`;
     }
 

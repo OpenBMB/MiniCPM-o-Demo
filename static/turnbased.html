@@ -893,7 +893,7 @@
     <!-- ========== 初始视图（ChatGPT 风格） ========== -->
     <div class="initial-view" id="initialView">
         <div class="initial-title">MiniCPM-o 4.5</div>
-        <div class="initial-subtitle">Turn-based Chat</div>
+        <div class="initial-subtitle" id="initialSubtitle">Turn-based Chat</div>
 
         <!-- Preset + System 配置 -->
         <div class="system-config-card" style="padding:16px 20px;">
@@ -3156,7 +3156,20 @@ const _saveShareUI = new SaveShareUI({ containerId: 'save-share-container', appT
 </script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
+import { t } from '/static/shared/i18n.js';
 initNav('turnbased');
+
+document.getElementById('serviceStatus').textContent = t.connecting;
+document.getElementById('initialSubtitle').textContent = t.turnbasedChat;
+
+const _i18nMap = {
+    systemConfigCard: { summary: t.advancedSystemSettings },
+};
+for (const [id, ops] of Object.entries(_i18nMap)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (ops.summary) { const s = el.querySelector('summary'); if (s) s.textContent = ops.summary; }
+}
 </script>
 <script type="module">
 import { initFaqSidebar } from '/static/shared/faq-sidebar.js';
