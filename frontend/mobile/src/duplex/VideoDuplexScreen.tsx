@@ -286,8 +286,8 @@ export function VideoDuplexScreen({
             .join(' ')}
           type="button"
           onClick={duplex.toggleTextPanel}
-          aria-label={subtitleOn ? 'Hide subtitles' : 'Show subtitles'}
-          title="Subtitles on/off"
+          aria-label={subtitleOn ? i18n.hideSubtitles : i18n.showSubtitles}
+          title={i18n.subtitlesOnOff}
         >
           <svg
             width="18"
@@ -311,8 +311,8 @@ export function VideoDuplexScreen({
           onClick={() => {
             duplex.stop()
           }}
-          aria-label="Exit"
-          title="Exit"
+          aria-label={i18n.exit}
+          title={i18n.exit}
         >
           <svg
             width="18"
@@ -338,17 +338,17 @@ export function VideoDuplexScreen({
           className="vd-ctrl-btn"
           type="button"
           disabled={ancillaryDisabled}
-          title="Force Listen (mobile placeholder)"
+          title={i18n.forceListen}
         >
-          Force Listen
+          {i18n.forceListen}
         </button>
         <button
           className="vd-ctrl-btn"
           type="button"
           disabled={ancillaryDisabled}
-          title="HD (mobile placeholder)"
+          title={i18n.hd}
         >
-          HD
+          {i18n.hd}
         </button>
         <button
           className={['vd-ctrl-btn vd-start', start.live ? 'live' : '']

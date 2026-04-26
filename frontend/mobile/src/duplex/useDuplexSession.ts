@@ -326,15 +326,15 @@ export function useDuplexSession(
       }
       session.onQueueDone = () => {
         setStatus('starting')
-        setStatusText(`Worker 已分配，正在准备${modeLabel}会话...`)
+        setStatusText(i18n.workerAssigned(modeLabel))
       }
       session.onPrepared = () => {
-        setStatusText(`会话已准备，开始${modeLabel}推流...`)
+        setStatusText(i18n.sessionReady(modeLabel))
       }
       session.onRunningChange = (running) => {
         setStatus(running ? 'live' : 'stopped')
         setStatusText(
-          running ? `${modeLabel}进行中` : `${modeLabel}会话已停止`,
+          running ? i18n.duplexInProgress(modeLabel) : i18n.duplexEnded(modeLabel),
         )
       }
       session.onPauseStateChange = (state) => {
@@ -342,10 +342,10 @@ export function useDuplexSession(
         setStatus(state === 'active' ? 'live' : 'paused')
         setStatusText(
           state === 'active'
-            ? `${modeLabel}进行中`
+            ? i18n.duplexInProgress(modeLabel)
             : state === 'pausing'
-              ? `正在暂停${modeLabel}...`
-              : `${modeLabel}已暂停`,
+              ? i18n.duplexPausing(modeLabel)
+              : i18n.duplexPaused(modeLabel),
         )
       }
       session.onForceListenChange = (active) => {
@@ -395,7 +395,7 @@ export function useDuplexSession(
         setPauseState('active')
         setForceListen(false)
         setStatus('stopped')
-        setStatusText(`${modeLabel}会话已结束`)
+        setStatusText(i18n.duplexEnded(modeLabel))
       }
 
       const preparePayload: Record<string, unknown> = {
@@ -446,8 +446,8 @@ export function useDuplexSession(
       sessionRef.current = null
       setHasSession(false)
       setStatus('error')
-      setStatusText(`启动失败：${getErrorMessage(error)}`)
-      appendEntry('system', `启动失败：${getErrorMessage(error)}`)
+      setStatusText(i18n.startFailed(getErrorMessage(error)))
+      appendEntry('system', i18n.startFailed(getErrorMessage(error)))
     } finally {
       startInFlightRef.current = false
     }
@@ -482,7 +482,7 @@ export function useDuplexSession(
 
     if (action) {
       void action.catch((error: unknown) => {
-        appendEntry('system', `翻转摄像头失败：${getErrorMessage(error)}`)
+        appendEntry('system', i18n.flipCameraFailed(getErrorMessage(error)))
       })
     }
   }
