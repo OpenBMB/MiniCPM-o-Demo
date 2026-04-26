@@ -130,7 +130,7 @@ export type OmniSettingsWidgetProps = {
 }
 
 export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidgetProps) {
-  const { t: i18n } = useI18n()
+  const { lang, setLang: onSetLang, t: i18n } = useI18n()
   const [systemPrompt, setSystemPrompt] = useState('')
   const [lengthPenalty, setLengthPenalty] = useState(1.1)
   const [playbackDelay, setPlaybackDelay] = useState(0)
@@ -563,6 +563,13 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
               <span>Max KV (tok)</span>
               <input className="settings-input" type="number" min="512" max="16384" step="512" value={maxKv} onChange={(e) => handleKvChange(Number(e.target.value))} />
             </label>
+          <label className="settings-toggle">
+            <span>{lang === 'zh' ? '语言' : 'Language'}</span>
+            <span className="settings-lang-toggle">
+              <button className={`lang-chip${lang === 'zh' ? ' active' : ''}`} type="button" onClick={() => onSetLang('zh')}>中文</button>
+              <button className={`lang-chip${lang === 'en' ? ' active' : ''}`} type="button" onClick={() => onSetLang('en')}>En</button>
+            </span>
+          </label>
           </div>
         </div>
 

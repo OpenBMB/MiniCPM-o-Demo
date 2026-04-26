@@ -2,9 +2,14 @@ import { createRoot, type Root } from 'react-dom/client'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { OmniSettingsWidget } from './OmniSettingsWidget'
 import type { OmniBridge } from './settings-types'
+import { I18nContext, detectLang, persistLang, t as getT } from '../i18n'
+import type { Lang } from '../i18n'
 
 function WidgetHost({ bridge, openSignal }: { bridge: OmniBridge; openSignal: { current: number } }) {
   const [open, setOpen] = useState(false)
+  const [lang, setLangState] = useState<Lang>(detectLang)
+  const i18n = getT(lang)
+  const setLang = (l: Lang) => { setLangState(l); persistLang(l); window.location.reload() }
   const lastSignal = useRef(0)
 
   useEffect(() => {
@@ -19,7 +24,11 @@ function WidgetHost({ bridge, openSignal }: { bridge: OmniBridge; openSignal: { 
 
   const handleClose = useCallback(() => setOpen(false), [])
 
-  return <OmniSettingsWidget open={open} bridge={bridge} onClose={handleClose} />
+  return (
+    <I18nContext.Provider value={{ lang, setLang, t: i18n }}>
+      <OmniSettingsWidget open={open} bridge={bridge} onClose={handleClose} />
+    </I18nContext.Provider>
+  )
 }
 
 export function mountOmniSettings(
