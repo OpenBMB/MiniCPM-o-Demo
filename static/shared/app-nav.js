@@ -12,9 +12,10 @@
  *   <script>AppNav.init('turnbased');</script>
  */
 
-import { createLangToggle } from '/static/shared/i18n.js';
+import { createLangToggle, t } from '/static/shared/i18n.js';
 
 const _NAV_SELECTOR = '.nav-links';
+const _NAV_EXTRA_LINKS = [];
 
 // Apps to hide from the global nav (still reachable by direct route).
 const _NAV_HIDDEN_APP_IDS = new Set(['half_duplex_audio']);
@@ -34,12 +35,9 @@ function _renderNav(apps, currentAppId) {
     const navEl = document.querySelector(_NAV_SELECTOR);
     if (!navEl) return;
 
-    const t = window.I18n?.t || {};
-    const homeText = t.home || 'Home';
-    const mobileText = t.mobile || 'Mobile';
     const homeActive = !currentAppId ? ' class="active"' : '';
 
-    const extras = `<a href="/mobile">${mobileText}</a>`;
+    const extras = `<a href="/mobile">${t.mobile}</a>`;
 
     const links = apps
         .filter(a => !_NAV_HIDDEN_APP_IDS.has(a.app_id))
@@ -48,7 +46,7 @@ function _renderNav(apps, currentAppId) {
             return `<a href="${a.route}"${active}>${a.name}</a>`;
         });
 
-    navEl.innerHTML = `<a href="/"${homeActive}>${homeText}</a>` + extras + links.join('');
+    navEl.innerHTML = `<a href="/"${homeActive}>${t.home}</a>` + extras + links.join('');
 
     try { createLangToggle(navEl.parentElement); } catch { /* i18n not loaded */ }
 }
