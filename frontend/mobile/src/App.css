@@ -1,7 +1,9 @@
 .mobile-app {
   position: relative;
   width: 100%;
-  min-height: 100dvh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
   background: #fff;
 }
 
