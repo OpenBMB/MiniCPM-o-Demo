@@ -2260,14 +2260,14 @@ function SettingsSheet({
                 onClick={onUseDefaultRefAudio}
                 disabled={!defaultRefAudio?.base64}
               >
-                默认
+                {i18n.default_}
               </button>
               <button
                 className="secondary-btn compact"
                 type="button"
                 onClick={onUploadRefAudio}
               >
-                上传
+                {i18n.upload}
               </button>
               <button
                 className={`secondary-btn compact${refAudioRecording ? ' ref-audio-recording-active' : ''}`}
@@ -2277,10 +2277,10 @@ function SettingsSheet({
                 {refAudioRecording ? (
                   <>
                     <span className="rec-dot" />
-                    停止录制
+                    {i18n.stopRecording}
                   </>
                 ) : (
-                  '录制'
+                  i18n.record
                 )}
               </button>
               <button
@@ -2289,14 +2289,14 @@ function SettingsSheet({
                 onClick={onPlayRefAudio}
                 disabled={!activeSettings.refAudio.base64}
               >
-                播放
+                {i18n.play}
               </button>
               <button
                 className="secondary-btn compact"
                 type="button"
                 onClick={onClearRefAudio}
               >
-                清空
+                {i18n.clear}
               </button>
             </div>
           </div>
@@ -2304,7 +2304,7 @@ function SettingsSheet({
 
         <div className="settings-section">
           <label className="settings-section-title" htmlFor="settings-system-prompt">
-            System Prompt
+            {i18n.systemPrompt}
           </label>
           <textarea
             id="settings-system-prompt"
@@ -2317,10 +2317,10 @@ function SettingsSheet({
         </div>
 
         <div className="settings-section">
-          <div className="settings-section-title">参数</div>
+          <div className="settings-section-title">{i18n.params}</div>
           <div className="settings-grid">
             <label className="settings-field">
-              <span>Length Penalty</span>
+              <span>{i18n.lengthPenalty}</span>
               <input
                 className="settings-input"
                 type="number"
@@ -2336,7 +2336,7 @@ function SettingsSheet({
 
             {activeMode === 'turnbased' ? (
               <label className="settings-field">
-                <span>Max Tokens</span>
+                <span>{i18n.maxTokens}</span>
                 <input
                   className="settings-input"
                   type="number"
@@ -2362,7 +2362,7 @@ function SettingsSheet({
                     onTurnTtsEnabledChange(event.target.checked)
                   }}
                 />
-                <span>Turn-based 语音回复</span>
+                <span>{i18n.turnBased} {i18n.voiceReply}</span>
               </label>
               <label className="settings-toggle">
                 <input
@@ -2372,7 +2372,7 @@ function SettingsSheet({
                     onTurnStreamingEnabledChange(event.target.checked)
                   }}
                 />
-                <span>Turn-based 流式输出</span>
+                <span>{i18n.turnBased} {i18n.streamingOutput}</span>
               </label>
             </>
           ) : null}
@@ -2427,7 +2427,7 @@ function HistoryDrawer({
       aria-hidden={!open}
     >
       <div className="history-drawer-backdrop" onClick={onClose} />
-      <aside className="history-drawer" role="dialog" aria-label="历史会话">
+      <aside className="history-drawer" role="dialog" aria-label={i18n.historySessions}>
         <div className="history-drawer-top">
           <button
             type="button"
@@ -2435,13 +2435,13 @@ function HistoryDrawer({
             onClick={onNewSession}
           >
             <EditSquareIcon className="app-icon app-icon-md" />
-            <span>新建对话</span>
+            <span>{i18n.createNewChat}</span>
           </button>
         </div>
 
         <div className="history-drawer-list">
           {sorted.length === 0 ? (
-            <div className="history-drawer-empty">还没有历史对话</div>
+            <div className="history-drawer-empty">{i18n.noHistoryYet}</div>
           ) : (
             sorted.map((s) => (
               <div
@@ -2460,7 +2460,7 @@ function HistoryDrawer({
                 >
                   <span className="history-drawer-item-title">{s.title}</span>
                   <span className="history-drawer-item-time">
-                    {formatRelativeTime(s.updatedAt)}
+                    {formatRelativeTime(s.updatedAt, i18n)}
                   </span>
                 </button>
                 <button
@@ -2468,11 +2468,11 @@ function HistoryDrawer({
                   className="history-drawer-item-delete"
                   onClick={(e) => {
                     e.stopPropagation()
-                    if (window.confirm(`删除「${s.title}」？此操作不可撤销。`)) {
+                    if (window.confirm(i18n.deleteSessionConfirm(s.title))) {
                       onDelete(s.id)
                     }
                   }}
-                  aria-label="删除"
+                  aria-label={i18n.delete}
                 >
                   <TrashIcon className="app-icon app-icon-sm" />
                 </button>
@@ -2487,10 +2487,10 @@ function HistoryDrawer({
             className="history-drawer-bottom-item"
             onClick={onOpenShare}
             disabled={!shareReady}
-            title={shareReady ? '分享当前对话' : '当前对话还没有后端记录可分享'}
+            title={shareReady ? i18n.shareChat : i18n.noBackendRecord}
           >
             <ShareIcon className="app-icon app-icon-md" />
-            <span>分享对话</span>
+            <span>{i18n.shareTitle}</span>
           </button>
           <button
             type="button"
@@ -2498,23 +2498,21 @@ function HistoryDrawer({
             onClick={onOpenSettings}
           >
             <SettingsIcon className="app-icon app-icon-md" />
-            <span>设置</span>
+            <span>{i18n.settings}</span>
           </button>
           <button
             type="button"
             className="history-drawer-bottom-item is-danger"
             onClick={() => {
               if (
-                window.confirm(
-                  '确定清空本机所有对话和媒体？此操作不可撤销，相当于该手机从未使用过本应用。',
-                )
+                window.confirm(i18n.clearAllDataConfirm)
               ) {
                 onClearAll()
               }
             }}
           >
             <TrashIcon className="app-icon app-icon-md" />
-            <span>清空全部数据</span>
+            <span>{i18n.clearAllData}</span>
           </button>
         </div>
       </aside>
@@ -2547,35 +2545,34 @@ function ShareDialog({
   onCancel,
   onSubmit,
 }: ShareDialogProps) {
+  const { t: i18n } = useI18n()
   if (!open) return null
   return (
     <div
       className="share-dialog-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="分享对话"
+      aria-label={i18n.shareTitle}
       onClick={(e) => {
         if (e.target === e.currentTarget && !submitting) onCancel()
       }}
     >
       <div className="share-dialog">
-        <div className="share-dialog-title">分享对话</div>
+        <div className="share-dialog-title">{i18n.shareTitle}</div>
         <div className="share-dialog-hint">
-          可以加一句评语（可选），帮助回看时记住这是哪段对话。
-          <br />
-          点击「分享」后，链接会复制到剪贴板。
+          {i18n.shareHint}
         </div>
         <div className="share-dialog-meta">
-          <span className="share-dialog-meta-label">链接</span>
+          <span className="share-dialog-meta-label">{i18n.linkLabel}</span>
           <span className="share-dialog-meta-value">{shareUrl || '—'}</span>
         </div>
         <div className="share-dialog-meta">
-          <span className="share-dialog-meta-label">Session</span>
+          <span className="share-dialog-meta-label">{i18n.sessionLabel}</span>
           <span className="share-dialog-meta-value">{sessionId}</span>
         </div>
         <textarea
           className="share-dialog-input"
-          placeholder="评语（可选，最多 2000 字）"
+          placeholder={i18n.commentPlaceholder}
           maxLength={2000}
           value={comment}
           disabled={submitting}
@@ -2592,7 +2589,7 @@ function ShareDialog({
             disabled={submitting}
             onClick={onCancel}
           >
-            {successInfo ? '关闭' : '取消'}
+            {successInfo ? i18n.close : i18n.cancel}
           </button>
           {!successInfo ? (
             <button
@@ -2601,7 +2598,7 @@ function ShareDialog({
               disabled={submitting || !sessionId}
               onClick={onSubmit}
             >
-              {submitting ? '分享中…' : '分享'}
+              {submitting ? i18n.sharing : i18n.share}
             </button>
           ) : null}
         </div>
@@ -3427,7 +3424,7 @@ function App() {
           : cloneRefAudio(EMPTY_REF_AUDIO),
       })
     } catch (error) {
-      reportSettingsMessage(`加载 preset 失败：${getErrorMessage(error)}`)
+      reportSettingsMessage(i18n.requestFailedDetail(getErrorMessage(error)))
     }
   }
 
@@ -5183,6 +5180,7 @@ function App() {
   const voiceMainLabel = isRecording ? i18n.releaseToSend : i18n.holdToTalk
 
   return (
+    <I18nContext.Provider value={{ lang, setLang, t: i18n }}>
     <div className="mobile-app">
       <input
         ref={refAudioInputRef}
@@ -5293,7 +5291,7 @@ function App() {
               className="topbar-icon-btn"
               type="button"
               onClick={() => setHistoryOpen(true)}
-              aria-label="打开菜单"
+              aria-label={i18n.openMenu}
             >
               <HamburgerIcon className="app-icon app-icon-md" />
             </button>
@@ -5302,8 +5300,8 @@ function App() {
               <div className="topbar-title-main">
                 {sessions.find((s) => s.id === activeSessionId)?.title ||
                   (messages.length > 0
-                    ? deriveSessionTitle(messages)
-                    : '新对话')}
+                    ? deriveSessionTitle(messages, i18n)
+                    : i18n.newChat)}
               </div>
               <div className={`topbar-title-sub ${serviceState.phase}`}>
                 <span className="service-tiny-dot" aria-hidden="true" />
@@ -5317,7 +5315,7 @@ function App() {
                 type="button"
                 onClick={() => duplex.openScreen('audio')}
                 disabled={isGenerating || isRecording || isPreparingRecording}
-                aria-label="进入音频双工"
+                aria-label={i18n.enterAudioDuplex}
               >
                 <PhoneIcon className="app-icon app-icon-md" />
               </button>
@@ -5338,7 +5336,7 @@ function App() {
                   window.location.assign('/mobile-omni/')
                 }}
                 disabled={isGenerating || isRecording || isPreparingRecording}
-                aria-label="进入视频双工"
+                aria-label={i18n.enterVideoDuplex}
               >
                 <VideoCallIcon className="app-icon app-icon-md" />
               </button>
@@ -5404,7 +5402,7 @@ function App() {
                       type="button"
                       className="attach-chip-remove"
                       onClick={() => removePendingAttachment(a.id)}
-                      aria-label="移除附件"
+                      aria-label={i18n.removeAttachment}
                     >
                       ×
                     </button>
@@ -5484,7 +5482,7 @@ function App() {
                 type="button"
                 onClick={() => cameraInputRef.current?.click()}
                 disabled={isGenerating || isPreparingRecording}
-                aria-label="拍照"
+                aria-label={i18n.takePhoto}
               >
                 <CameraSnapIcon className="app-icon app-icon-md" />
               </button>
@@ -5507,7 +5505,7 @@ function App() {
                       }
                     }}
                     className="pill-input"
-                    placeholder="发消息…"
+                    placeholder={i18n.placeholder}
                     rows={1}
                     value={draft}
                     onChange={(event) => {
@@ -5540,7 +5538,7 @@ function App() {
                   onPointerCancel={handleTalkPointerCancel}
                 >
                   <span className="pill-talk-label">
-                    {isRecording ? '说话中…' : voiceMainLabel}
+                    {isRecording ? i18n.speaking : voiceMainLabel}
                   </span>
                 </button>
               )}
@@ -5565,7 +5563,7 @@ function App() {
                     setComposeMode('voice')
                   }
                 }}
-                aria-label={composeMode === 'voice' ? '切换到键盘' : '切换到语音'}
+                aria-label={composeMode === 'voice' ? i18n.switchToKeyboard : i18n.switchToVoice}
               >
                 {composeMode === 'voice' ? (
                   <KeyboardIcon className="app-icon app-icon-md" />
@@ -5579,7 +5577,7 @@ function App() {
                 type="button"
                 onClick={() => setAttachMenuOpen((v) => !v)}
                 disabled={isGenerating || isPreparingRecording}
-                aria-label={attachMenuOpen ? '关闭附件菜单' : '附件'}
+                aria-label={attachMenuOpen ? i18n.closeAttachMenu : i18n.openAttachMenu}
                 aria-expanded={attachMenuOpen}
               >
                 {attachMenuOpen ? (
@@ -5605,7 +5603,7 @@ function App() {
                     void sendTextMessage()
                   }}
                   disabled={!isGenerating && isPreparingRecording}
-                  aria-label={isGenerating ? '停止' : '发送'}
+                  aria-label={isGenerating ? i18n.stopGeneration : i18n.sendMessage}
                 >
                   {isGenerating ? (
                     <StopIcon className="app-icon app-icon-md" />
@@ -5620,7 +5618,7 @@ function App() {
               <div
                 className="attach-drawer"
                 role="dialog"
-                aria-label="选择附件"
+                aria-label={i18n.selectAttachment}
               >
                 <button
                   type="button"
@@ -5633,7 +5631,7 @@ function App() {
                   <span className="attach-drawer-icon attach-drawer-icon-camera">
                     <CameraSnapIcon className="app-icon app-icon-lg" />
                   </span>
-                  <span className="attach-drawer-label">相机</span>
+                  <span className="attach-drawer-label">{i18n.camera}</span>
                 </button>
                 <button
                   type="button"
@@ -5646,7 +5644,7 @@ function App() {
                   <span className="attach-drawer-icon attach-drawer-icon-album">
                     <PhotoIcon className="app-icon app-icon-lg" />
                   </span>
-                  <span className="attach-drawer-label">相册</span>
+                  <span className="attach-drawer-label">{i18n.album}</span>
                 </button>
                 <button
                   type="button"
@@ -5659,7 +5657,7 @@ function App() {
                   <span className="attach-drawer-icon attach-drawer-icon-file">
                     <FileIcon className="app-icon app-icon-lg" />
                   </span>
-                  <span className="attach-drawer-label">文件</span>
+                  <span className="attach-drawer-label">{i18n.files}</span>
                 </button>
                 <button
                   type="button"
@@ -5673,7 +5671,7 @@ function App() {
                   <span className="attach-drawer-icon attach-drawer-icon-phone">
                     <PhoneIcon className="app-icon app-icon-lg" />
                   </span>
-                  <span className="attach-drawer-label">打电话</span>
+                  <span className="attach-drawer-label">{i18n.phoneCall}</span>
                 </button>
               </div>
             ) : null}
@@ -5707,6 +5705,7 @@ function App() {
         />
       )}
     </div>
+    </I18nContext.Provider>
   )
 }
 
