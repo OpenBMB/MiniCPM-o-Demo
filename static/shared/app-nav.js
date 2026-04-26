@@ -12,7 +12,7 @@
  *   <script>AppNav.init('turnbased');</script>
  */
 
-import { createLangToggle, t } from '/static/shared/i18n.js';
+import { createLangToggle, t } from '/static/shared/i18n-module.js';
 
 const _NAV_SELECTOR = '.nav-links';
 
@@ -56,7 +56,9 @@ function _renderNav(apps, currentAppId) {
 
     navEl.innerHTML = `<a href="/"${homeActive}>${t.home}</a>` + extras + links.join('');
 
-    try { createLangToggle(navEl.parentElement); } catch { /* i18n not loaded */ }
+    if (!navEl.parentElement?.querySelector('.lang-toggle')) {
+        try { createLangToggle(navEl.parentElement); } catch { /* i18n not loaded */ }
+    }
 }
 
 /**

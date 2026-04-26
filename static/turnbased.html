@@ -3165,7 +3165,7 @@ const _saveShareUI = new SaveShareUI({ containerId: 'save-share-container', appT
 </script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
-import { t, createLangToggle } from '/static/shared/i18n.js';
+import { t } from '/static/shared/i18n-module.js';
 initNav('turnbased');
 
 // ── Page title ──
@@ -3175,9 +3175,7 @@ document.title = t.turnbasedChat + ' – MiniCPM-o 4.5';
 document.getElementById('serviceStatus').textContent = t.connecting;
 document.getElementById('initialSubtitle').textContent = t.turnbasedChat;
 
-// ── Language toggle in header ──
-const _headerLeft = document.querySelector('.header > div');
-if (_headerLeft) createLangToggle(_headerLeft);
+// Language toggle is injected by app-nav.js via createLangToggle().
 
 // ── System config summaries ──
 const _scCard = document.getElementById('systemConfigCard');

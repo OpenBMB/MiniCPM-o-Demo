@@ -6,7 +6,7 @@
     <title>MiniCPMO45 Audio Duplex</title>
     <link rel="stylesheet" href="/static/duplex/duplex-shared.css">
     <link rel="stylesheet" href="/static/audio-duplex/audio-duplex.css">
-    <script type="module" src="/static/shared/i18n.js"></script>
+    <script src="/static/shared/i18n.js"></script>
 </head>
 <body>
 
@@ -219,7 +219,7 @@
 <script type="module" src="/static/audio-duplex/audio-duplex-app.js"></script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
-import { t } from '/static/shared/i18n.js';
+import { t } from '/static/shared/i18n-module.js';
 initNav('audio_duplex');
 
 const _i18n = (sel, text) => { const el = document.querySelector(sel); if (el) el.textContent = text; };

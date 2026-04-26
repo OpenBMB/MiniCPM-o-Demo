@@ -414,13 +414,13 @@ let _lang = _detect();
 let _t = bundles[_lang] || bundles.zh;
 
 /** Current language code */
-export function getLang() { return _lang; }
+function getLang() { return _lang; }
 
 /** Current translations bundle */
-export function getT() { return _t; }
+function getT() { return _t; }
 
 /** Shorthand — same as getT() */
-export const t = new Proxy({}, {
+const t = new Proxy({}, {
   get(_, prop) { return _t[prop]; },
 });
 
@@ -429,7 +429,7 @@ export const t = new Proxy({}, {
  * @param {string} newLang  'zh' | 'en'
  * @param {boolean} [reload=true]  Reload the page after switch
  */
-export function setLang(newLang, reload = true) {
+function setLang(newLang, reload = true) {
   if (newLang !== 'zh' && newLang !== 'en') return;
   _lang = newLang;
   _t = bundles[newLang] || bundles.zh;
@@ -443,7 +443,7 @@ export function setLang(newLang, reload = true) {
  * @param {HTMLElement} [parent] — if provided, appends to it
  * @returns {HTMLElement}
  */
-export function createLangToggle(parent) {
+function createLangToggle(parent) {
   const wrap = document.createElement('div');
   wrap.className = 'lang-toggle';
   wrap.style.cssText = 'display:inline-flex;gap:2px;align-items:center;margin-left:12px;';
@@ -478,7 +478,8 @@ export function createLangToggle(parent) {
   return wrap;
 }
 
-// Default export for classic <script> usage
+// Set window.I18n immediately so classic <script> blocks can use it.
 if (typeof window !== 'undefined') {
   window.I18n = { getLang, getT, setLang, createLangToggle, t: _t, bundles };
 }
+

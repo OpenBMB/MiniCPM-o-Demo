@@ -231,9 +231,10 @@
         </div>
     </main>
 
+    <script src="/static/shared/i18n.js"></script>
     <script type="module">
     import { initNav } from '/static/shared/app-nav.js';
-    import { t } from '/static/shared/i18n.js';
+    const t = window.I18n?.t || {};
 
     const APP_CARD_META = {
         turnbased: { css: 'turnbased', icon: '💬', desc: t.turnbasedDesc, nameKey: 'turnbasedChat' },
