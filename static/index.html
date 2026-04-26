@@ -214,7 +214,15 @@
                 <a href="/" class="active">Home</a>
             </div>
         </div>
+        <div class="header-lang" id="headerLang"></div>
     </div>
+    <style>
+        .header-lang { display:flex; align-items:center; }
+        .header-lang .hl-toggle { display:flex; background:#f0efec; border-radius:8px; padding:2px; gap:2px; }
+        .header-lang .hl-btn { background:transparent; border:none; padding:4px 12px; font-size:11px; font-weight:600; color:#999; cursor:pointer; border-radius:6px; line-height:1.3; font-family:inherit; }
+        .header-lang .hl-btn.active { background:#fff; color:#333; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+        .header-lang .hl-btn:not(.active):hover { color:#555; }
+    </style>
 
     <main class="home-main">
         <div class="home-title" id="home-title">Choose mode</div>
@@ -252,6 +260,20 @@
     document.getElementById('home-title').textContent = t.chooseMode;
     document.getElementById('recent-title').textContent = t.recentSessions;
     document.getElementById('recent-clear-btn').textContent = t.clearRecent;
+
+    // Language toggle in header (FAQ-style)
+    const _hlEl = document.getElementById('headerLang');
+    if (_hlEl && window.I18n) {
+        const _curLang = window.I18n.getLang();
+        _hlEl.innerHTML = '<div class="hl-toggle">'
+            + '<button class="hl-btn' + (_curLang === 'zh' ? ' active' : '') + '" data-l="zh">中文</button>'
+            + '<button class="hl-btn' + (_curLang === 'en' ? ' active' : '') + '" data-l="en">EN</button>'
+            + '</div>';
+        _hlEl.addEventListener('click', e => {
+            const btn = e.target.closest('.hl-btn');
+            if (btn && !btn.classList.contains('active')) window.I18n.setLang(btn.dataset.l);
+        });
+    }
 
     function renderCard(card) {
         return `<a href="${card.route}" class="mode-card ${card.css}">
