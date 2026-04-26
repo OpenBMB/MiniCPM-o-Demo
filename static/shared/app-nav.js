@@ -15,10 +15,16 @@
 import { createLangToggle, t } from '/static/shared/i18n.js';
 
 const _NAV_SELECTOR = '.nav-links';
-const _NAV_EXTRA_LINKS = [];
 
 // Apps to hide from the global nav (still reachable by direct route).
 const _NAV_HIDDEN_APP_IDS = new Set(['half_duplex_audio']);
+
+// Map API app_id → i18n key for display name override.
+const _APP_NAME_I18N = {
+    turnbased: 'turnbasedChat',
+    omni: 'omniFullDuplex',
+    audio_duplex: 'audioDuplexTitle',
+};
 
 async function _fetchApps() {
     try {
@@ -43,7 +49,9 @@ function _renderNav(apps, currentAppId) {
         .filter(a => !_NAV_HIDDEN_APP_IDS.has(a.app_id))
         .map(a => {
             const active = a.app_id === currentAppId ? ' class="active"' : '';
-            return `<a href="${a.route}"${active}>${a.name}</a>`;
+            const i18nKey = _APP_NAME_I18N[a.app_id];
+            const label = (i18nKey && t[i18nKey]) || a.name;
+            return `<a href="${a.route}"${active}>${label}</a>`;
         });
 
     navEl.innerHTML = `<a href="/"${homeActive}>${t.home}</a>` + extras + links.join('');

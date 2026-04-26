@@ -2379,26 +2379,26 @@ function SettingsSheet({
               </label>
             </>
           ) : null}
-        </div>
-      </div>
 
-      <div className="settings-section">
-        <div className="settings-section-title">{lang === 'zh' ? '语言 / Language' : 'Language / 语言'}</div>
-        <div className="settings-lang-toggle">
-          <button
-            className={`lang-chip${lang === 'zh' ? ' active' : ''}`}
-            type="button"
-            onClick={() => onSetLang('zh')}
-          >
-            中文
-          </button>
-          <button
-            className={`lang-chip${lang === 'en' ? ' active' : ''}`}
-            type="button"
-            onClick={() => onSetLang('en')}
-          >
-            English
-          </button>
+          <label className="settings-toggle">
+            <span>{lang === 'zh' ? '语言' : 'Language'}</span>
+            <span className="settings-lang-toggle">
+              <button
+                className={`lang-chip${lang === 'zh' ? ' active' : ''}`}
+                type="button"
+                onClick={() => onSetLang('zh')}
+              >
+                中文
+              </button>
+              <button
+                className={`lang-chip${lang === 'en' ? ' active' : ''}`}
+                type="button"
+                onClick={() => onSetLang('en')}
+              >
+                En
+              </button>
+            </span>
+          </label>
         </div>
       </div>
     </div>

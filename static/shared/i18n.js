@@ -38,6 +38,7 @@ const zh = {
 
   // turnbased page
   turnbasedChat: '单工对话',
+  omniFullDuplex: '视频全双工',
   advancedSystemSettings: '高级系统设置',
   systemContent: '系统内容（文本+音频，可排序）',
   ttsRefAudio: 'TTS 参考音频（声音克隆）',
@@ -223,6 +224,7 @@ const en = {
 
   // turnbased page
   turnbasedChat: 'Turn-based Chat',
+  omniFullDuplex: 'Omni Full-Duplex',
   advancedSystemSettings: 'Advanced System Settings',
   systemContent: 'System Content (text + audio, reorderable)',
   ttsRefAudio: 'TTS Ref Audio (voice cloning)',

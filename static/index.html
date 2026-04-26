@@ -236,9 +236,9 @@
     import { t } from '/static/shared/i18n.js';
 
     const APP_CARD_META = {
-        turnbased: { css: 'turnbased', icon: '💬', desc: t.turnbasedDesc },
-        omni:      { css: 'omni',      icon: '🎥', desc: t.omniDesc },
-        audio_duplex: { css: 'audio', icon: '🎤', desc: t.audioDuplexDesc },
+        turnbased: { css: 'turnbased', icon: '💬', desc: t.turnbasedDesc, nameKey: 'turnbasedChat' },
+        omni:      { css: 'omni',      icon: '🎥', desc: t.omniDesc, nameKey: 'omniFullDuplex' },
+        audio_duplex: { css: 'audio', icon: '🎤', desc: t.audioDuplexDesc, nameKey: 'audioDuplexTitle' },
     };
     const MOBILE_PREVIEW_CARD = {
         route: '/mobile',
@@ -275,7 +275,7 @@
                     route: a.route,
                     css: m.css,
                     icon: m.icon,
-                    title: a.name,
+                    title: (m.nameKey && t[m.nameKey]) || a.name,
                     desc: m.desc,
                 });
             }) : [];
