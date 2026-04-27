@@ -1,0 +1,312 @@
+/* Realtime API page — 3-column layout with data flow panel */
+
+.proto-badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: #6366f1;
+    color: white;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+}
+
+/* ── Layout ────────────────────────────────────────── */
+.rt-main {
+    display: grid;
+    grid-template-columns: 280px 1fr 320px;
+    gap: 12px;
+    padding: 12px 16px;
+    height: calc(100vh - 52px);
+    min-height: 0;
+}
+
+.rt-col-left,
+.rt-col-center,
+.rt-col-right {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+}
+
+.panel {
+    background: var(--panel-bg, #1a1a1f);
+    border: 1px solid var(--border, #2a2a32);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.panel-title {
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #888;
+    border-bottom: 1px solid var(--border, #2a2a32);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.panel-title code {
+    font-size: 10px;
+    color: #6366f1;
+    background: rgba(99,102,241,0.12);
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+/* ── Video ─────────────────────────────────────────── */
+.rt-video-panel .video-container {
+    position: relative;
+    background: #000;
+    aspect-ratio: 4/3;
+}
+
+.rt-video-panel video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+}
+
+.video-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #555;
+    font-size: 13px;
+}
+
+/* ── Waveform ──────────────────────────────────────── */
+.rt-waveform-panel canvas {
+    width: 100%;
+    height: 48px;
+    display: block;
+}
+
+/* ── Controls ──────────────────────────────────────── */
+.rt-controls {
+    padding: 10px 14px;
+}
+
+.rt-controls .panel-title {
+    padding: 0 0 8px 0;
+    border: none;
+}
+
+.ctrl-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.ctrl-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11px;
+    color: #888;
+    flex: 1;
+}
+
+.ctrl-row input,
+.ctrl-row textarea {
+    padding: 6px 8px;
+    border: 1px solid var(--border, #2a2a32);
+    border-radius: 6px;
+    background: #111;
+    color: #e4e4e7;
+    font-size: 12px;
+    font-family: inherit;
+}
+
+.ctrl-row textarea {
+    resize: vertical;
+    width: 100%;
+    flex: none;
+}
+
+.ctrl-row button {
+    flex: 1;
+}
+
+.btn-primary {
+    background: #6366f1 !important;
+    border-color: #6366f1 !important;
+    color: white !important;
+}
+
+.btn-danger {
+    border-color: #ef4444 !important;
+    color: #ef4444 !important;
+}
+
+.btn-mini {
+    font-size: 10px;
+    padding: 2px 8px;
+    border: 1px solid var(--border, #2a2a32);
+    border-radius: 4px;
+    background: transparent;
+    color: #888;
+    cursor: pointer;
+}
+
+button {
+    padding: 7px 14px;
+    border: 1px solid var(--border, #2a2a32);
+    border-radius: 6px;
+    background: #1a1a1f;
+    color: #e4e4e7;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+
+button:hover { border-color: #6366f1; }
+button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Chat ──────────────────────────────────────────── */
+.rt-chat-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.chat-status {
+    padding: 6px 14px;
+    border-top: 1px solid var(--border, #2a2a32);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 11px;
+    color: #888;
+}
+
+.model-state {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.model-state.listening { background: rgba(34,197,94,0.15); color: #22c55e; }
+.model-state.speaking { background: rgba(99,102,241,0.15); color: #6366f1; }
+
+.metrics-mini { display: flex; gap: 10px; font-variant-numeric: tabular-nums; }
+
+.bubble {
+    max-width: 90%;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    animation: fadeIn 0.15s;
+}
+
+.bubble.ai { align-self: flex-start; background: #1e1e3a; border: 1px solid #2e2e5a; }
+.bubble.system { align-self: center; font-size: 11px; color: #666; padding: 2px 6px; }
+
+.bubble .meta { font-size: 10px; color: #555; margin-top: 3px; }
+
+@keyframes fadeIn { from { opacity:0; transform:translateY(3px); } }
+
+/* ── Data Flow Panel ───────────────────────────────── */
+.rt-flow-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.flow-legend {
+    padding: 4px 14px;
+    display: flex;
+    gap: 10px;
+    border-bottom: 1px solid var(--border, #2a2a32);
+}
+
+.flow-tag {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.tag-client { background: rgba(99,102,241,0.15); color: #818cf8; }
+.tag-server { background: rgba(34,197,94,0.15); color: #4ade80; }
+
+.flow-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+    font-size: 10.5px;
+    line-height: 1.5;
+}
+
+.flow-entry {
+    padding: 2px 12px;
+    display: flex;
+    gap: 6px;
+    cursor: default;
+    border-bottom: 1px solid rgba(255,255,255,0.02);
+}
+
+.flow-entry:hover { background: rgba(255,255,255,0.03); }
+
+.flow-ts { color: #555; min-width: 62px; white-space: nowrap; }
+.flow-arrow { min-width: 14px; text-align: center; font-weight: 700; }
+.flow-arrow.client { color: #818cf8; }
+.flow-arrow.server { color: #4ade80; }
+.flow-type { font-weight: 600; color: #ccc; min-width: 200px; white-space: nowrap; }
+.flow-summary { color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+.flow-entry.is-speak .flow-type { color: #818cf8; }
+.flow-entry.is-listen .flow-type { color: #4ade80; }
+.flow-entry.is-error .flow-type { color: #ef4444; }
+
+/* ── State Panel ───────────────────────────────────── */
+.rt-state-panel {
+    flex-shrink: 0;
+}
+
+.state-grid {
+    padding: 8px 14px;
+}
+
+.state-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 11px;
+}
+
+.state-row span { color: #666; }
+.state-row strong { color: #ccc; font-variant-numeric: tabular-nums; }
+
+/* ── Responsive ────────────────────────────────────── */
+@media (max-width: 1100px) {
+    .rt-main { grid-template-columns: 240px 1fr 280px; }
+}
+
+@media (max-width: 900px) {
+    .rt-main {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+        height: auto;
+    }
+    .rt-col-left { flex-direction: row; flex-wrap: wrap; }
+}

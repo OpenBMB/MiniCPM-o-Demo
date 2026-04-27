@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiniCPM-o 4.5 — Realtime API (OpenAI Protocol)</title>
+    <link rel="stylesheet" href="/static/duplex/duplex-shared.css">
+    <link rel="stylesheet" href="/static/realtime/realtime.css">
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <div class="header-left">
+        <h1>MiniCPM-o 4.5</h1>
+        <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/realtime" class="active">Realtime API</a>
+        </div>
+    </div>
+    <div class="header-right">
+        <span class="proto-badge">OpenAI Realtime Protocol</span>
+        <span class="status-badge" id="serviceStatus">Connecting...</span>
+    </div>
+</div>
+
+<!-- Main 3-column layout -->
+<div class="rt-main">
+
+    <!-- Left: Video + Controls -->
+    <div class="rt-col-left">
+        <div class="panel rt-video-panel">
+            <div class="panel-title">Camera Input → <code>video_frames</code></div>
+            <div class="video-container" id="videoContainer">
+                <video id="videoEl" autoplay muted playsinline></video>
+                <canvas id="frameCanvas" style="display:none"></canvas>
+                <div class="video-placeholder" id="videoPlaceholder">Camera loading...</div>
+            </div>
+        </div>
+
+        <div class="panel rt-waveform-panel">
+            <div class="panel-title">Mic Input → <code>input_audio_buffer.append</code></div>
+            <canvas id="waveformCanvas"></canvas>
+        </div>
+
+        <div class="panel rt-controls">
+            <div class="panel-title">Controls</div>
+            <div class="ctrl-row">
+                <button id="btnStart" class="btn-primary">Start Session</button>
+                <button id="btnStop" class="btn-danger" disabled>Stop</button>
+            </div>
+            <div class="ctrl-row">
+                <button id="btnPause" disabled>Pause</button>
+                <button id="btnForce" disabled>Force Listen: OFF</button>
+            </div>
+            <div class="ctrl-row">
+                <label>System Prompt
+                    <textarea id="cfgPrompt" rows="2">你是一个友好的中文助手。请观察画面并用简短语句回答。</textarea>
+                </label>
+            </div>
+            <div class="ctrl-row">
+                <label>Max KV <input type="number" id="cfgMaxKv" value="8192" min="512" step="512"></label>
+                <label>Max Slices <input type="number" id="cfgSlices" value="1" min="1" max="4"></label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Center: Chat -->
+    <div class="rt-col-center">
+        <div class="panel rt-chat-panel">
+            <div class="panel-title">Conversation</div>
+            <div class="chat-area" id="chatArea"></div>
+            <div class="chat-status" id="chatStatus">
+                <span class="model-state" id="modelState">—</span>
+                <span class="metrics-mini">
+                    Chunks <strong id="statChunks">0</strong>
+                    Speaks <strong id="statSpeaks">0</strong>
+                    KV <strong id="statKV">0</strong>
+                    TTFS <strong id="statTTFS">—</strong>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Data Flow Panel -->
+    <div class="rt-col-right">
+        <div class="panel rt-flow-panel">
+            <div class="panel-title">
+                Protocol Data Flow
+                <button id="btnClearLog" class="btn-mini">Clear</button>
+            </div>
+            <div class="flow-legend">
+                <span class="flow-tag tag-client">→ Client</span>
+                <span class="flow-tag tag-server">← Server</span>
+            </div>
+            <div class="flow-log" id="flowLog"></div>
+        </div>
+
+        <div class="panel rt-state-panel">
+            <div class="panel-title">Session State</div>
+            <div class="state-grid" id="stateGrid">
+                <div class="state-row"><span>State</span><strong id="stSession">disconnected</strong></div>
+                <div class="state-row"><span>Session ID</span><strong id="stSid">—</strong></div>
+                <div class="state-row"><span>Model</span><strong id="stModel">listening</strong></div>
+                <div class="state-row"><span>KV Cache</span><strong id="stKv">0</strong></div>
+                <div class="state-row"><span>Wall Clock</span><strong id="stWall">—</strong></div>
+                <div class="state-row"><span>Chunks Sent</span><strong id="stChunks">0</strong></div>
+                <div class="state-row"><span>Speak Count</span><strong id="stSpeaks">0</strong></div>
+                <div class="state-row"><span>Vision</span><strong id="stVision">—</strong></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="/static/realtime/realtime-app.js"></script>
+</body>
+</html>

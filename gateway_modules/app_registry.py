@@ -46,6 +46,7 @@ _DEFAULT_APPS = [
     AppInfo(app_id="half_duplex_audio", name="Half-Duplex Audio", route="/half_duplex", enabled=True),
     AppInfo(app_id="omni", name="Omni Full-Duplex", route="/omni", enabled=True),
     AppInfo(app_id="audio_duplex", name="Audio Full-Duplex", route="/audio_duplex", enabled=True),
+    AppInfo(app_id="realtime", name="Realtime API", route="/realtime", enabled=True),
 ]
 
 

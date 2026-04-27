@@ -8,7 +8,7 @@
 // Layer 0: Pure logic
 import { AudioDeviceSelector } from '../lib/audio-device-selector.js';
 import { resampleAudio as downsample, arrayBufferToBase64, escapeHtml } from '../duplex/lib/duplex-utils.js';
-import { DuplexSession } from '../duplex/lib/duplex-session.js';
+import { RealtimeSession } from '../duplex/lib/realtime-session.js';
 import { SessionVideoRecorder } from '../duplex/lib/session-video-recorder.js';
 import { RecordingSettings } from '../duplex/lib/recording-settings.js';
 import { measureLUFS } from '../duplex/lib/lufs.js';
@@ -1457,14 +1457,41 @@ async function startSession() {
         if (dlBtn) { dlBtn.style.display = 'none'; dlBtn.disabled = true; }
     }
 
-    // Create DuplexSession + wire hooks
-    session = new DuplexSession('omni', {
+    // Create RealtimeSession (OpenAI Realtime protocol) + wire hooks
+    session = new RealtimeSession('omni', {
         getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
     });
     session.onMetrics = (data) => metricsPanel.update(data);
     session.onSystemLog = addSystemEntry;
+
+    // Protocol Data Flow panel
+    const flowLog = document.getElementById('flowLog');
+    const flowBadge = document.getElementById('flowBadge');
+    let flowCount = 0;
+    session.onProtocolEvent = (entry) => {
+        flowCount++;
+        if (flowBadge) flowBadge.textContent = flowCount;
+        if (!flowLog) return;
+        const div = document.createElement('div');
+        const cls = entry.type.includes('listen') ? ' is-listen'
+            : entry.type.includes('audio.delta') || entry.type.includes('speak') ? ' is-speak'
+            : entry.type.includes('error') ? ' is-error' : '';
+        div.className = `flow-entry${cls}`;
+        const ts = new Date(entry.ts).toLocaleTimeString('en', { hour12: false, fractionalSecondDigits: 1 });
+        const arrow = entry.dir === 'client' ? '→' : '←';
+        div.innerHTML = `<span class="flow-ts">${ts}</span><span class="flow-arrow ${entry.dir}">${arrow}</span><span class="flow-type">${entry.type}</span><span class="flow-summary">${entry.summary}</span>`;
+        flowLog.appendChild(div);
+        flowLog.scrollTop = flowLog.scrollHeight;
+    };
+    const btnClearFlow = document.getElementById('btnClearFlow');
+    if (btnClearFlow) btnClearFlow.onclick = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (flowLog) flowLog.innerHTML = '';
+        flowCount = 0;
+        if (flowBadge) flowBadge.textContent = '0';
+    };
     session.onSpeakStart = (text) => {
         const handle = addSpeakEntry(text);
         if (sessionRecorder) sessionRecorder.setSubtitleText(text);

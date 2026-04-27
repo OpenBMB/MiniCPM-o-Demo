@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MiniCPM-o Realtime Audio Duplex — MVP</title>
+<style>
+  :root { --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a; --accent: #6c8cff; --green: #4caf50; --red: #ef5350; --text: #e0e0e0; --dim: #888; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 2rem 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 1.5rem; color: var(--accent); }
+
+  .controls { display: flex; gap: 1rem; margin-bottom: 1.5rem; align-items: center; flex-wrap: wrap; justify-content: center; }
+  input[type=text] { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 0.5rem 0.8rem; border-radius: 6px; width: 260px; font-size: 0.9rem; }
+  button { padding: 0.5rem 1.2rem; border: none; border-radius: 6px; font-size: 0.9rem; cursor: pointer; transition: background 0.2s; }
+  #btnStart { background: var(--green); color: #fff; }
+  #btnStart:hover { background: #43a047; }
+  #btnStop { background: var(--red); color: #fff; }
+  #btnStop:hover { background: #e53935; }
+  #btnInterrupt { background: #ff9800; color: #fff; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .status-bar { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; font-size: 0.85rem; }
+  .status-item { display: flex; align-items: center; gap: 0.4rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.listening { background: var(--green); animation: pulse 1.5s infinite; }
+  .dot.speaking { background: var(--accent); animation: pulse 0.6s infinite; }
+  .dot.connecting { background: #ff9800; animation: pulse 1s infinite; }
+  .dot.idle { background: var(--dim); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; width: 100%; max-width: 640px; margin-bottom: 1rem; }
+  .panel-header { padding: 0.6rem 1rem; font-size: 0.8rem; color: var(--dim); border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel-body { padding: 1rem; max-height: 300px; overflow-y: auto; font-size: 0.95rem; line-height: 1.6; }
+  #transcript { white-space: pre-wrap; word-break: break-word; }
+  #logArea { font-family: 'Menlo', 'Consolas', monospace; font-size: 0.78rem; color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h1>MiniCPM-o Realtime Audio Duplex</h1>
+
+<div class="controls">
+  <input type="text" id="hostInput" placeholder="wss://host:port" value="wss://39.107.237.62:7036">
+  <button id="btnStart">Start</button>
+  <button id="btnStop" disabled>Stop</button>
+  <button id="btnInterrupt" disabled>Interrupt</button>
+</div>
+
+<div class="status-bar">
+  <div class="status-item"><div class="dot idle" id="statusDot"></div><span id="statusText">Idle</span></div>
+  <div class="status-item">KV: <span id="kvDisplay">0</span>/8192</div>
+  <div class="status-item">Chunks sent: <span id="chunkCount">0</span></div>
+  <div class="status-item">Queue: <span id="queueDisplay">—</span></div>
+</div>
+
+<div class="panel">
+  <div class="panel-header">Transcript</div>
+  <div class="panel-body" id="transcript"></div>
+</div>
+
+<div class="panel">
+  <div class="panel-header">Event Log</div>
+  <div class="panel-body" id="logArea"></div>
+</div>
+
+<script>
+const INPUT_RATE = 16000;
+const OUTPUT_RATE = 24000;
+const CHUNK_SEC = 1;
+
+const $ = id => document.getElementById(id);
+const btnStart = $('btnStart'), btnStop = $('btnStop'), btnInterrupt = $('btnInterrupt');
+const statusDot = $('statusDot'), statusText = $('statusText');
+const kvDisplay = $('kvDisplay'), chunkCountEl = $('chunkCount'), queueDisplay = $('queueDisplay');
+const transcript = $('transcript'), logArea = $('logArea');
+
+let ws = null;
+let mediaStream = null;
+let audioContext = null;           // input capture
+let playbackCtx = null;            // output playback
+let scriptProcessor = null;
+let sendInterval = null;
+let audioBuffer = [];              // collected float32 samples for next send
+let chunksSent = 0;
+let sessionActive = false;
+let sessionCreated = false;
+
+function log(msg) {
+  const ts = new Date().toLocaleTimeString();
+  logArea.textContent += `[${ts}] ${msg}\n`;
+  logArea.scrollTop = logArea.scrollHeight;
+}
+
+function setStatus(state, text) {
+  statusDot.className = 'dot ' + state;
+  statusText.textContent = text;
+}
+
+// ── Audio playback (24kHz float32 PCM) ──────────────────────────
+// Accumulate PCM chunks and schedule them sequentially
+let nextPlayTime = 0;
+
+function playAudioChunk(b64) {
+  if (!b64) return;
+  const raw = atob(b64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  const float32 = new Float32Array(bytes.buffer);
+
+  if (!playbackCtx) {
+    playbackCtx = new AudioContext({ sampleRate: OUTPUT_RATE });
+  }
+
+  const buf = playbackCtx.createBuffer(1, float32.length, OUTPUT_RATE);
+  buf.getChannelData(0).set(float32);
+
+  const src = playbackCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(playbackCtx.destination);
+
+  const now = playbackCtx.currentTime;
+  if (nextPlayTime < now) nextPlayTime = now;
+  src.start(nextPlayTime);
+  nextPlayTime += buf.duration;
+}
+
+function stopPlayback() {
+  nextPlayTime = 0;
+  // Can't easily stop in-flight BufferSources, but resetting nextPlayTime
+  // prevents future chunks from queuing up contiguously.
+}
+
+// ── Microphone capture (16kHz float32 PCM) ──────────────────────
+
+async function startMicrophone() {
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: { sampleRate: INPUT_RATE, channelCount: 1, echoCancellation: true }
+  });
+  // getUserMedia may not honor sampleRate; we'll resample if needed
+  audioContext = new AudioContext({ sampleRate: INPUT_RATE });
+  const source = audioContext.createMediaStreamSource(mediaStream);
+  // ScriptProcessorNode is deprecated but simple; AudioWorklet would be better in production
+  const bufSize = 4096;
+  scriptProcessor = audioContext.createScriptProcessor(bufSize, 1, 1);
+  scriptProcessor.onaudioprocess = (e) => {
+    const data = e.inputBuffer.getChannelData(0);
+    audioBuffer.push(new Float32Array(data));
+  };
+  source.connect(scriptProcessor);
+  scriptProcessor.connect(audioContext.destination);
+  log(`Mic started at ${audioContext.sampleRate}Hz`);
+  if (audioContext.sampleRate !== INPUT_RATE) {
+    log(`WARNING: Browser mic rate is ${audioContext.sampleRate}Hz, not ${INPUT_RATE}Hz. Audio will be sent at browser rate.`);
+  }
+}
+
+function collectAndEncodeChunk() {
+  // Merge accumulated buffers, take exactly INPUT_RATE samples (1 second)
+  const totalSamples = audioBuffer.reduce((s, b) => s + b.length, 0);
+  if (totalSamples < INPUT_RATE) {
+    // Pad with silence if we don't have 1 full second yet
+    const merged = new Float32Array(INPUT_RATE);
+    let offset = 0;
+    for (const buf of audioBuffer) {
+      merged.set(buf, offset);
+      offset += buf.length;
+    }
+    audioBuffer = [];
+    return float32ToBase64(merged);
+  }
+  // Take exactly 1 second worth
+  const merged = new Float32Array(INPUT_RATE);
+  let offset = 0;
+  const remaining = [];
+  for (const buf of audioBuffer) {
+    const needed = INPUT_RATE - offset;
+    if (needed <= 0) {
+      remaining.push(buf);
+      continue;
+    }
+    if (buf.length <= needed) {
+      merged.set(buf, offset);
+      offset += buf.length;
+    } else {
+      merged.set(buf.subarray(0, needed), offset);
+      remaining.push(buf.subarray(needed));
+      offset += needed;
+    }
+  }
+  audioBuffer = remaining;
+  return float32ToBase64(merged);
+}
+
+function float32ToBase64(f32arr) {
+  const bytes = new Uint8Array(f32arr.buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+// ── WebSocket lifecycle ─────────────────────────────────────────
+
+async function start() {
+  const host = $('hostInput').value.replace(/\/$/, '');
+  const url = `${host}/v1/realtime?mode=audio`;
+
+  btnStart.disabled = true;
+  btnStop.disabled = false;
+  btnInterrupt.disabled = true;
+  setStatus('connecting', 'Connecting...');
+  chunksSent = 0;
+  sessionCreated = false;
+  transcript.textContent = '';
+  log(`Connecting to ${url}`);
+
+  try {
+    await startMicrophone();
+  } catch (e) {
+    log(`Mic error: ${e.message}`);
+    setStatus('idle', 'Mic Error');
+    btnStart.disabled = false;
+    btnStop.disabled = true;
+    return;
+  }
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    log('WebSocket connected');
+    // Per docs: wait for queue events or send session.update
+    // The docs say in CONNECTED state only session.update is allowed.
+    // If there's no queue, we should send session.update right away.
+    // I'll wait 2s for queue events, then send session.update.
+    // QUESTION: The docs aren't explicit about whether to wait or send immediately
+    // when there's no queue. The timing diagram shows queue events first,
+    // but says "如果 Worker 立即可用，排队阶段会被跳过".
+    // I'll use a timeout approach.
+    sessionActive = true;
+    setTimeout(() => {
+      if (sessionActive && !sessionCreated) {
+        sendSessionUpdate();
+      }
+    }, 2000);
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    handleServerEvent(msg);
+  };
+
+  ws.onerror = (e) => {
+    log(`WebSocket error`);
+    setStatus('idle', 'Error');
+  };
+
+  ws.onclose = (e) => {
+    log(`WebSocket closed: code=${e.code} reason=${e.reason}`);
+    cleanup();
+  };
+}
+
+function handleServerEvent(msg) {
+  const type = msg.type;
+
+  switch (type) {
+    case 'session.queued': {
+      setStatus('connecting', `Queued #${msg.position}`);
+      queueDisplay.textContent = `#${msg.position} (~${msg.estimated_wait_s || '?'}s)`;
+      log(`Queued: position=${msg.position}, eta=${msg.estimated_wait_s}s`);
+      break;
+    }
+    case 'session.queue_update': {
+      queueDisplay.textContent = `#${msg.position} (~${msg.estimated_wait_s || '?'}s)`;
+      log(`Queue update: position=${msg.position}`);
+      break;
+    }
+    case 'session.queue_done': {
+      queueDisplay.textContent = 'Done';
+      log('Queue done — sending session.update');
+      sendSessionUpdate();
+      break;
+    }
+    case 'session.created': {
+      sessionCreated = true;
+      setStatus('listening', 'Listening');
+      btnInterrupt.disabled = false;
+      log(`Session created: id=${msg.session_id}, prompt=${msg.prompt_length} tokens`);
+      startSendingAudio();
+      break;
+    }
+    case 'response.output_audio.delta': {
+      setStatus('speaking', 'Speaking');
+      const text = msg.text || '';
+      if (text) transcript.textContent += text;
+      transcript.scrollTop = transcript.scrollHeight;
+      kvDisplay.textContent = msg.kv_cache_length || '0';
+      if (msg.audio) playAudioChunk(msg.audio);
+      if (msg.end_of_turn) {
+        transcript.textContent += '\n';
+        log(`Turn ended (kv=${msg.kv_cache_length})`);
+      }
+      break;
+    }
+    case 'response.listen': {
+      setStatus('listening', 'Listening');
+      kvDisplay.textContent = msg.kv_cache_length || '0';
+      stopPlayback();
+      break;
+    }
+    case 'session.go_away': {
+      log(`Go-away: ${msg.reason}, ${msg.time_left_ms}ms left`);
+      break;
+    }
+    case 'session.closed': {
+      log(`Session closed: ${msg.reason}`);
+      setStatus('idle', `Closed (${msg.reason})`);
+      cleanup();
+      break;
+    }
+    case 'error': {
+      const err = msg.error || {};
+      log(`ERROR [${err.type}]: ${err.code} — ${err.message}`);
+      break;
+    }
+    default:
+      log(`Unknown event: ${type}`);
+  }
+}
+
+function sendSessionUpdate() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const msg = {
+    type: 'session.update',
+    session: {
+      instructions: '你是一个友好的中文助手。请用简短的语句回答。'
+    }
+  };
+  ws.send(JSON.stringify(msg));
+  log('Sent session.update');
+}
+
+function startSendingAudio() {
+  // Per docs: "每秒发一个 input_audio_buffer.append"
+  sendInterval = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !sessionCreated) return;
+    const b64 = collectAndEncodeChunk();
+    const msg = { type: 'input_audio_buffer.append', audio: b64 };
+    ws.send(JSON.stringify(msg));
+    chunksSent++;
+    chunkCountEl.textContent = chunksSent;
+  }, CHUNK_SEC * 1000);
+  log('Audio streaming started (1 chunk/sec)');
+}
+
+function interrupt() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  // Per docs: force_listen=true in append to interrupt
+  const b64 = collectAndEncodeChunk();
+  const msg = { type: 'input_audio_buffer.append', audio: b64, force_listen: true };
+  ws.send(JSON.stringify(msg));
+  log('Sent interrupt (force_listen=true)');
+  stopPlayback();
+}
+
+function stop() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const msg = { type: 'session.close', reason: 'user_stop' };
+    ws.send(JSON.stringify(msg));
+    log('Sent session.close');
+  }
+  // Don't cleanup yet — wait for session.closed confirmation
+}
+
+function cleanup() {
+  sessionActive = false;
+  sessionCreated = false;
+  if (sendInterval) { clearInterval(sendInterval); sendInterval = null; }
+  if (scriptProcessor) { scriptProcessor.disconnect(); scriptProcessor = null; }
+  if (audioContext) { audioContext.close(); audioContext = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  audioBuffer = [];
+  ws = null;
+  btnStart.disabled = false;
+  btnStop.disabled = true;
+  btnInterrupt.disabled = true;
+  if (statusDot.className.includes('idle')) return;
+  setStatus('idle', 'Disconnected');
+}
+
+btnStart.onclick = start;
+btnStop.onclick = stop;
+btnInterrupt.onclick = interrupt;
+</script>
+</body>
+</html>

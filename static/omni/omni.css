@@ -583,3 +583,98 @@ body {
         padding: 5px 8px;
     }
 }
+
+/* ── Protocol Data Flow Panel ──────────────────────────────── */
+.panel-flow {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 8px;
+}
+
+.flow-toggle {
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #888;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.flow-toggle::marker,
+.flow-toggle::-webkit-details-marker {
+    font-size: 10px;
+}
+
+.flow-badge {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: rgba(99,102,241,0.15);
+    color: #818cf8;
+    font-variant-numeric: tabular-nums;
+}
+
+.flow-clear-btn {
+    margin-left: auto;
+    font-size: 9px;
+    padding: 1px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: #888;
+    cursor: pointer;
+}
+
+.flow-clear-btn:hover { border-color: #818cf8; }
+
+.flow-legend {
+    padding: 3px 12px;
+    display: flex;
+    gap: 10px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+}
+
+.flow-tag {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+.tag-client { background: rgba(99,102,241,0.12); color: #818cf8; }
+.tag-server { background: rgba(34,197,94,0.12); color: #4ade80; }
+
+.flow-log {
+    max-height: 220px;
+    overflow-y: auto;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.flow-entry {
+    padding: 1px 12px;
+    display: flex;
+    gap: 5px;
+    border-bottom: 1px solid rgba(255,255,255,0.02);
+}
+
+.flow-entry:hover { background: rgba(255,255,255,0.03); }
+
+.flow-ts { color: #555; min-width: 58px; white-space: nowrap; }
+.flow-arrow { min-width: 12px; text-align: center; font-weight: 700; }
+.flow-arrow.client { color: #818cf8; }
+.flow-arrow.server { color: #4ade80; }
+.flow-type { font-weight: 600; color: #ccc; white-space: nowrap; }
+.flow-summary { color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+.flow-entry.is-speak .flow-type { color: #818cf8; }
+.flow-entry.is-listen .flow-type { color: #4ade80; }
+.flow-entry.is-error .flow-type { color: #ef4444; }

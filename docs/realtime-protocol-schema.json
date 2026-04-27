@@ -1,0 +1,312 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "minicpm-o-realtime-protocol-v1",
+  "title": "MiniCPM-o Realtime API Protocol Schema",
+  "description": "WebSocket JSON message schema for MiniCPM-o Realtime API (OpenAI-style). All messages are JSON text frames over WSS.",
+
+  "definitions": {
+
+    "base64_string": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]+=*$",
+      "description": "Base64-encoded binary data"
+    },
+
+    "error_object": {
+      "type": "object",
+      "required": ["code", "message", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "not_ready",
+            "unknown_event",
+            "missing_field",
+            "invalid_payload",
+            "session_paused",
+            "service_unavailable",
+            "queue_full",
+            "worker_busy",
+            "worker_connect_failed",
+            "inference_error"
+          ],
+          "description": "Machine-readable error code"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable description (for debugging, do not parse)"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["client_error", "server_error"]
+        }
+      }
+    },
+
+    "client_event": {
+      "oneOf": [
+        { "$ref": "#/definitions/client/session.update" },
+        { "$ref": "#/definitions/client/input_audio_buffer.append" },
+        { "$ref": "#/definitions/client/session.pause" },
+        { "$ref": "#/definitions/client/session.resume" },
+        { "$ref": "#/definitions/client/session.close" },
+        { "$ref": "#/definitions/client/response.cancel" }
+      ]
+    },
+
+    "server_event": {
+      "oneOf": [
+        { "$ref": "#/definitions/server/session.created" },
+        { "$ref": "#/definitions/server/response.output_audio.delta" },
+        { "$ref": "#/definitions/server/response.listen" },
+        { "$ref": "#/definitions/server/response.done" },
+        { "$ref": "#/definitions/server/session.paused" },
+        { "$ref": "#/definitions/server/session.resumed" },
+        { "$ref": "#/definitions/server/session.go_away" },
+        { "$ref": "#/definitions/server/session.closed" },
+        { "$ref": "#/definitions/server/session.queued" },
+        { "$ref": "#/definitions/server/session.queue_update" },
+        { "$ref": "#/definitions/server/session.queue_done" },
+        { "$ref": "#/definitions/server/error" }
+      ]
+    },
+
+    "client": {
+
+      "session.update": {
+        "type": "object",
+        "required": ["type", "session"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "session.update" },
+          "session": {
+            "type": "object",
+            "required": ["instructions"],
+            "additionalProperties": false,
+            "properties": {
+              "instructions":     { "type": "string", "minLength": 1, "description": "System prompt" },
+              "deferred_finalize": { "type": "boolean", "default": true, "description": "Defer finalize for lower latency" },
+              "max_slice_nums":   { "type": "integer", "minimum": 1, "maximum": 9, "default": 1, "description": "Max vision slices per frame (1=fast, 4=detailed)" },
+              "ref_audio":        { "$ref": "#/definitions/base64_string", "description": "LLM reference audio (base64 WAV) for voice cloning" },
+              "tts_ref_audio":    { "$ref": "#/definitions/base64_string", "description": "TTS reference audio (base64 WAV)" },
+              "voice_config":     { "type": "object", "description": "TTS voice configuration (model-specific)" }
+            }
+          }
+        }
+      },
+
+      "input_audio_buffer.append": {
+        "type": "object",
+        "required": ["type", "audio"],
+        "additionalProperties": false,
+        "properties": {
+          "type":           { "const": "input_audio_buffer.append" },
+          "seq":            { "type": "integer", "minimum": 0, "description": "Monotonically increasing sequence number (for debugging)" },
+          "audio":          { "$ref": "#/definitions/base64_string", "description": "16kHz mono float32 PCM, ~1s (≥4000 samples / 250ms). Base64-encoded." },
+          "video_frames":   {
+            "type": "array",
+            "items": { "$ref": "#/definitions/base64_string" },
+            "maxItems": 4,
+            "description": "JPEG frames, base64-encoded. Typically 1 frame per chunk."
+          },
+          "force_listen":   { "type": "boolean", "default": false, "description": "Force model into listen state (interrupt)" },
+          "max_slice_nums": { "type": "integer", "minimum": 1, "maximum": 9, "description": "Override vision slices for this chunk" }
+        }
+      },
+
+      "session.pause": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type":    { "const": "session.pause" },
+          "timeout": { "type": "number", "minimum": 1, "maximum": 3600, "default": 300, "description": "Max pause duration in seconds before auto-close" }
+        }
+      },
+
+      "session.resume": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "session.resume" }
+        }
+      },
+
+      "session.close": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type":   { "const": "session.close" },
+          "reason": { "type": "string", "description": "Optional close reason" }
+        }
+      },
+
+      "response.cancel": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "response.cancel" }
+        }
+      }
+    },
+
+    "server": {
+
+      "session.created": {
+        "type": "object",
+        "required": ["type", "session_id"],
+        "additionalProperties": false,
+        "properties": {
+          "type":          { "const": "session.created" },
+          "session_id":    { "type": "string", "description": "Server-assigned session identifier" },
+          "prompt_length": { "type": "integer", "minimum": 0, "description": "Number of tokens in the prepared prompt" }
+        }
+      },
+
+      "response.output_audio.delta": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type":            { "const": "response.output_audio.delta" },
+          "text":            { "type": "string", "description": "Generated text fragment" },
+          "audio":           { "$ref": "#/definitions/base64_string", "description": "24kHz mono float32 PCM, base64-encoded" },
+          "end_of_turn":     { "type": "boolean", "description": "Whether this decode step is the end of a generation turn" },
+          "current_time":    { "type": "integer", "description": "Model internal time counter" },
+          "kv_cache_length": { "type": "integer", "minimum": 0, "description": "Current KV cache token count" },
+          "cost_all_ms":     { "type": "number", "minimum": 0, "description": "Total inference time (ms)" },
+          "cost_llm_ms":     { "type": "number", "minimum": 0, "description": "LLM forward time (ms)" },
+          "cost_tts_ms":     { "type": "number", "minimum": 0, "description": "TTS synthesis time (ms)" },
+          "wall_clock_ms":   { "type": "number", "minimum": 0, "description": "Wall-clock time from chunk receipt to result send (ms)" },
+          "n_tokens":        { "type": "integer", "minimum": 0, "description": "Number of LLM tokens generated" },
+          "vision_slices":   { "type": "integer", "minimum": 0, "description": "Number of vision slices processed" },
+          "vision_tokens":   { "type": "integer", "minimum": 0, "description": "Number of vision tokens consumed" },
+          "source":          { "type": "string", "description": "Audio source tag (e.g. 'tts_async')" }
+        }
+      },
+
+      "response.listen": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type":            { "const": "response.listen" },
+          "current_time":    { "type": "integer" },
+          "kv_cache_length": { "type": "integer", "minimum": 0 },
+          "cost_all_ms":     { "type": "number", "minimum": 0 },
+          "wall_clock_ms":   { "type": "number", "minimum": 0 },
+          "vision_slices":   { "type": "integer", "minimum": 0 },
+          "vision_tokens":   { "type": "integer", "minimum": 0 }
+        }
+      },
+
+      "response.done": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type":         { "const": "response.done" },
+          "current_time": { "type": "integer" }
+        }
+      },
+
+      "session.paused": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type":    { "const": "session.paused" },
+          "timeout": { "type": "number", "description": "Remaining seconds before auto-close" }
+        }
+      },
+
+      "session.resumed": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "session.resumed" }
+        }
+      },
+
+      "session.go_away": {
+        "type": "object",
+        "required": ["type", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "type":         { "const": "session.go_away" },
+          "reason":       { "type": "string", "description": "Why the session is ending" },
+          "time_left_ms": { "type": "integer", "minimum": 0, "description": "Milliseconds before forced close" }
+        }
+      },
+
+      "session.closed": {
+        "type": "object",
+        "required": ["type", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "type":   { "const": "session.closed" },
+          "reason": {
+            "type": "string",
+            "enum": ["stopped", "timeout", "pause_timeout", "server_shutdown", "error"],
+            "description": "Why the session was closed"
+          }
+        }
+      },
+
+      "session.queued": {
+        "type": "object",
+        "required": ["type", "position"],
+        "additionalProperties": false,
+        "properties": {
+          "type":             { "const": "session.queued" },
+          "position":         { "type": "integer", "minimum": 1, "description": "Position in queue (1 = next)" },
+          "estimated_wait_s": { "type": "number", "minimum": 0, "description": "Estimated wait time in seconds" },
+          "ticket_id":        { "type": "string" },
+          "queue_length":     { "type": "integer", "minimum": 0 }
+        }
+      },
+
+      "session.queue_update": {
+        "type": "object",
+        "required": ["type", "position"],
+        "additionalProperties": false,
+        "properties": {
+          "type":             { "const": "session.queue_update" },
+          "position":         { "type": "integer", "minimum": 1 },
+          "estimated_wait_s": { "type": "number", "minimum": 0 },
+          "queue_length":     { "type": "integer", "minimum": 0 }
+        }
+      },
+
+      "session.queue_done": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "session.queue_done" }
+        }
+      },
+
+      "error": {
+        "type": "object",
+        "required": ["type", "error"],
+        "additionalProperties": false,
+        "properties": {
+          "type":  { "const": "error" },
+          "error": { "$ref": "#/definitions/error_object" }
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/definitions/client_event" },
+    { "$ref": "#/definitions/server_event" }
+  ]
+}

@@ -1300,6 +1300,342 @@ async def audio_duplex():
     return HTMLResponse("<h1>Audio Duplex</h1><p>Page not found</p>")
 
 
+@app.get("/realtime", response_class=HTMLResponse)
+async def realtime_page():
+    """Realtime API Demo 页面（OpenAI Realtime Protocol 风格双工）"""
+    page_path = os.path.join(static_dir, "realtime", "realtime.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Realtime API</h1><p>Page not found</p>")
+
+
+@app.websocket("/v1/realtime")
+async def realtime_ws(ws: WebSocket):
+    """OpenAI Realtime-style WebSocket 代理
+
+    Protocol translation gateway:
+      Client speaks OpenAI Realtime events → translates to old protocol → Worker
+      Worker speaks old protocol → translates to OpenAI events → Client
+
+    Uses the same FIFO queue + Worker allocation as /ws/duplex.
+    """
+    session_id = ws.query_params.get("session_id", f"rt_{int(datetime.now().timestamp()*1000)}")
+
+    if worker_pool is None:
+        await ws.close(code=1013, reason="Service not ready")
+        return
+
+    session_id = _sanitize_session_id(session_id)
+    await ws.accept()
+
+    # Enqueue
+    try:
+        duplex_type = "omni_duplex"
+        ticket, future = worker_pool.enqueue(duplex_type, session_id=session_id)
+    except WorkerPool.QueueFullError:
+        await ws.send_json({
+            "type": "error",
+            "error": {"code": "queue_full", "message": "Queue full", "type": "server_error"},
+        })
+        await ws.close(code=1013, reason="Queue full")
+        return
+
+    # Wait for worker
+    worker: Optional[WorkerConnection] = None
+    if future.done():
+        worker = future.result()
+    else:
+        try:
+            await ws.send_json({
+                "type": "session.queued",
+                "position": ticket.position,
+                "estimated_wait_s": ticket.estimated_wait_s,
+                "ticket_id": ticket.ticket_id,
+                "queue_length": worker_pool.queue_length,
+            })
+            while not future.done():
+                try:
+                    worker = await asyncio.wait_for(asyncio.shield(future), timeout=3.0)
+                    break
+                except asyncio.TimeoutError:
+                    updated = worker_pool.get_ticket(ticket.ticket_id)
+                    if updated:
+                        await ws.send_json({
+                            "type": "session.queue_update",
+                            "position": updated.position,
+                            "estimated_wait_s": updated.estimated_wait_s,
+                            "queue_length": worker_pool.queue_length,
+                        })
+                except asyncio.CancelledError:
+                    worker_pool.cancel(ticket.ticket_id)
+                    return
+        except (WebSocketDisconnect, Exception) as e:
+            logger.info(f"Realtime WS disconnected during queue: session={session_id}, cancelling ({e})")
+            worker_pool.cancel(ticket.ticket_id)
+            return
+        if worker is None and future.done():
+            worker = future.result()
+
+    if worker is None:
+        await ws.send_json({
+            "type": "error",
+            "error": {"code": "worker_busy", "message": "No worker available", "type": "server_error"},
+        })
+        await ws.close(code=1013, reason="No worker available")
+        return
+
+    await ws.send_json({"type": "session.queue_done"})
+    logger.info(f"Realtime WS connected: session={session_id} → {worker.worker_id}")
+
+    worker.mark_busy(GatewayWorkerStatus.DUPLEX_ACTIVE, duplex_type, session_id=session_id)
+    task_start = datetime.now()
+
+    worker_ws = None
+
+    try:
+        import websockets
+        ws_url = f"ws://{worker.host}:{worker.port}/ws/duplex?session_id={session_id}"
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                worker_ws = await websockets.connect(ws_url, open_timeout=5)
+                break
+            except Exception as conn_err:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Realtime WS connect to {worker.worker_id} failed (attempt {attempt + 1}): {conn_err}")
+                    await asyncio.sleep(1.0)
+                else:
+                    raise
+
+        async def client_to_worker():
+            """Client (OpenAI Realtime) → Worker (old protocol): translate on the fly"""
+            try:
+                async for raw in ws.iter_text():
+                    msg = json.loads(raw)
+                    msg_type = msg.get("type", "")
+
+                    if msg_type == "session.update":
+                        # Translate session.update → prepare
+                        session_cfg = msg.get("session", {})
+                        worker_msg = {
+                            "type": "prepare",
+                            "system_prompt": session_cfg.get("instructions", "You are a helpful assistant."),
+                            "deferred_finalize": session_cfg.get("deferred_finalize", True),
+                            "max_slice_nums": session_cfg.get("max_slice_nums", 1),
+                        }
+                        if session_cfg.get("ref_audio"):
+                            worker_msg["ref_audio_base64"] = session_cfg["ref_audio"]
+                        if session_cfg.get("tts_ref_audio"):
+                            worker_msg["tts_ref_audio_base64"] = session_cfg["tts_ref_audio"]
+                        if session_cfg.get("voice_config"):
+                            worker_msg["config"] = session_cfg["voice_config"]
+                        await worker_ws.send(json.dumps(worker_msg))
+
+                    elif msg_type == "input_audio_buffer.append":
+                        # Translate input_audio_buffer.append → audio_chunk
+                        worker_msg = {
+                            "type": "audio_chunk",
+                            "audio_base64": msg.get("audio", ""),
+                        }
+                        if msg.get("force_listen"):
+                            worker_msg["force_listen"] = True
+                        if msg.get("video_frames"):
+                            worker_msg["frame_base64_list"] = msg["video_frames"]
+                        if msg.get("max_slice_nums"):
+                            worker_msg["max_slice_nums"] = msg["max_slice_nums"]
+                        await worker_ws.send(json.dumps(worker_msg))
+
+                    elif msg_type == "session.pause":
+                        worker.update_duplex_status(GatewayWorkerStatus.DUPLEX_PAUSED)
+                        await worker_ws.send(json.dumps({"type": "pause", "timeout": msg.get("timeout", 300)}))
+
+                    elif msg_type == "session.resume":
+                        worker.update_duplex_status(GatewayWorkerStatus.DUPLEX_ACTIVE)
+                        await worker_ws.send(json.dumps({"type": "resume"}))
+
+                    elif msg_type == "session.close":
+                        await worker_ws.send(json.dumps({"type": "stop"}))
+
+                    elif msg_type == "response.cancel":
+                        await worker_ws.send(json.dumps({"type": "interrupt"}))
+
+                    else:
+                        # Forward unknown events as-is (backward compat)
+                        await worker_ws.send(raw)
+
+            except WebSocketDisconnect:
+                pass
+
+        async def worker_to_client():
+            """Worker (old protocol) → Client (OpenAI Realtime): translate on the fly"""
+            try:
+                async for raw in worker_ws:
+                    msg = json.loads(raw)
+                    msg_type = msg.get("type", "")
+
+                    if msg_type == "prepared":
+                        await ws.send_json({
+                            "type": "session.created",
+                            "session_id": session_id,
+                            "prompt_length": msg.get("prompt_length", 0),
+                        })
+
+                    elif msg_type == "result":
+                        if msg.get("is_listen"):
+                            await ws.send_json({
+                                "type": "response.listen",
+                                "current_time": msg.get("current_time"),
+                                "kv_cache_length": msg.get("kv_cache_length"),
+                                "cost_all_ms": msg.get("cost_all_ms"),
+                                "wall_clock_ms": msg.get("wall_clock_ms"),
+                                "vision_slices": msg.get("vision_slices"),
+                                "vision_tokens": msg.get("vision_tokens"),
+                            })
+                        else:
+                            await ws.send_json({
+                                "type": "response.output_audio.delta",
+                                "text": msg.get("text", ""),
+                                "audio": msg.get("audio_data"),
+                                "end_of_turn": msg.get("end_of_turn", False),
+                                "current_time": msg.get("current_time"),
+                                "kv_cache_length": msg.get("kv_cache_length"),
+                                "cost_all_ms": msg.get("cost_all_ms"),
+                                "cost_llm_ms": msg.get("cost_llm_ms"),
+                                "cost_tts_ms": msg.get("cost_tts_ms"),
+                                "wall_clock_ms": msg.get("wall_clock_ms"),
+                                "n_tokens": msg.get("n_tokens"),
+                                "vision_slices": msg.get("vision_slices"),
+                                "vision_tokens": msg.get("vision_tokens"),
+                            })
+                            if msg.get("end_of_turn"):
+                                await ws.send_json({
+                                    "type": "response.done",
+                                    "current_time": msg.get("current_time"),
+                                })
+
+                    elif msg_type == "audio_only":
+                        await ws.send_json({
+                            "type": "response.output_audio.delta",
+                            "audio": msg.get("audio_data"),
+                            "text": "",
+                            "end_of_turn": False,
+                            "source": "tts_async",
+                        })
+
+                    elif msg_type == "paused":
+                        await ws.send_json({"type": "session.paused", "timeout": msg.get("timeout")})
+
+                    elif msg_type == "resumed":
+                        await ws.send_json({"type": "session.resumed"})
+
+                    elif msg_type == "stopped":
+                        await ws.send_json({"type": "session.closed", "reason": "stopped"})
+
+                    elif msg_type == "timeout":
+                        await ws.send_json({"type": "session.go_away", "reason": msg.get("reason", "timeout")})
+                        await ws.send_json({"type": "session.closed", "reason": "timeout"})
+
+                    elif msg_type == "error":
+                        await ws.send_json({
+                            "type": "error",
+                            "error": {
+                                "code": "inference_failed",
+                                "message": msg.get("error", "Unknown error"),
+                                "type": "server_error",
+                            },
+                        })
+
+                    else:
+                        # Forward unknown events as-is
+                        await ws.send_text(raw)
+
+            except Exception:
+                pass
+
+        done, pending = await asyncio.wait(
+            [
+                asyncio.create_task(client_to_worker()),
+                asyncio.create_task(worker_to_client()),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+
+    except Exception as e:
+        logger.error(f"Realtime WS error: {e}", exc_info=True)
+    finally:
+        if worker_ws:
+            try:
+                await worker_ws.close()
+            except Exception:
+                pass
+
+        if worker:
+            duration = (datetime.now() - task_start).total_seconds() if task_start else 0
+            worker_pool.release_worker(
+                worker,
+                request_type=duplex_type,
+                duration_s=duration,
+                post_release_status=GatewayWorkerStatus.LOADING,
+            )
+            logger.info(f"Realtime WS ended: session={session_id}, Worker released ({duration:.1f}s)")
+
+
+@app.get("/mobile-omni", include_in_schema=False)
+async def mobile_omni_redirect():
+    """移动版 Omni 入口重定向到带尾斜杠版本"""
+    return RedirectResponse(url="/mobile-omni/", status_code=302)
+
+
+@app.get("/mobile-omni/", response_class=HTMLResponse)
+async def mobile_omni():
+    """移动版全双工页：复用桌面 omni-app.js，外壳为 static/mobile-omni/"""
+    if not app_registry.is_enabled("omni"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "mobile-omni", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Mobile Omni</h1><p>Page not found</p>", status_code=404)
+
+
+@app.get("/mobile", include_in_schema=False)
+async def mobile_redirect():
+    """移动端入口重定向到带尾斜杠版本，确保相对资源路径正确解析"""
+    return RedirectResponse(url="/mobile/", status_code=302)
+
+
+@app.get("/mobile/", response_class=HTMLResponse)
+async def mobile():
+    """移动端 React 预览页面"""
+    page_path = os.path.join(static_dir, "mobile", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse(
+        "<h1>Mobile Preview</h1>"
+        "<p>Build output not found. Run "
+        "<code>cd frontend/mobile && bun run --bun build:static</code> "
+        "or <code>npm run build:static</code>.</p>",
+        status_code=404,
+    )
+
+
+@app.api_route("/mobile/{asset_path:path}", methods=["GET", "HEAD"])
+async def mobile_asset(asset_path: str):
+    """移动端构建产物静态资源"""
+    mobile_root = os.path.realpath(os.path.join(static_dir, "mobile"))
+    full_path = os.path.realpath(os.path.join(mobile_root, asset_path))
+
+    if not full_path.startswith(mobile_root + os.sep):
+        raise HTTPException(status_code=400, detail="Path traversal detected")
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        raise HTTPException(status_code=404, detail=f"Mobile asset not found: {asset_path}")
+
+    return FileResponse(full_path)
+
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin():
     """Admin Dashboard"""
