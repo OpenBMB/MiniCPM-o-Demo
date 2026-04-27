@@ -1595,6 +1595,135 @@ async def realtime_page():
     return HTMLResponse("<h1>Realtime API</h1><p>Page not found</p>")
 
 
+# ============ Docs Hosting ============
+
+_DOCS_DIR = os.path.join(os.path.dirname(__file__), "docs")
+_DOCS_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+:root {{ --bg: #0d1117; --fg: #e6edf3; --muted: #7d8590; --border: #30363d;
+         --link: #58a6ff; --code-bg: #161b22; --table-alt: #161b22;
+         --accent: #1f6feb; }}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        background: var(--bg); color: var(--fg); line-height: 1.6;
+        display: flex; min-height: 100vh; }}
+nav {{ width: 240px; min-width: 200px; padding: 24px 16px; border-right: 1px solid var(--border);
+       position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--bg); }}
+nav .logo {{ font-size: 14px; font-weight: 700; color: var(--fg); margin-bottom: 20px;
+             padding-bottom: 12px; border-bottom: 1px solid var(--border); }}
+nav a {{ display: block; padding: 6px 10px; margin: 2px 0; border-radius: 6px;
+         text-decoration: none; color: var(--muted); font-size: 13px; transition: all .15s; }}
+nav a:hover {{ color: var(--fg); background: rgba(255,255,255,.05); }}
+nav a.active {{ color: var(--link); background: rgba(56,139,253,.1); font-weight: 600; }}
+main {{ flex: 1; max-width: 900px; padding: 32px 48px 64px; }}
+article h1 {{ font-size: 28px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 20px; }}
+article h2 {{ font-size: 20px; margin-top: 32px; margin-bottom: 12px; padding-bottom: 6px;
+              border-bottom: 1px solid var(--border); }}
+article h3 {{ font-size: 16px; margin-top: 24px; margin-bottom: 8px; }}
+article h4 {{ font-size: 14px; margin-top: 20px; margin-bottom: 6px; color: var(--muted); }}
+article p {{ margin-bottom: 12px; }}
+article a {{ color: var(--link); text-decoration: none; }}
+article a:hover {{ text-decoration: underline; }}
+article ul, article ol {{ padding-left: 24px; margin-bottom: 12px; }}
+article li {{ margin-bottom: 4px; }}
+article code {{ font-family: "SF Mono","Fira Code",Consolas,monospace; font-size: 85%;
+                background: var(--code-bg); padding: 2px 6px; border-radius: 4px; }}
+article pre {{ background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+               padding: 14px 18px; overflow-x: auto; margin-bottom: 16px; line-height: 1.45; }}
+article pre code {{ background: none; padding: 0; font-size: 13px; }}
+article table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 14px; }}
+article th {{ text-align: left; padding: 8px 12px; border: 1px solid var(--border);
+              background: var(--code-bg); font-weight: 600; }}
+article td {{ padding: 8px 12px; border: 1px solid var(--border); }}
+article tr:nth-child(even) {{ background: var(--table-alt); }}
+article blockquote {{ border-left: 3px solid var(--accent); padding: 8px 16px; margin: 12px 0;
+                      color: var(--muted); background: rgba(56,139,253,.05); border-radius: 0 6px 6px 0; }}
+article hr {{ border: none; border-top: 1px solid var(--border); margin: 24px 0; }}
+.codehilite {{ background: var(--code-bg); border-radius: 8px; }}
+@media (max-width: 768px) {{
+    body {{ flex-direction: column; }}
+    nav {{ width: 100%; height: auto; position: static; border-right: none;
+           border-bottom: 1px solid var(--border); display: flex; gap: 4px;
+           flex-wrap: wrap; padding: 12px; }}
+    nav .logo {{ display: none; }}
+    main {{ padding: 20px 16px; }}
+}}
+</style>
+</head>
+<body>
+<nav>
+  <div class="logo">MiniCPM-o Docs</div>
+  {nav_links}
+</nav>
+<main><article>
+{content}
+</article></main>
+</body>
+</html>"""
+
+_DOCS_PAGES = [
+    ("overview", "realtime-protocol-overview.md", "Overview"),
+    ("video", "video-duplex-protocol.md", "Video Duplex"),
+    ("audio", "audio-duplex-protocol.md", "Audio Duplex"),
+]
+
+
+def _render_doc(slug: str) -> str:
+    import markdown
+
+    page = next((p for p in _DOCS_PAGES if p[0] == slug), None)
+    if page is None:
+        return None
+
+    md_path = os.path.join(_DOCS_DIR, page[1])
+    if not os.path.exists(md_path):
+        return None
+
+    with open(md_path, "r", encoding="utf-8") as f:
+        md_text = f.read()
+
+    # Rewrite .md links to /docs/ routes
+    for s, fname, _ in _DOCS_PAGES:
+        md_text = md_text.replace(f"]({fname})", f"](/docs/{s})")
+
+    html_content = markdown.markdown(
+        md_text,
+        extensions=["tables", "fenced_code", "codehilite", "toc"],
+        extension_configs={"codehilite": {"css_class": "codehilite", "guess_lang": False}},
+    )
+
+    nav_links = "\n  ".join(
+        f'<a href="/docs/{s}" class="{"active" if s == slug else ""}">{title}</a>'
+        for s, _, title in _DOCS_PAGES
+    )
+
+    return _DOCS_HTML_TEMPLATE.format(
+        title=f"{page[2]} — MiniCPM-o Docs",
+        nav_links=nav_links,
+        content=html_content,
+    )
+
+
+@app.get("/docs", response_class=HTMLResponse)
+async def docs_index():
+    """Redirect /docs to /docs/overview"""
+    return RedirectResponse(url="/docs/overview", status_code=302)
+
+
+@app.get("/docs/{slug}", response_class=HTMLResponse)
+async def docs_page(slug: str):
+    """Render a Markdown doc as a styled HTML page"""
+    html = _render_doc(slug)
+    if html is None:
+        raise HTTPException(status_code=404, detail=f"Doc page not found: {slug}")
+    return HTMLResponse(html)
+
+
 @app.websocket("/v1/realtime")
 async def realtime_ws(ws: WebSocket):
     """OpenAI Realtime-style WebSocket 代理
