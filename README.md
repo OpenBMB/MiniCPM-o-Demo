@@ -201,25 +201,3 @@ and spawns its own `llama-server` on `cpp_server_port + worker_index`.
 | Worker `/health` says `worker_status: "loading"` for a long time | `omni_init` is still loading GGUF modules. Check `tmp/worker_<i>.log` for the C++ side: lines tagged `[CPP]`. |
 | WAV files appear under `${llamacpp_root}/tools/omni/output_<port>/round_XXX/` but the browser plays nothing | Check that the gateway is HTTPS — many browsers block `Audio` / `MediaDevices` on insecure origins. |
 | `kv_cache_length` keeps shrinking mid-conversation | This is the C++ side sliding-window pruning kicking in. The desktop and mobile UIs expose a "Stop on KV pruning" toggle (default on) that ends the session cleanly when this happens. |
-
----
-
-## How This Differs From the Public `llama.cpp-omni` README
-
-The Quick Start in the upstream
-[`llama.cpp-omni` README](https://github.com/tc-mb/llama.cpp-omni#quick-start)
-shows two entry points: `llama-omni-cli` (interactive CLI) and the WebRTC
-demo (`oneclick.sh` / Docker). Both bypass this repository.
-
-This guide instead uses the same `llama-server` binary, but launched and
-orchestrated by `worker.py`, which gives you:
-
-- The Python gateway’s WebSocket protocol (`/ws/duplex`, `/ws/chat`,
-  `/ws/half_duplex`, `/ws/half_duplex_omni`)
-- The full set of frontends shipped in this repo (Omni / Audio-Duplex /
-  Turnbased / Half-Duplex / Mobile)
-- Session recording, FAQ overlay, preset system prompts, etc.
-
-If you only want the raw HTTP API of `llama-server` (`/v1/stream/omni_init`,
-`/v1/stream/prefill`, `/v1/stream/decode`, …) without any of the above, you
-do not need this repository — the upstream README is enough.

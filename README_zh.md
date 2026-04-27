@@ -200,23 +200,3 @@ KV cache 状态干净。
 | worker 的 `/health` 长时间停在 `worker_status: "loading"` | `omni_init` 还在加载 GGUF。看 `tmp/worker_<i>.log` 里 `[CPP]` 开头的行就是 C++ 侧输出。 |
 | `${llamacpp_root}/tools/omni/output_<port>/round_XXX/` 下能看到 WAV，但浏览器没声音 | 检查是不是 HTTPS。很多浏览器对 `Audio` / `MediaDevices` 在非安全源下都会拒绝。 |
 | 对话中途 `kv_cache_length` 一直在缩 | C++ 侧滑动窗口在裁 KV。桌面和移动端设置抽屉都有「Stop on KV pruning」开关（默认开），命中时会干净地结束会话。 |
-
----
-
-## 跟 `llama.cpp-omni` 上游 README 的关系
-
-上游 [`llama.cpp-omni` README](https://github.com/tc-mb/llama.cpp-omni#quick-start)
-的 Quick Start 给的是两条入口：`llama-omni-cli`（交互式 CLI）和 WebRTC demo
-（`oneclick.sh` / Docker）。这两条都**绕过**了本仓库。
-
-本文档用的是同一份 `llama-server` 二进制，但由 `worker.py` 拉起并编排，从而
-拿到：
-
-- Python gateway 的 WebSocket 协议（`/ws/duplex`、`/ws/chat`、
-  `/ws/half_duplex`、`/ws/half_duplex_omni`）
-- 仓库里全套前端（Omni / Audio-Duplex / Turnbased / Half-Duplex / Mobile）
-- 录制、FAQ 浮层、预置 system prompt 等附加能力
-
-如果你只想直接用 `llama-server` 的原生 HTTP API（`/v1/stream/omni_init`、
-`/v1/stream/prefill`、`/v1/stream/decode`……），不需要本仓库 —— 直接看上游
-README 就够了。
