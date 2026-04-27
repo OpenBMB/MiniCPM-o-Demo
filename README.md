@@ -3,7 +3,7 @@
 > **This is a fork of [OpenBMB/MiniCPM-o-Demo](https://github.com/OpenBMB/MiniCPM-o-Demo)** (`realtime-protocol` branch).
 > It adds an **OpenAI Realtime-style WebSocket API** on top of the original demo system, enabling third-party clients to interact with MiniCPM-o 4.5 via a standardized protocol.
 
-[中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/MiniCPM-o-Demo/site/en/index.html) | [**Realtime API Docs**](docs/realtime-protocol-overview.md)
+[中文简介](README_zh.md) | [**Realtime API Docs**](docs/realtime-protocol-overview.md)
 
 ## What's New in This Fork
 
