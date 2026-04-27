@@ -53,9 +53,9 @@ function createSession() {
         getMaxKvTokens: () => parseInt($('cfgMaxKv').value) || 8192,
         getPlaybackDelayMs: () => 200,
         getStopOnSlidingWindow: () => false,
-        getWsUrl: (sessionId) => {
+        getWsUrl: () => {
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-            return `${proto}://${location.host}/v1/realtime?session_id=${sessionId}`;
+            return `${proto}://${location.host}/v1/realtime`;
         },
     });
 

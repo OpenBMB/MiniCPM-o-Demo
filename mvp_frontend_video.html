@@ -3,25 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MiniCPM-o Realtime Audio Duplex — MVP</title>
+<title>MiniCPM-o Realtime Video Duplex — MVP</title>
 <style>
   :root { --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a; --accent: #6c8cff; --green: #4caf50; --red: #ef5350; --text: #e0e0e0; --dim: #888; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 2rem 1rem; }
-  h1 { font-size: 1.4rem; margin-bottom: 1.5rem; color: var(--accent); }
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 1.5rem 1rem; }
+  h1 { font-size: 1.3rem; margin-bottom: 1rem; color: var(--accent); }
 
-  .controls { display: flex; gap: 1rem; margin-bottom: 1.5rem; align-items: center; flex-wrap: wrap; justify-content: center; }
-  input[type=text] { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 0.5rem 0.8rem; border-radius: 6px; width: 260px; font-size: 0.9rem; }
-  button { padding: 0.5rem 1.2rem; border: none; border-radius: 6px; font-size: 0.9rem; cursor: pointer; transition: background 0.2s; }
+  .controls { display: flex; gap: 0.8rem; margin-bottom: 1rem; align-items: center; flex-wrap: wrap; justify-content: center; }
+  input[type=text] { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 0.45rem 0.7rem; border-radius: 6px; width: 260px; font-size: 0.85rem; }
+  select { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 0.45rem 0.5rem; border-radius: 6px; font-size: 0.85rem; }
+  button { padding: 0.45rem 1rem; border: none; border-radius: 6px; font-size: 0.85rem; cursor: pointer; transition: background 0.2s; }
   #btnStart { background: var(--green); color: #fff; }
-  #btnStart:hover { background: #43a047; }
   #btnStop { background: var(--red); color: #fff; }
-  #btnStop:hover { background: #e53935; }
   #btnInterrupt { background: #ff9800; color: #fff; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  .status-bar { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; font-size: 0.85rem; }
-  .status-item { display: flex; align-items: center; gap: 0.4rem; }
+  .status-bar { display: flex; gap: 1.2rem; margin-bottom: 1rem; font-size: 0.8rem; flex-wrap: wrap; justify-content: center; }
+  .status-item { display: flex; align-items: center; gap: 0.3rem; }
   .dot { width: 10px; height: 10px; border-radius: 50%; }
   .dot.listening { background: var(--green); animation: pulse 1.5s infinite; }
   .dot.speaking { background: var(--accent); animation: pulse 0.6s infinite; }
@@ -29,19 +28,31 @@
   .dot.idle { background: var(--dim); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; width: 100%; max-width: 640px; margin-bottom: 1rem; }
-  .panel-header { padding: 0.6rem 1rem; font-size: 0.8rem; color: var(--dim); border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.05em; }
-  .panel-body { padding: 1rem; max-height: 300px; overflow-y: auto; font-size: 0.95rem; line-height: 1.6; }
+  .main-layout { display: flex; gap: 1rem; width: 100%; max-width: 900px; margin-bottom: 1rem; }
+  .video-col { flex: 0 0 320px; }
+  .text-col { flex: 1; min-width: 0; }
+
+  video { width: 320px; height: 240px; background: #000; border-radius: 8px; transform: scaleX(-1); }
+  canvas { display: none; }
+
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; width: 100%; margin-bottom: 0.8rem; }
+  .panel-header { padding: 0.5rem 0.8rem; font-size: 0.75rem; color: var(--dim); border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel-body { padding: 0.8rem; max-height: 240px; overflow-y: auto; font-size: 0.9rem; line-height: 1.6; }
   #transcript { white-space: pre-wrap; word-break: break-word; }
-  #logArea { font-family: 'Menlo', 'Consolas', monospace; font-size: 0.78rem; color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+  #logArea { font-family: 'Menlo', 'Consolas', monospace; font-size: 0.72rem; color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+  .full-width { max-width: 900px; width: 100%; }
 </style>
 </head>
 <body>
 
-<h1>MiniCPM-o Realtime Audio Duplex</h1>
+<h1>MiniCPM-o Realtime Duplex</h1>
 
 <div class="controls">
   <input type="text" id="hostInput" placeholder="wss://host:port" value="wss://39.107.237.62:7036">
+  <select id="modeSelect">
+    <option value="video">Video Duplex</option>
+    <option value="audio">Audio Only</option>
+  </select>
   <button id="btnStart">Start</button>
   <button id="btnStop" disabled>Stop</button>
   <button id="btnInterrupt" disabled>Interrupt</button>
@@ -50,16 +61,25 @@
 <div class="status-bar">
   <div class="status-item"><div class="dot idle" id="statusDot"></div><span id="statusText">Idle</span></div>
   <div class="status-item">KV: <span id="kvDisplay">0</span>/8192</div>
-  <div class="status-item">Chunks sent: <span id="chunkCount">0</span></div>
+  <div class="status-item">Chunks: <span id="chunkCount">0</span></div>
   <div class="status-item">Queue: <span id="queueDisplay">—</span></div>
+  <div class="status-item">Mode: <span id="modeDisplay">—</span></div>
 </div>
 
-<div class="panel">
-  <div class="panel-header">Transcript</div>
-  <div class="panel-body" id="transcript"></div>
+<div class="main-layout">
+  <div class="video-col">
+    <video id="preview" autoplay muted playsinline></video>
+    <canvas id="captureCanvas" width="640" height="480"></canvas>
+  </div>
+  <div class="text-col">
+    <div class="panel">
+      <div class="panel-header">Transcript</div>
+      <div class="panel-body" id="transcript"></div>
+    </div>
+  </div>
 </div>
 
-<div class="panel">
+<div class="panel full-width">
   <div class="panel-header">Event Log</div>
   <div class="panel-body" id="logArea"></div>
 </div>
@@ -68,23 +88,29 @@
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
 const CHUNK_SEC = 1;
+const JPEG_QUALITY = 0.7;
 
 const $ = id => document.getElementById(id);
 const btnStart = $('btnStart'), btnStop = $('btnStop'), btnInterrupt = $('btnInterrupt');
+const modeSelect = $('modeSelect');
 const statusDot = $('statusDot'), statusText = $('statusText');
-const kvDisplay = $('kvDisplay'), chunkCountEl = $('chunkCount'), queueDisplay = $('queueDisplay');
+const kvDisplay = $('kvDisplay'), chunkCountEl = $('chunkCount');
+const queueDisplay = $('queueDisplay'), modeDisplay = $('modeDisplay');
 const transcript = $('transcript'), logArea = $('logArea');
+const preview = $('preview');
+const captureCanvas = $('captureCanvas'), captureCtx = captureCanvas.getContext('2d');
 
 let ws = null;
 let mediaStream = null;
-let audioContext = null;           // input capture
-let playbackCtx = null;            // output playback
+let audioContext = null;
+let playbackCtx = null;
 let scriptProcessor = null;
 let sendInterval = null;
-let audioBuffer = [];              // collected float32 samples for next send
+let audioBuffer = [];
 let chunksSent = 0;
 let sessionActive = false;
 let sessionCreated = false;
+let currentMode = 'video';
 
 function log(msg) {
   const ts = new Date().toLocaleTimeString();
@@ -98,7 +124,7 @@ function setStatus(state, text) {
 }
 
 // ── Audio playback (24kHz float32 PCM) ──────────────────────────
-// Accumulate PCM chunks and schedule them sequentially
+
 let nextPlayTime = 0;
 
 function playAudioChunk(b64) {
@@ -108,9 +134,7 @@ function playAudioChunk(b64) {
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   const float32 = new Float32Array(bytes.buffer);
 
-  if (!playbackCtx) {
-    playbackCtx = new AudioContext({ sampleRate: OUTPUT_RATE });
-  }
+  if (!playbackCtx) playbackCtx = new AudioContext({ sampleRate: OUTPUT_RATE });
 
   const buf = playbackCtx.createBuffer(1, float32.length, OUTPUT_RATE);
   buf.getChannelData(0).set(float32);
@@ -125,60 +149,44 @@ function playAudioChunk(b64) {
   nextPlayTime += buf.duration;
 }
 
-function stopPlayback() {
-  nextPlayTime = 0;
-  // Can't easily stop in-flight BufferSources, but resetting nextPlayTime
-  // prevents future chunks from queuing up contiguously.
-}
+function stopPlayback() { nextPlayTime = 0; }
 
-// ── Microphone capture (16kHz float32 PCM) ──────────────────────
+// ── Microphone capture (16kHz float32) ──────────────────────────
 
-async function startMicrophone() {
-  mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: { sampleRate: INPUT_RATE, channelCount: 1, echoCancellation: true }
-  });
-  // getUserMedia may not honor sampleRate; we'll resample if needed
+async function startMedia() {
+  const constraints = { audio: { sampleRate: INPUT_RATE, channelCount: 1, echoCancellation: true } };
+  if (currentMode === 'video') {
+    constraints.video = { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' };
+  }
+
+  mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+  if (currentMode === 'video') {
+    preview.srcObject = mediaStream;
+    preview.style.display = '';
+  } else {
+    preview.style.display = 'none';
+  }
+
   audioContext = new AudioContext({ sampleRate: INPUT_RATE });
   const source = audioContext.createMediaStreamSource(mediaStream);
-  // ScriptProcessorNode is deprecated but simple; AudioWorklet would be better in production
   const bufSize = 4096;
   scriptProcessor = audioContext.createScriptProcessor(bufSize, 1, 1);
   scriptProcessor.onaudioprocess = (e) => {
-    const data = e.inputBuffer.getChannelData(0);
-    audioBuffer.push(new Float32Array(data));
+    audioBuffer.push(new Float32Array(e.inputBuffer.getChannelData(0)));
   };
   source.connect(scriptProcessor);
   scriptProcessor.connect(audioContext.destination);
-  log(`Mic started at ${audioContext.sampleRate}Hz`);
-  if (audioContext.sampleRate !== INPUT_RATE) {
-    log(`WARNING: Browser mic rate is ${audioContext.sampleRate}Hz, not ${INPUT_RATE}Hz. Audio will be sent at browser rate.`);
-  }
+  log(`Media started: audio=${audioContext.sampleRate}Hz` + (currentMode === 'video' ? ' + video' : ''));
 }
 
-function collectAndEncodeChunk() {
-  // Merge accumulated buffers, take exactly INPUT_RATE samples (1 second)
-  const totalSamples = audioBuffer.reduce((s, b) => s + b.length, 0);
-  if (totalSamples < INPUT_RATE) {
-    // Pad with silence if we don't have 1 full second yet
-    const merged = new Float32Array(INPUT_RATE);
-    let offset = 0;
-    for (const buf of audioBuffer) {
-      merged.set(buf, offset);
-      offset += buf.length;
-    }
-    audioBuffer = [];
-    return float32ToBase64(merged);
-  }
-  // Take exactly 1 second worth
+function collectAudioChunk() {
   const merged = new Float32Array(INPUT_RATE);
   let offset = 0;
   const remaining = [];
   for (const buf of audioBuffer) {
     const needed = INPUT_RATE - offset;
-    if (needed <= 0) {
-      remaining.push(buf);
-      continue;
-    }
+    if (needed <= 0) { remaining.push(buf); continue; }
     if (buf.length <= needed) {
       merged.set(buf, offset);
       offset += buf.length;
@@ -192,35 +200,52 @@ function collectAndEncodeChunk() {
   return float32ToBase64(merged);
 }
 
-function float32ToBase64(f32arr) {
-  const bytes = new Uint8Array(f32arr.buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
+function float32ToBase64(f32) {
+  const bytes = new Uint8Array(f32.buffer);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+// ── Video frame capture ─────────────────────────────────────────
+
+function captureFrame() {
+  if (!mediaStream) return null;
+  const videoTrack = mediaStream.getVideoTracks()[0];
+  if (!videoTrack) return null;
+
+  captureCtx.drawImage(preview, 0, 0, captureCanvas.width, captureCanvas.height);
+  const dataUrl = captureCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+  // Strip "data:image/jpeg;base64," prefix
+  return dataUrl.split(',')[1];
 }
 
 // ── WebSocket lifecycle ─────────────────────────────────────────
 
 async function start() {
+  currentMode = modeSelect.value;
   const host = $('hostInput').value.replace(/\/$/, '');
-  const url = `${host}/v1/realtime?mode=audio`;
+  const url = `${host}/v1/realtime?mode=${currentMode}`;
 
   btnStart.disabled = true;
   btnStop.disabled = false;
   btnInterrupt.disabled = true;
+  modeSelect.disabled = true;
+  modeDisplay.textContent = currentMode === 'video' ? 'Video' : 'Audio';
   setStatus('connecting', 'Connecting...');
   chunksSent = 0;
   sessionCreated = false;
   transcript.textContent = '';
-  log(`Connecting to ${url}`);
+  log(`Mode: ${currentMode}, connecting to ${url}`);
 
   try {
-    await startMicrophone();
+    await startMedia();
   } catch (e) {
-    log(`Mic error: ${e.message}`);
-    setStatus('idle', 'Mic Error');
+    log(`Media error: ${e.message}`);
+    setStatus('idle', 'Media Error');
     btnStart.disabled = false;
     btnStop.disabled = true;
+    modeSelect.disabled = false;
     return;
   }
 
@@ -228,29 +253,16 @@ async function start() {
 
   ws.onopen = () => {
     log('WebSocket connected');
-    // Per docs: wait for queue events or send session.update
-    // The docs say in CONNECTED state only session.update is allowed.
-    // If there's no queue, we should send session.update right away.
-    // I'll wait 2s for queue events, then send session.update.
-    // QUESTION: The docs aren't explicit about whether to wait or send immediately
-    // when there's no queue. The timing diagram shows queue events first,
-    // but says "如果 Worker 立即可用，排队阶段会被跳过".
-    // I'll use a timeout approach.
     sessionActive = true;
     setTimeout(() => {
-      if (sessionActive && !sessionCreated) {
-        sendSessionUpdate();
-      }
+      if (sessionActive && !sessionCreated) sendSessionUpdate();
     }, 2000);
   };
 
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    handleServerEvent(msg);
-  };
+  ws.onmessage = (event) => handleServerEvent(JSON.parse(event.data));
 
-  ws.onerror = (e) => {
-    log(`WebSocket error`);
+  ws.onerror = () => {
+    log('WebSocket error');
     setStatus('idle', 'Error');
   };
 
@@ -260,14 +272,8 @@ async function start() {
   };
 }
 
-function byteSize(b64) {
-  if (!b64) return 0;
-  return Math.floor(b64.length * 3 / 4);
-}
-
 function handleServerEvent(msg) {
   const type = msg.type;
-
   switch (type) {
     case 'session.queued':
       setStatus('connecting', `Queued #${msg.position}`);
@@ -288,7 +294,7 @@ function handleServerEvent(msg) {
       setStatus('listening', 'Listening');
       btnInterrupt.disabled = false;
       log(`← session.created  session_id="${msg.session_id}" prompt_length=${msg.prompt_length}`);
-      startSendingAudio();
+      startSending();
       break;
     case 'response.output_audio.delta': {
       setStatus('speaking', 'Speaking');
@@ -334,32 +340,58 @@ function handleServerEvent(msg) {
   }
 }
 
+function byteSize(b64) {
+  if (!b64) return 0;
+  return Math.floor(b64.length * 3 / 4);
+}
+
 function sendSessionUpdate() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const session = { instructions: '你是一个友好的中文助手。请用简短的语句回答。' };
-  ws.send(JSON.stringify({ type: 'session.update', session }));
-  log(`→ session.update  instructions="${session.instructions}"`);
+  if (currentMode === 'video') session.max_slice_nums = 1;
+  const payload = { type: 'session.update', session };
+  ws.send(JSON.stringify(payload));
+  log(`→ session.update  instructions="${session.instructions}" max_slice_nums=${session.max_slice_nums||'N/A'}`);
 }
 
-function startSendingAudio() {
+function startSending() {
   sendInterval = setInterval(() => {
     if (!ws || ws.readyState !== WebSocket.OPEN || !sessionCreated) return;
-    const b64 = collectAndEncodeChunk();
-    const msg = { type: 'input_audio_buffer.append', audio: b64 };
+
+    const audioB64 = collectAudioChunk();
+    const msg = {
+      type: 'input_audio_buffer.append',
+      audio: audioB64,
+    };
+
+    let frameInfo = '';
+    if (currentMode === 'video') {
+      const frame = captureFrame();
+      if (frame) {
+        msg.video_frames = [frame];
+        frameInfo = ` video=1frame(${byteSize(frame)}B)`;
+      }
+    }
+
     ws.send(JSON.stringify(msg));
     chunksSent++;
     chunkCountEl.textContent = chunksSent;
-    log(`→ append #${chunksSent}  audio=${byteSize(b64)}B`);
+    log(`→ append #${chunksSent}  audio=${byteSize(audioB64)}B${frameInfo}`);
   }, CHUNK_SEC * 1000);
-  log('Streaming started: audio only, 1 chunk/sec');
+  log(`Streaming started: ${currentMode === 'video' ? 'audio + video' : 'audio only'}, 1 chunk/sec`);
 }
 
 function interrupt() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const b64 = collectAndEncodeChunk();
-  const msg = { type: 'input_audio_buffer.append', audio: b64, force_listen: true };
+  const audioB64 = collectAudioChunk();
+  const msg = { type: 'input_audio_buffer.append', audio: audioB64, force_listen: true };
+  let frameInfo = '';
+  if (currentMode === 'video') {
+    const frame = captureFrame();
+    if (frame) { msg.video_frames = [frame]; frameInfo = ` video=1frame(${byteSize(frame)}B)`; }
+  }
   ws.send(JSON.stringify(msg));
-  log(`→ append (force_listen=true)  audio=${byteSize(b64)}B`);
+  log(`→ append (force_listen=true)  audio=${byteSize(audioB64)}B${frameInfo}`);
   stopPlayback();
 }
 
@@ -377,13 +409,14 @@ function cleanup() {
   if (scriptProcessor) { scriptProcessor.disconnect(); scriptProcessor = null; }
   if (audioContext) { audioContext.close(); audioContext = null; }
   if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  preview.srcObject = null;
   audioBuffer = [];
   ws = null;
   btnStart.disabled = false;
   btnStop.disabled = true;
   btnInterrupt.disabled = true;
-  if (statusDot.className.includes('idle')) return;
-  setStatus('idle', 'Disconnected');
+  modeSelect.disabled = false;
+  if (!statusDot.className.includes('idle')) setStatus('idle', 'Disconnected');
 }
 
 btnStart.onclick = start;

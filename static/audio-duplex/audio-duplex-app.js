@@ -838,9 +838,9 @@ async function startSession() {
         getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
-        getWsUrl: (sessionId) => {
+        getWsUrl: () => {
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-            return `${proto}://${location.host}/v1/realtime?mode=audio&session_id=${sessionId}`;
+            return `${proto}://${location.host}/v1/realtime?mode=audio`;
         },
     });
 

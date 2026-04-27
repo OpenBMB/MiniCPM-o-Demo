@@ -15,7 +15,7 @@
 
 | 项目 | 值 |
 |------|-----|
-| 端点 | `wss://host/v1/realtime?mode=audio`（`session_id` 可选，见下） |
+| 端点 | `wss://host/v1/realtime?mode=audio` |
 | 帧格式 | JSON 文本帧 |
 | 上行音频 | **16 kHz**，单声道，float32 PCM，base64 编码 |
 | 下行音频 | **24 kHz**，单声道，float32 PCM，base64 编码 |
@@ -37,10 +37,9 @@
 
 ### Setup
 
-连接 URL：`wss://host/v1/realtime?mode=audio[&session_id=xxx]`
+连接 URL：`wss://host/v1/realtime?mode=audio`
 
-- `session_id` **可选**。客户端可传入自定义 ID 用于日志追踪；省略时服务端自动生成（格式 `rt_{timestamp_ms}`）。
-- `session.created` 返回的 `session_id` 即最终生效值（传了用客户端的，没传用服务端的）。
+`session_id` 由服务端自动生成（格式 `rt_{timestamp_ms}`），通过 `session.created` 返回。
 
 ```
 Client  ──WSS──→  Server
@@ -91,7 +90,7 @@ Server  → session.created     "好的，准备就绪，session_id=xxx"
 | `response.output_audio.delta` | 模型在**说话** | 音频 + 文字 + end_of_turn |
 | `response.listen` | 模型在**听** | KV cache 等监控数据 |
 
-辅助事件：`session.queued`、`session.queue_update`、`session.queue_done`、`session.go_away`、`session.closed`、`error`
+辅助事件：`session.queued`、`session.queue_update`、`session.queue_done`、`session.closed`、`error`
 
 ---
 

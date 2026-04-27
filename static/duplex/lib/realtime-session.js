@@ -17,9 +17,9 @@ export class RealtimeSession {
             getPlaybackDelayMs: config.getPlaybackDelayMs || (() => 200),
             getStopOnSlidingWindow: config.getStopOnSlidingWindow || (() => false),
             outputSampleRate: config.outputSampleRate || 24000,
-            getWsUrl: config.getWsUrl || ((sessionId) => {
+            getWsUrl: config.getWsUrl || (() => {
                 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-                return `${proto}://${location.host}/v1/realtime?session_id=${sessionId}`;
+                return `${proto}://${location.host}/v1/realtime`;
             }),
         };
 
@@ -101,10 +101,10 @@ export class RealtimeSession {
 
     async start(systemPrompt, preparePayload, startMediaFn) {
         this._reset();
-        this.sessionId = `${this.prefix}_${Date.now().toString(36)}`;
-        this.onMetrics({ type: 'state', sessionState: 'Connecting...', sessionId: this.sessionId });
+        this.sessionId = '';
+        this.onMetrics({ type: 'state', sessionState: 'Connecting...' });
 
-        const wsUrl = this.config.getWsUrl(this.sessionId);
+        const wsUrl = this.config.getWsUrl();
 
         try {
             await new Promise((resolve, reject) => {
@@ -187,10 +187,11 @@ export class RealtimeSession {
 
                     } else if (msg.type === 'session.created') {
                         this._queueReject = null;
+                        this.sessionId = msg.session_id || '';
                         this._logProtoEvent('server', 'session.created',
-                            `session_id=${msg.session_id}`, msg);
+                            `session_id=${this.sessionId}`, msg);
                         this.onQueueUpdate(null);
-                        this.onSystemLog(`Session created (${msg.prompt_length || '?'} tokens)`);
+                        this.onSystemLog(`Session created: ${this.sessionId} (${msg.prompt_length || '?'} tokens)`);
                         resolve();
                     } else if (msg.type === 'error') {
                         this._queueReject = null;
@@ -342,12 +343,6 @@ export class RealtimeSession {
                 this._handleSpeak(msg);
                 break;
 
-            case 'session.go_away':
-                this._logProtoEvent('server', 'session.go_away',
-                    `reason=${msg.reason}`, msg);
-                this.onSystemLog(`Go-away: ${msg.reason} (${msg.time_left_ms}ms left)`);
-                break;
-
             case 'session.closed':
                 this._logProtoEvent('server', 'session.closed',
                     `reason=${msg.reason}`, msg);
@@ -364,11 +359,6 @@ export class RealtimeSession {
             // Backward compat: old protocol events
             case 'result':
                 this._handleResultCompat(msg);
-                break;
-            case 'audio_only':
-                if (msg.audio_data) {
-                    this.audioPlayer.playChunk(msg.audio_data, performance.now());
-                }
                 break;
             case 'stopped':
                 this.onSystemLog('Session stopped');

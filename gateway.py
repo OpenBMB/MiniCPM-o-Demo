@@ -1740,7 +1740,7 @@ async def realtime_ws(ws: WebSocket):
 
     Uses the same FIFO queue + Worker allocation as /ws/duplex.
     """
-    session_id = ws.query_params.get("session_id", f"rt_{int(datetime.now().timestamp()*1000)}")
+    session_id = f"rt_{int(datetime.now().timestamp()*1000)}"
     mode = ws.query_params.get("mode", "video")
     max_duration_s = 300 if mode == "video" else 600
 
@@ -1920,20 +1920,10 @@ async def realtime_ws(ws: WebSocket):
                             logger.info(f"Realtime context full (kv={kv_len}): session={session_id}")
                             await ws.send_json({"type": "session.closed", "reason": "context_full"})
                             session_closed.set()
-                    elif msg_type == "audio_only":
-                        await ws.send_json({
-                            "type": "response.output_audio.delta",
-                            "audio": msg.get("audio_data"),
-                            "text": "",
-                            "end_of_turn": False,
-                            "source": "tts_async",
-                        })
-
                     elif msg_type == "stopped":
                         await ws.send_json({"type": "session.closed", "reason": "stopped"})
 
                     elif msg_type == "timeout":
-                        await ws.send_json({"type": "session.go_away", "reason": msg.get("reason", "timeout")})
                         await ws.send_json({"type": "session.closed", "reason": "timeout"})
 
                     elif msg_type == "error":

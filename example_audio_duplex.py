@@ -230,9 +230,6 @@ async def main():
                         kv = msg.get("kv_cache_length", 0)
                         print(f"  ← 听  (kv={kv})")
 
-                    elif t == "session.go_away":
-                        print(f"  ← go_away: {msg.get('reason')}, 剩余 {msg.get('time_left_ms')}ms")
-
                     elif t == "session.closed":
                         print(f"✓ 会话关闭: {msg['reason']}")
                         # ⚠️ 文档里客户端发 reason="user_stop"，
