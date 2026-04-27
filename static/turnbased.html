@@ -858,7 +858,7 @@
     <!-- ========== 初始视图（ChatGPT 风格） ========== -->
     <div class="initial-view" id="initialView">
         <div class="initial-title">MiniCPM-o 4.5</div>
-        <div class="initial-subtitle">Turn-based Chat</div>
+        <div class="initial-subtitle" id="initialSubtitle">Turn-based Chat</div>
 
         <!-- Preset + System 配置 -->
         <div class="system-config-card" style="padding:16px 20px;">
@@ -1007,6 +1007,7 @@
         </div>
     </div>
 
+<script src="/static/shared/i18n.js"></script>
 <script src="/static/ref-audio-player.js"></script>
 <script src="/static/shared/preset-selector.js"></script>
 <script src="/static/system-content-editor.js"></script>
@@ -1046,11 +1047,11 @@ function init() {
     // 创建 Compose Editor（初始视图 + 对话视图）— compose 模式融入外层容器
     state.composeEditorInit = new UserContentEditor(
         document.getElementById('composeEditorInit'),
-        { placeholder: 'Type or press Space to record...', onSubmit: () => sendFirstMessage(), compose: true, showImageBtn: false }
+        { placeholder: (window.I18n?.t?.typeOrRecord || 'Type or press Space to record...'), onSubmit: () => sendFirstMessage(), compose: true, showImageBtn: false }
     );
     state.composeEditorChat = new UserContentEditor(
         document.getElementById('composeEditorChat'),
-        { placeholder: 'Type or press Space to record...', onSubmit: () => sendMessage(), compose: true, showImageBtn: false }
+        { placeholder: (window.I18n?.t?.typeOrRecord || 'Type or press Space to record...'), onSubmit: () => sendMessage(), compose: true, showImageBtn: false }
     );
 
     // 默认让 chat compose editor 成为 Space 键目标
@@ -1301,9 +1302,10 @@ async function checkServiceStatus() {
         const resp = await fetch(`${API_BASE}/status`);
         const data = await resp.json();
         const el = document.getElementById('serviceStatus');
-        let text = `Workers: ${data.idle_workers}/${data.total_workers} idle`;
+        const _t = window.I18n?.t || {};
+        let text = `${_t.workers || 'Workers'}: ${data.idle_workers}/${data.total_workers} ${_t.idle || 'idle'}`;
         if (data.queue_length > 0) {
-            text += ` | Queue: ${data.queue_length}`;
+            text += ` | ${_t.queue || 'Queue'}: ${data.queue_length}`;
         }
         el.textContent = text;
         el.className = 'status ' + (data.idle_workers > 0 ? 'online' : 'offline');
@@ -1320,7 +1322,7 @@ async function checkServiceStatus() {
         }
     } catch (e) {
         const el = document.getElementById('serviceStatus');
-        el.textContent = 'Offline';
+        el.textContent = window.I18n?.t?.offline || 'Offline';
         el.className = 'status offline';
     }
 }
@@ -1372,13 +1374,20 @@ function queueCountdownStop(msg) {
 }
 function _countdownRender() {
     const { remaining, position, queueLength } = _countdownTimer;
-    const posStr = position != null && queueLength != null
-        ? `${position}/${queueLength}, ` : (queueLength != null ? `${queueLength} in queue, ` : '');
+    const _t = window.I18n?.t || {};
+    const posLabel = position != null && queueLength != null
+        ? `${position}/${queueLength}` : (queueLength != null ? `${queueLength}` : '');
     if (remaining > 0) {
-        updateLastAssistantMessage(`Queued ${posStr}~${remaining}s remaining`, 'queue');
+        const msg = typeof _t.queued === 'function'
+            ? _t.queued(posLabel, remaining)
+            : `Queued ${posLabel}${posLabel ? ', ' : ''}~${remaining}s remaining`;
+        updateLastAssistantMessage(msg, 'queue');
     } else {
         const overtime = Math.abs(remaining);
-        updateLastAssistantMessage(`Queued ${posStr}worker busy, overtime +${overtime}s`, 'queue');
+        const msg = typeof _t.queuedOvertime === 'function'
+            ? _t.queuedOvertime(posLabel, overtime)
+            : `Queued ${posLabel}${posLabel ? ', ' : ''}worker busy, overtime +${overtime}s`;
+        updateLastAssistantMessage(msg, 'queue');
     }
 }
 
@@ -1401,7 +1410,7 @@ function switchToConversation() {
 
 function updateSysConfigBarSummary() {
     const el = document.getElementById('sysConfigBarSummary');
-    const parts = ['System Settings'];
+    const parts = [window.I18n?.t?.systemSettings || 'System Settings'];
     const texts = state.systemContentList.filter(i => i.type === 'text' && i.text).length;
     const audios = state.systemContentList.filter(i => i.type === 'audio' && i.data).length;
     const images = state.systemContentList.filter(i => i.type === 'image' && i.data).length;
@@ -1595,7 +1604,7 @@ function addMessageUI(role, content, meta = '', audioAttachments = [], msgIndex 
         // Edit 按钮（铅笔 icon）
         const editBtn = document.createElement('button');
         editBtn.className = 'msg-action-btn';
-        editBtn.title = 'Edit';
+        editBtn.title = window.I18n?.t?.edit || 'Edit';
         editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
         editBtn.addEventListener('click', () => startEditMessage(msgIndex));
         actionsCol.appendChild(editBtn);
@@ -1603,7 +1612,7 @@ function addMessageUI(role, content, meta = '', audioAttachments = [], msgIndex 
         // Resend 按钮（回退箭头 icon）
         const resendBtn = document.createElement('button');
         resendBtn.className = 'msg-action-btn resend-btn';
-        resendBtn.title = 'Resend from here';
+        resendBtn.title = window.I18n?.t?.resendFromHere || 'Resend from here';
         resendBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
         resendBtn.addEventListener('click', () => resendFromMessage(msgIndex));
         actionsCol.appendChild(resendBtn);
@@ -1714,8 +1723,8 @@ function updateLastAssistantMeta(opts) {
     // === Line 1: [mode] Total ===
     const line1 = document.createElement('div');
     line1.className = 'meta-line';
-    let l1Parts = [label('Total', fmt(opts.totalMs))];
-    if (opts.stopped) l1Parts.push(`<span class="meta-value" style="color:#e67700;">[stopped]</span>`);
+    let l1Parts = [label(window.I18n?.t?.total || 'Total', fmt(opts.totalMs))];
+    if (opts.stopped) l1Parts.push(`<span class="meta-value" style="color:#e67700;">${window.I18n?.t?.stopped || '[stopped]'}</span>`);
     line1.innerHTML = `<span class="meta-value" style="color:#aaa;">[${modeBadge}]</span> ${l1Parts.join(sep)}`;
     metaEl.appendChild(line1);
 
@@ -1770,12 +1779,12 @@ function updateLastAssistantMeta(opts) {
         const rid = document.createElement('span');
         rid.className = 'meta-rid';
         rid.textContent = opts.requestId;
-        rid.title = `Click to copy: ${opts.requestId}`;
+        rid.title = (window.I18n?.t?.clickToCopy || 'Click to copy: ') + opts.requestId;
         rid.addEventListener('click', () => {
             navigator.clipboard.writeText(opts.requestId).then(() => {
                 rid.classList.add('copied');
                 const orig = rid.textContent;
-                rid.textContent = 'Copied!';
+                rid.textContent = window.I18n?.t?.copied || 'Copied!';
                 setTimeout(() => { rid.textContent = orig; rid.classList.remove('copied'); }, 1200);
             });
         });
@@ -1859,9 +1868,9 @@ function updateCancelStopButton() {
     const btn = document.getElementById('btnCancelStop');
     if (!btn) return;
     if (state.generationPhase === 'generating') {
-        btn.textContent = '■ Stop';
+        btn.textContent = '■ ' + (window.I18n?.t?.stop_ || 'Stop');
     } else {
-        btn.textContent = '✕ Cancel';
+        btn.textContent = window.I18n?.t?.cancelGeneration || '✕ Cancel';
     }
 }
 
@@ -2798,7 +2807,7 @@ async function exportConversation() {
         if (items.length > 0) exportMessages.push({ role: msg.role, content: items });
     }
 
-    if (exportMessages.length === 0) { alert('No messages to export.'); return; }
+    if (exportMessages.length === 0) { alert(window.I18n?.t?.noMessagesToExport || 'No messages to export.'); return; }
 
     const encoded = encode({ messages: exportMessages });
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -3012,7 +3021,87 @@ const _saveShareUI = new SaveShareUI({ containerId: 'save-share-container', appT
 </script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
+import { t } from '/static/shared/i18n-module.js';
 initNav('turnbased');
+
+// ── Page title ──
+document.title = t.turnbasedChat + ' – MiniCPM-o 4.5';
+
+// ── Header status & subtitle ──
+document.getElementById('serviceStatus').textContent = t.connecting;
+document.getElementById('initialSubtitle').textContent = t.turnbasedChat;
+
+// Language toggle is injected by app-nav.js via createLangToggle().
+
+// ── System config summaries ──
+const _scCard = document.getElementById('systemConfigCard');
+if (_scCard) { const s = _scCard.querySelector('summary'); if (s) s.textContent = t.advancedSystemSettings; }
+const _scBarSummary = document.getElementById('sysConfigBarSummary');
+if (_scBarSummary && _scBarSummary.textContent.startsWith('System Settings')) _scBarSummary.textContent = t.systemSettings;
+
+// ── System Content field labels ──
+document.querySelectorAll('.sc-field > label').forEach(lbl => {
+    const txt = lbl.textContent.trim();
+    if (txt.startsWith('System Content')) lbl.textContent = t.systemContent;
+});
+
+// ── TTS Ref Audio headers ──
+document.querySelectorAll('.tts-ref-header').forEach(el => { el.textContent = t.ttsRefAudio; });
+
+// ── TTS radio labels ──
+document.querySelectorAll('.tts-ref-options label').forEach(lbl => {
+    const radio = lbl.querySelector('input[type="radio"]');
+    if (!radio) return;
+    if (radio.value === 'extract') lbl.lastChild.textContent = ' ' + t.extractFromSystem;
+    else if (radio.value === 'independent') lbl.lastChild.textContent = ' ' + t.independent;
+});
+
+// ── Input hints (Hold Space / Enter / Drag & drop) ──
+document.querySelectorAll('.input-hints').forEach(hintsEl => {
+    const items = hintsEl.querySelectorAll('.hint-item');
+    if (items[0]) { const svg = items[0].querySelector('svg'); items[0].textContent = ''; items[0].appendChild(svg); items[0].append(' ' + t.holdSpaceToRecord); }
+    if (items[1]) { const svg = items[1].querySelector('svg'); items[1].textContent = ''; items[1].appendChild(svg); items[1].append(' ' + t.enterToSend); }
+    if (items[2]) { const svg = items[2].querySelector('svg'); items[2].textContent = ''; items[2].appendChild(svg); items[2].append(' ' + t.dragDropHint); }
+});
+
+// ── Drop overlay text ──
+document.querySelectorAll('.drag-overlay').forEach(el => { el.textContent = '📎 ' + t.dropOverlayText; });
+
+// ── Toggle labels (Streaming / Voice Response) ──
+document.querySelectorAll('.toggle-label').forEach(lbl => {
+    const txt = lbl.textContent.trim();
+    if (txt === 'Streaming') lbl.textContent = t.streaming;
+    else if (txt === 'Voice Response') lbl.textContent = t.voiceResponse;
+});
+
+// ── new tokens / len_pen labels ──
+document.querySelectorAll('.opt-group label, .input-options > label').forEach(lbl => {
+    const txt = lbl.textContent.trim();
+    if (txt === 'new tokens' || txt === 'tokens') lbl.textContent = t.newTokens;
+    else if (txt === 'len_pen') lbl.textContent = t.lenPen;
+});
+
+// ── Mic button title + Space hint ──
+document.querySelectorAll('.btn-mic').forEach(btn => {
+    btn.title = t.recordAudio;
+    const kbd = btn.querySelector('.kbd-hint');
+    if (kbd) { btn.childNodes[0].textContent = '🎤 '; }
+});
+
+// ── Export .msgpack button ──
+document.querySelectorAll('.btn-export').forEach(btn => {
+    const svg = btn.querySelector('svg');
+    if (svg) { const sh = svg.outerHTML; btn.innerHTML = sh + '\n                ' + t.exportMsgpack; }
+});
+
+// ── Generating... / Cancel ──
+const _typingSpan = document.querySelector('#typingIndicator > span');
+if (_typingSpan) _typingSpan.textContent = t.generating;
+const _cancelBtn = document.getElementById('btnCancelStop');
+if (_cancelBtn) _cancelBtn.textContent = t.cancelGeneration;
+
+// ── Compose editor placeholders (set after UCE creates the textareas) ──
+document.querySelectorAll('.uce-empty-ta').forEach(ta => { ta.placeholder = t.typeOrRecord; });
 </script>
 <script type="module">
 import { initFaqSidebar } from '/static/shared/faq-sidebar.js';

@@ -6,6 +6,7 @@ import type {
   SettingsSummaryComponent,
 } from './types'
 import type { UseDuplexSessionApi } from './useDuplexSession'
+import { useI18n } from '../i18n'
 
 export type AudioDuplexScreenProps = {
   duplex: UseDuplexSessionApi
@@ -115,6 +116,7 @@ export function AudioDuplexScreen({
   shareReady = false,
   onOpenShare,
 }: AudioDuplexScreenProps) {
+  const { t: i18n } = useI18n()
   const SettingsIcon = icons.Settings
   const TranscriptIcon = icons.Transcript
   const PauseIcon = icons.Pause
@@ -283,12 +285,12 @@ export function AudioDuplexScreen({
           className="halfduplex-top-btn"
           type="button"
           onClick={handleHangup}
-          aria-label="返回"
+          aria-label={i18n.close}
         >
           <BackIcon className="app-icon app-icon-md" />
         </button>
         <div className="halfduplex-top-title">
-          <div className="halfduplex-top-title-main">音频通话</div>
+          <div className="halfduplex-top-title-main">{i18n.audioCall}</div>
           <div className={`halfduplex-top-title-sub status-${status}`}>
             {statusText}
           </div>
@@ -303,7 +305,7 @@ export function AudioDuplexScreen({
               .join(' ')}
             type="button"
             onClick={() => setTranscriptOpen((p) => !p)}
-            aria-label="字幕"
+            aria-label={i18n.callSubtitles}
           >
             <TranscriptIcon className="app-icon app-icon-md" />
           </button>
@@ -313,8 +315,8 @@ export function AudioDuplexScreen({
               type="button"
               onClick={onOpenShare}
               disabled={!shareReady}
-              aria-label="分享通话"
-              title={shareReady ? '分享通话' : '通话开始后可分享'}
+              aria-label={i18n.shareCall}
+              title={shareReady ? i18n.shareCall : i18n.shareCallHint}
             >
               <ShareIcon className="app-icon app-icon-md" />
             </button>
@@ -323,7 +325,7 @@ export function AudioDuplexScreen({
             className="halfduplex-top-btn"
             type="button"
             onClick={onOpenSettings}
-            aria-label="设置"
+            aria-label={i18n.settings}
           >
             <SettingsIcon className="app-icon app-icon-md" />
           </button>
@@ -351,20 +353,20 @@ export function AudioDuplexScreen({
             .join(' ')}
         >
           {forceListen
-            ? '强制收听中'
+            ? i18n.forceListening
             : pauseState !== 'active'
-              ? '已暂停'
+              ? i18n.paused
               : status === 'live'
                 ? hasSession
-                  ? '正在通话'
-                  : '准备中'
+                  ? i18n.inCall
+                  : i18n.preparing
                 : status === 'queueing'
-                  ? '排队中'
+                  ? i18n.queuing
                   : status === 'starting'
-                    ? '连接中'
+                    ? i18n.connecting
                     : status === 'error'
-                      ? '出错'
-                      : '未连接'}
+                      ? i18n.error
+                      : i18n.notConnected}
         </div>
 
         <canvas ref={canvasRef} className="halfduplex-wave-canvas" />
@@ -373,8 +375,8 @@ export function AudioDuplexScreen({
           {liveAssistantText
             ? liveAssistantText
             : hasSession
-              ? '说话试试，模型在听...'
-              : '点击下方电话按钮开始通话'}
+              ? i18n.speakToStart
+              : i18n.tapToStart}
         </div>
       </div>
 
@@ -389,12 +391,12 @@ export function AudioDuplexScreen({
         >
           <div className="halfduplex-transcript-panel">
             <div className="halfduplex-transcript-head">
-              <div className="halfduplex-transcript-title">通话字幕</div>
+              <div className="halfduplex-transcript-title">{i18n.callSubtitles}</div>
               <button
                 className="halfduplex-transcript-close"
                 type="button"
                 onClick={() => setTranscriptOpen(false)}
-                aria-label="关闭字幕"
+                aria-label={i18n.closeSubtitles}
               >
                 ×
               </button>
@@ -406,7 +408,7 @@ export function AudioDuplexScreen({
                 ))
               ) : (
                 <div className="halfduplex-transcript-empty">
-                  通话开始后这里会显示完整字幕。
+                  {i18n.subtitlesWillAppear}
                 </div>
               )}
               <div ref={duplex.endRef} />
@@ -429,7 +431,7 @@ export function AudioDuplexScreen({
         >
           <EarIcon className="app-icon app-icon-lg" />
           <span className="halfduplex-ctrl-label">
-            {forceListen ? '收听中' : '强制收听'}
+            {forceListen ? i18n.listening : i18n.forceListen}
           </span>
         </button>
 
@@ -450,7 +452,7 @@ export function AudioDuplexScreen({
             <PauseIcon className="app-icon app-icon-lg" />
           )}
           <span className="halfduplex-ctrl-label">
-            {pauseState !== 'active' ? '继续' : '暂停'}
+            {pauseState !== 'active' ? i18n.continue_ : i18n.pause}
           </span>
         </button>
 
@@ -463,7 +465,7 @@ export function AudioDuplexScreen({
             .join(' ')}
           type="button"
           onClick={handleStartStop}
-          aria-label={hasSession ? '结束' : '开始'}
+          aria-label={hasSession ? i18n.endCall : i18n.startCall}
         >
           {hasSession ? (
             <PhoneHangupIcon className="app-icon app-icon-xl" />

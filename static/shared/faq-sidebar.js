@@ -6,7 +6,7 @@
  *   initFaqSidebar('turnbased');   // loads /static/faq/{lang}/turnbased.md
  */
 
-const STORAGE_KEY_LANG = 'faq-lang';
+const STORAGE_KEY_LANG = 'minicpmo_lang';
 
 /* ── lightweight markdown → HTML ── */
 function md2html(src) {
@@ -170,7 +170,7 @@ export async function initFaqSidebar(mode) {
         document.head.appendChild(link);
     }
 
-    let lang = localStorage.getItem(STORAGE_KEY_LANG) || 'zh';
+    let lang = window.I18n?.getLang?.() || localStorage.getItem(STORAGE_KEY_LANG) || 'zh';
 
     const sidebar = buildSidebar(lang);
     wrapPageContent(sidebar);
@@ -191,6 +191,7 @@ export async function initFaqSidebar(mode) {
         lang = btn.dataset.lang;
         localStorage.setItem(STORAGE_KEY_LANG, lang);
         await loadFaq(mode, lang, content);
+        if (window.I18n?.setLang) window.I18n.setLang(lang, true);
     });
 
     await loadFaq(mode, lang, content);

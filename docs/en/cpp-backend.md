@@ -1,6 +1,4 @@
-# MiniCPM-o 4.5 Demo — C++ Backend
-
-[中文 README](README_zh.md)
+# C++ Backend Deployment
 
 This guide walks through running the demo on top of the
 [`llama.cpp-omni`](https://github.com/tc-mb/llama.cpp-omni) C++ inference engine
@@ -49,7 +47,7 @@ it on demand.
 ## 3. Install Python Dependencies
 
 Same as the PyTorch path — see the standard
-[deployment guide](docs/en/deployment.md) for `install.sh` / venv setup.
+[deployment guide](deployment.md) for `install.sh` / venv setup.
 
 The C++ backend does not require PyTorch CUDA at runtime, but the worker
 itself is still a Python process, so the venv is needed.
@@ -155,7 +153,7 @@ bun install                 # or `npm install`, requires Node ≥ 20.19
 bun run --bun build:static  # publishes to ../../static/mobile/
 ```
 
-See [`frontend/mobile/README.md`](frontend/mobile/README.md) for dev
+See [`frontend/mobile/README.md`](../../frontend/mobile/README.md) for dev
 proxy / npm-only / hot-reload details.
 
 ---

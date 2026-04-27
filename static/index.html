@@ -214,45 +214,73 @@
                 <a href="/" class="active">Home</a>
             </div>
         </div>
+        <div class="header-lang" id="headerLang"></div>
     </div>
+    <style>
+        .header-lang { display:flex; align-items:center; }
+        .header-lang .hl-toggle { display:flex; background:#f0efec; border-radius:8px; padding:2px; gap:2px; }
+        .header-lang .hl-btn { background:transparent; border:none; padding:4px 12px; font-size:11px; font-weight:600; color:#999; cursor:pointer; border-radius:6px; line-height:1.3; font-family:inherit; }
+        .header-lang .hl-btn.active { background:#fff; color:#333; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+        .header-lang .hl-btn:not(.active):hover { color:#555; }
+    </style>
 
     <main class="home-main">
-        <div class="home-title">Choose mode</div>
+        <div class="home-title" id="home-title">Choose mode</div>
         <!-- <div class="home-subtitle">Text · Image · Audio · Video — Multimodal inference</div> -->
 
         <div class="mode-cards" id="mode-cards"></div>
 
         <div class="recent-section" id="recent-section" style="display:none;">
             <div class="recent-header">
-                <span class="recent-title">Recent Sessions (Only visible to you)</span>
-                <button class="recent-clear" id="recent-clear-btn">Clear</button>
+                <span class="recent-title" id="recent-title">Recent Sessions (Only visible to you)</span>
+                <button class="recent-clear" id="recent-clear-btn"></button>
             </div>
             <div class="recent-list" id="recent-list"></div>
         </div>
     </main>
 
+    <script src="/static/shared/i18n.js"></script>
     <script type="module">
     import { initNav } from '/static/shared/app-nav.js';
+    const t = window.I18n?.t || {};
 
     const APP_CARD_META = {
-        turnbased: { css: 'turnbased', icon: '💬', desc: 'Multi-turn chat: text and audio input with streaming output. For Q&A, editing, and multi-turn tasks.' },
-        omni:      { css: 'omni',      icon: '🎥', desc: 'Full-duplex real-time: camera + mic or local video/audio file; speak and see with live replies. Live / File modes.' },
-        audio_duplex: { css: 'audio', icon: '🎤', desc: 'Voice-only full-duplex: live mic or local audio file, low-latency voice conversation. Live / File modes.' },
+        turnbased: { css: 'turnbased', icon: '💬', desc: t.turnbasedDesc, nameKey: 'turnbasedChat' },
+        omni:      { css: 'omni',      icon: '🎥', desc: t.omniDesc, nameKey: 'omniFullDuplex' },
+        audio_duplex: { css: 'audio', icon: '🎤', desc: t.audioDuplexDesc, nameKey: 'audioDuplexTitle' },
     };
     const MOBILE_PREVIEW_CARD = {
         route: '/mobile',
         css: 'mobile',
         icon: '📱',
-        title: 'Mobile Preview',
-        desc: 'React + Vite mobile interaction draft for turn-based and full-duplex layouts. UI preview only.',
+        title: t.mobileName,
+        desc: t.mobileDesc,
     };
+
+    document.getElementById('home-title').textContent = t.chooseMode;
+    document.getElementById('recent-title').textContent = t.recentSessions;
+    document.getElementById('recent-clear-btn').textContent = t.clearRecent;
+
+    // Language toggle in header (FAQ-style)
+    const _hlEl = document.getElementById('headerLang');
+    if (_hlEl && window.I18n) {
+        const _curLang = window.I18n.getLang();
+        _hlEl.innerHTML = '<div class="hl-toggle">'
+            + '<button class="hl-btn' + (_curLang === 'zh' ? ' active' : '') + '" data-l="zh">中文</button>'
+            + '<button class="hl-btn' + (_curLang === 'en' ? ' active' : '') + '" data-l="en">EN</button>'
+            + '</div>';
+        _hlEl.addEventListener('click', e => {
+            const btn = e.target.closest('.hl-btn');
+            if (btn && !btn.classList.contains('active')) window.I18n.setLang(btn.dataset.l);
+        });
+    }
 
     function renderCard(card) {
         return `<a href="${card.route}" class="mode-card ${card.css}">
             <div class="card-icon" aria-hidden="true">${card.icon}</div>
             <div class="card-title">${card.title}</div>
             <div class="card-desc">${card.desc}</div>
-            <div class="card-enter">Enter →</div>
+            <div class="card-enter">${t.enter}</div>
         </a>`;
     }
 
@@ -270,7 +298,7 @@
                     route: a.route,
                     css: m.css,
                     icon: m.icon,
-                    title: a.name,
+                    title: (m.nameKey && t[m.nameKey]) || a.name,
                     desc: m.desc,
                 });
             }) : [];

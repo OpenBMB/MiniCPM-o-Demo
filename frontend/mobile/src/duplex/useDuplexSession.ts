@@ -18,6 +18,7 @@ import type {
   DuplexSettings,
   DuplexStatus,
 } from './types'
+import { useI18n } from '../i18n'
 
 function createDuplexId(role: DuplexEntry['role']): string {
   return `duplex-${role}-${Math.random().toString(36).slice(2, 10)}`
@@ -82,10 +83,11 @@ export function useDuplexSession(
   input: UseDuplexSessionInput,
 ): UseDuplexSessionApi {
   const { screen, setScreen, settings, setLastSessionId } = input
+  const { t: i18n } = useI18n()
 
   const [entries, setEntries] = useState<DuplexEntry[]>([])
   const [status, setStatus] = useState<DuplexStatus>('idle')
-  const [statusText, setStatusText] = useState('等待进入全双工')
+  const [statusText, setStatusText] = useState(i18n.duplexWaiting)
   const [mode, setMode] = useState<DuplexMode>('audio')
   const [micEnabled, setMicEnabled] = useState(true)
   const [mirrorEnabled, setMirrorEnabled] = useState(false)
@@ -104,7 +106,7 @@ export function useDuplexSession(
 
   const audioScreenOpen = screen === 'audio-duplex'
   const videoScreenOpen = screen === 'video-duplex'
-  const badgeText = getDuplexBadgeText(status, mode)
+  const badgeText = getDuplexBadgeText(status, mode, i18n)
 
   function appendEntry(role: DuplexEntry['role'], text: string): string {
     const id = createDuplexId(role)
@@ -135,7 +137,7 @@ export function useDuplexSession(
   }
 
   function stop(options?: { preserveScreen?: boolean }) {
-    const modeLabel = getDuplexModeLabel(mode)
+    const modeLabel = getDuplexModeLabel(mode, i18n)
 
     startInFlightRef.current = false
     listenEntryIdRef.current = null
@@ -149,7 +151,7 @@ export function useDuplexSession(
 
     setHasSession(false)
     setStatus('stopped')
-    setStatusText(`${modeLabel}会话已结束`)
+    setStatusText(i18n.duplexEnded(modeLabel))
     setPauseState('active')
     setForceListen(false)
 
@@ -177,7 +179,7 @@ export function useDuplexSession(
         try {
           await mediaRef.current.setCameraEnabled(true)
         } catch (error) {
-          appendEntry('system', `相机预览失败：${getErrorMessage(error)}`)
+          appendEntry('system', i18n.cameraPreviewFailed(getErrorMessage(error)))
         }
       }
       return
@@ -197,7 +199,7 @@ export function useDuplexSession(
       }
     } catch (error) {
       mediaRef.current = null
-      appendEntry('system', `相机预览失败：${getErrorMessage(error)}`)
+      appendEntry('system', i18n.cameraPreviewFailed(getErrorMessage(error)))
     }
   }
 
@@ -213,7 +215,7 @@ export function useDuplexSession(
       // Desktop omni opens the video panel into a preview state and waits for
       // the user to press Start before opening the WebSocket session.
       setStatus('idle')
-      setStatusText('点击 Start 进入全双工')
+      setStatusText(i18n.tapStartDuplex)
       requestAnimationFrame(() => {
         void attachPreview('video')
       })
@@ -265,7 +267,7 @@ export function useDuplexSession(
       return
     }
 
-    const modeLabel = getDuplexModeLabel(nextMode)
+    const modeLabel = getDuplexModeLabel(nextMode, i18n)
     const withVideo = nextMode === 'video'
     const duplexSettings = withVideo ? settings.omni : settings.audio_duplex
 
@@ -277,7 +279,7 @@ export function useDuplexSession(
     setPauseState('active')
     setStatus('starting')
     setStatusText(
-      withVideo ? '正在请求摄像头和麦克风...' : '正在请求麦克风...',
+      withVideo ? i18n.requestingMicCamera : i18n.requestingMic,
     )
 
     try {
@@ -318,23 +320,21 @@ export function useDuplexSession(
         if (data) {
           setStatus('queueing')
           setStatusText(
-            `排队 ${data.position ?? '?'} / ${data.queue_length ?? '?'}，预计 ${Math.round(
-              data.estimated_wait_s ?? 0,
-            )}s`,
+            i18n.queueHint(data.position ?? 0, Math.round(data.estimated_wait_s ?? 0)),
           )
         }
       }
       session.onQueueDone = () => {
         setStatus('starting')
-        setStatusText(`Worker 已分配，正在准备${modeLabel}会话...`)
+        setStatusText(i18n.workerAssigned(modeLabel))
       }
       session.onPrepared = () => {
-        setStatusText(`会话已准备，开始${modeLabel}推流...`)
+        setStatusText(i18n.sessionReady(modeLabel))
       }
       session.onRunningChange = (running) => {
         setStatus(running ? 'live' : 'stopped')
         setStatusText(
-          running ? `${modeLabel}进行中` : `${modeLabel}会话已停止`,
+          running ? i18n.duplexInProgress(modeLabel) : i18n.duplexEnded(modeLabel),
         )
       }
       session.onPauseStateChange = (state) => {
@@ -342,10 +342,10 @@ export function useDuplexSession(
         setStatus(state === 'active' ? 'live' : 'paused')
         setStatusText(
           state === 'active'
-            ? `${modeLabel}进行中`
+            ? i18n.duplexInProgress(modeLabel)
             : state === 'pausing'
-              ? `正在暂停${modeLabel}...`
-              : `${modeLabel}已暂停`,
+              ? i18n.duplexPausing(modeLabel)
+              : i18n.duplexPaused(modeLabel),
         )
       }
       session.onForceListenChange = (active) => {
@@ -395,7 +395,7 @@ export function useDuplexSession(
         setPauseState('active')
         setForceListen(false)
         setStatus('stopped')
-        setStatusText(`${modeLabel}会话已结束`)
+        setStatusText(i18n.duplexEnded(modeLabel))
       }
 
       const preparePayload: Record<string, unknown> = {
@@ -446,8 +446,8 @@ export function useDuplexSession(
       sessionRef.current = null
       setHasSession(false)
       setStatus('error')
-      setStatusText(`启动失败：${getErrorMessage(error)}`)
-      appendEntry('system', `启动失败：${getErrorMessage(error)}`)
+      setStatusText(i18n.startFailed(getErrorMessage(error)))
+      appendEntry('system', i18n.startFailed(getErrorMessage(error)))
     } finally {
       startInFlightRef.current = false
     }
@@ -482,7 +482,7 @@ export function useDuplexSession(
 
     if (action) {
       void action.catch((error: unknown) => {
-        appendEntry('system', `翻转摄像头失败：${getErrorMessage(error)}`)
+        appendEntry('system', i18n.flipCameraFailed(getErrorMessage(error)))
       })
     }
   }

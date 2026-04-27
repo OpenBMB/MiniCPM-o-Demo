@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import './duplex.css'
 import type { DuplexEntry, DuplexIcons } from './types'
 import type { UseDuplexSessionApi } from './useDuplexSession'
+import { useI18n, type Translations } from '../i18n'
 
 const SUBTITLE_KEEP = 6
 
@@ -43,17 +44,17 @@ type LampSpec = {
   label: string
 }
 
-function lampForPhase(phase: Phase): LampSpec {
+function lampForPhase(phase: Phase, t: Translations): LampSpec {
   switch (phase) {
     case 'live':
-      return { visible: true, className: 'live', label: 'LIVE' }
+      return { visible: true, className: 'live', label: t.live }
     case 'queuing':
     case 'preparing':
     case 'pausing':
     case 'paused':
-      return { visible: true, className: 'preparing', label: 'Preparing' }
+      return { visible: true, className: 'preparing', label: t.preparing }
     case 'stopped':
-      return { visible: true, className: 'stopped', label: 'Stopped' }
+      return { visible: true, className: 'stopped', label: t.stopped }
     case 'idle':
     case 'error':
     default:
@@ -63,50 +64,50 @@ function lampForPhase(phase: Phase): LampSpec {
 
 type StartSpec = { label: string; live: boolean; disabled: boolean }
 
-function startForPhase(phase: Phase): StartSpec {
+function startForPhase(phase: Phase, t: Translations): StartSpec {
   switch (phase) {
     case 'idle':
     case 'stopped':
     case 'error':
-      return { label: 'Start', live: false, disabled: false }
+      return { label: t.start, live: false, disabled: false }
     case 'queuing':
-      return { label: 'Queued', live: false, disabled: true }
+      return { label: t.queuing, live: false, disabled: true }
     case 'preparing':
-      return { label: 'Preparing...', live: false, disabled: true }
+      return { label: t.preparing + '...', live: false, disabled: true }
     case 'live':
     case 'pausing':
     case 'paused':
-      return { label: '● Live', live: true, disabled: true }
+      return { label: '● ' + t.live, live: true, disabled: true }
   }
 }
 
 type PauseSpec = { label: string; disabled: boolean }
 
-function pauseForPhase(phase: Phase): PauseSpec {
+function pauseForPhase(phase: Phase, t: Translations): PauseSpec {
   switch (phase) {
     case 'live':
-      return { label: 'Pause', disabled: false }
+      return { label: t.pause, disabled: false }
     case 'pausing':
-      return { label: 'Pausing...', disabled: true }
+      return { label: t.pause + '...', disabled: true }
     case 'paused':
-      return { label: 'Resume', disabled: false }
+      return { label: t.continue_, disabled: false }
     default:
-      return { label: 'Pause', disabled: true }
+      return { label: t.pause, disabled: true }
   }
 }
 
 type StopSpec = { label: string; disabled: boolean; cancel: boolean }
 
-function stopForPhase(phase: Phase): StopSpec {
+function stopForPhase(phase: Phase, t: Translations): StopSpec {
   switch (phase) {
     case 'queuing':
-      return { label: 'Cancel', disabled: false, cancel: true }
+      return { label: t.cancel, disabled: false, cancel: true }
     case 'live':
     case 'pausing':
     case 'paused':
-      return { label: 'Stop', disabled: false, cancel: false }
+      return { label: t.stop, disabled: false, cancel: false }
     default:
-      return { label: 'Stop', disabled: true, cancel: false }
+      return { label: t.stop, disabled: true, cancel: false }
   }
 }
 
@@ -130,6 +131,7 @@ export function VideoDuplexScreen({
   void icons
   void onOpenSettings // settings entry not surfaced in faithful-omni layout
 
+  const { t: i18n } = useI18n()
   const phase = derivePhase(duplex)
 
   const [elapsed, setElapsed] = useState(0)
@@ -159,10 +161,10 @@ export function VideoDuplexScreen({
     .slice(-SUBTITLE_KEEP)
   const subtitleOn = duplex.textPanelOpen
 
-  const lamp = lampForPhase(phase)
-  const start = startForPhase(phase)
-  const pause = pauseForPhase(phase)
-  const stop = stopForPhase(phase)
+  const lamp = lampForPhase(phase, i18n)
+  const start = startForPhase(phase, i18n)
+  const pause = pauseForPhase(phase, i18n)
+  const stop = stopForPhase(phase, i18n)
   const ancillaryDisabled = ancillaryDisabledForPhase(phase)
   const showTimer = phase === 'live' || phase === 'paused' || phase === 'pausing'
 
@@ -201,8 +203,8 @@ export function VideoDuplexScreen({
             .join(' ')}
           type="button"
           onClick={duplex.flipMirror}
-          aria-label="Mirror flip"
-          title="Mirror flip"
+          aria-label={i18n.mirrorFlip}
+          title={i18n.mirrorFlip}
         >
           <svg
             width="20"
@@ -235,8 +237,8 @@ export function VideoDuplexScreen({
           className="vd-corner-btn vd-cam-flip"
           type="button"
           onClick={duplex.flipCamera}
-          aria-label="Flip camera"
-          title="Flip camera"
+          aria-label={i18n.flipCamera}
+          title={i18n.flipCamera}
         >
           <svg
             width="20"
@@ -284,8 +286,8 @@ export function VideoDuplexScreen({
             .join(' ')}
           type="button"
           onClick={duplex.toggleTextPanel}
-          aria-label={subtitleOn ? 'Hide subtitles' : 'Show subtitles'}
-          title="Subtitles on/off"
+          aria-label={subtitleOn ? i18n.hideSubtitles : i18n.showSubtitles}
+          title={i18n.subtitlesOnOff}
         >
           <svg
             width="18"
@@ -309,8 +311,8 @@ export function VideoDuplexScreen({
           onClick={() => {
             duplex.stop()
           }}
-          aria-label="Exit"
-          title="Exit"
+          aria-label={i18n.exit}
+          title={i18n.exit}
         >
           <svg
             width="18"
@@ -336,17 +338,17 @@ export function VideoDuplexScreen({
           className="vd-ctrl-btn"
           type="button"
           disabled={ancillaryDisabled}
-          title="Force Listen (mobile placeholder)"
+          title={i18n.forceListen}
         >
-          Force Listen
+          {i18n.forceListen}
         </button>
         <button
           className="vd-ctrl-btn"
           type="button"
           disabled={ancillaryDisabled}
-          title="HD (mobile placeholder)"
+          title={i18n.hd}
         >
-          HD
+          {i18n.hd}
         </button>
         <button
           className={['vd-ctrl-btn vd-start', start.live ? 'live' : '']

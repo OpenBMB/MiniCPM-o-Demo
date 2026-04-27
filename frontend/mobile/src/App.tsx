@@ -17,6 +17,8 @@ import {
   copyToClipboard,
   saveSessionComment,
 } from './shared/share-helpers'
+import { I18nContext, useI18n, detectLang, persistLang, t as getT } from './i18n'
+import type { Lang, Translations } from './i18n'
 import './App.css'
 
 // Static AudioWorklet module used by the mobile turn-based recorder.
@@ -262,22 +264,22 @@ type ChatSession = {
   messages: ConversationEntry[]
 }
 
-function deriveSessionTitle(messages: ConversationEntry[]): string {
+function deriveSessionTitle(messages: ConversationEntry[], tr: Translations): string {
   for (const m of messages) {
     if (m.role !== 'user') continue
     if (m.kind === 'text' && m.text.trim()) {
-      const t = m.text.trim().replace(/\s+/g, ' ')
-      return t.length > 28 ? `${t.slice(0, 28)}…` : t
+      const txt = m.text.trim().replace(/\s+/g, ' ')
+      return txt.length > 28 ? `${txt.slice(0, 28)}…` : txt
     }
-    if (m.kind === 'voice') return '语音对话'
+    if (m.kind === 'voice') return tr.sessionTitle_voice
     if (m.kind === 'text' && m.attachments && m.attachments.length > 0) {
       const a = m.attachments[0]
-      if (a.kind === 'image') return '图片对话'
-      if (a.kind === 'audio') return '音频对话'
-      if (a.kind === 'video') return '视频对话'
+      if (a.kind === 'image') return tr.sessionTitle_image
+      if (a.kind === 'audio') return tr.sessionTitle_audio
+      if (a.kind === 'video') return tr.sessionTitle_video
     }
   }
-  return '新对话'
+  return tr.newChat
 }
 
 function stripBlobUrls(messages: ConversationEntry[]): ConversationEntry[] {
@@ -415,7 +417,7 @@ async function idbGetAllSessions(): Promise<ChatSession[]> {
             .filter((s) => s && typeof s.id === 'string' && Array.isArray(s.messages))
             .map((s) => ({
               id: s.id,
-              title: s.title || '新对话',
+              title: s.title || 'New Chat',
               createdAt: Number(s.createdAt) || Date.now(),
               updatedAt: Number(s.updatedAt) || Number(s.createdAt) || Date.now(),
               messages: rehydrateMessages(s.messages),
@@ -525,10 +527,10 @@ async function idbClearAll(): Promise<void> {
   }
 }
 
-function formatRelativeTime(ts: number): string {
+function formatRelativeTime(ts: number, tr: Translations): string {
   const diff = Date.now() - ts
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 60_000) return tr.justNow
+  if (diff < 3_600_000) return tr.minutesAgo(Math.floor(diff / 60_000))
   const today = new Date()
   const d = new Date(ts)
   if (
@@ -547,7 +549,7 @@ function formatRelativeTime(ts: number): string {
     yesterday.getMonth() === d.getMonth() &&
     yesterday.getDate() === d.getDate()
   ) {
-    return '昨天'
+    return tr.yesterday
   }
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
@@ -568,12 +570,12 @@ function getPresetModeForScreen(screen: Screen): PresetMode {
   return screen === 'audio-duplex' ? 'audio_duplex' : 'omni'
 }
 
-function getPresetModeLabel(mode: PresetMode): string {
+function getPresetModeLabel(mode: PresetMode, tr: Translations): string {
   if (mode === 'turnbased') {
-    return 'Turn-based'
+    return tr.turnBased
   }
 
-  return mode === 'audio_duplex' ? '音频双工' : '视频双工'
+  return mode === 'audio_duplex' ? tr.audioDuplex : tr.videoDuplex
 }
 
 function getLengthPenaltyForMode(
@@ -589,11 +591,11 @@ function getLengthPenaltyForMode(
     : settings.videoDuplexLengthPenalty
 }
 
-function summarizePrompt(prompt: string): string {
+function summarizePrompt(prompt: string, tr: Translations): string {
   const compact = prompt.replace(/\s+/g, ' ').trim()
 
   if (!compact) {
-    return '未设置'
+    return tr.notSet
   }
 
   return compact.length > 48 ? `${compact.slice(0, 48)}...` : compact
@@ -634,11 +636,11 @@ function extractPromptFromPreset(preset: PresetMetadata): string {
   return textParts.join('\n\n').trim()
 }
 
-function extractRefAudioFromPreset(preset: PresetMetadata): RefAudioState {
+function extractRefAudioFromPreset(preset: PresetMetadata, tr: Translations): RefAudioState {
   if (preset.ref_audio?.data) {
     return {
       source: 'preset',
-      name: preset.ref_audio.name || '预设参考音频',
+      name: preset.ref_audio.name || tr.presetRefAudio,
       duration: preset.ref_audio.duration || 0,
       base64: preset.ref_audio.data,
     }
@@ -654,7 +656,7 @@ function extractRefAudioFromPreset(preset: PresetMetadata): RefAudioState {
   if (systemAudio?.data) {
     return {
       source: 'preset',
-      name: systemAudio.name || '预设参考音频',
+      name: systemAudio.name || tr.presetRefAudio,
       duration: systemAudio.duration || 0,
       base64: systemAudio.data,
     }
@@ -1431,12 +1433,6 @@ const ATTACHMENT_SIZE_LIMIT_BYTES: Record<'image' | 'audio' | 'video', number> =
 // the model starts producing garbage / off-topic replies.
 const VIDEO_DURATION_LIMIT_SECONDS = 60
 
-const ATTACHMENT_KIND_LABEL: Record<'image' | 'audio' | 'video', string> = {
-  image: '图片',
-  audio: '音频',
-  video: '视频',
-}
-
 function formatMiB(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
@@ -1444,21 +1440,20 @@ function formatMiB(bytes: number): string {
 function checkAttachmentSize(
   file: File,
   kind: 'image' | 'audio' | 'video',
+  tr: Translations,
 ): string | null {
   const limit = ATTACHMENT_SIZE_LIMIT_BYTES[kind]
   if (file.size <= limit) return null
-  const label = ATTACHMENT_KIND_LABEL[kind]
-  return `${label}过大（${formatMiB(file.size)}），最大支持 ${formatMiB(limit)}。请重新选择。`
+  const label = kind === 'image' ? tr.imageLabel : kind === 'audio' ? tr.audioLabel : tr.videoLabel
+  return tr.fileTooLarge(label, formatMiB(file.size), formatMiB(limit))
 }
 
-function checkVideoDuration(att: Attachment): string | null {
+function checkVideoDuration(att: Attachment, tr: Translations): string | null {
   if (att.kind !== 'video') return null
   const d = att.duration
-  // duration may legitimately be undefined / 0 / Infinity (e.g. some
-  // streaming containers). Only reject when we're confident it overruns.
   if (typeof d !== 'number' || !Number.isFinite(d) || d <= 0) return null
   if (d <= VIDEO_DURATION_LIMIT_SECONDS) return null
-  return `视频时长 ${d.toFixed(1)} 秒，最大支持 ${VIDEO_DURATION_LIMIT_SECONDS} 秒。请裁剪后再发送。`
+  return tr.videoTooLong(Math.round(d * 10) / 10, VIDEO_DURATION_LIMIT_SECONDS)
 }
 
 async function mediaFileToAttachment(
@@ -1697,9 +1692,12 @@ type AudioPlayPillProps = {
 function AudioPlayPill({
   url,
   className,
-  playLabel = '播放',
-  pauseLabel = '暂停',
+  playLabel: playLabelProp,
+  pauseLabel: pauseLabelProp,
 }: AudioPlayPillProps) {
+  const { t: i18n } = useI18n()
+  const playLabel = playLabelProp ?? i18n.play
+  const pauseLabel = pauseLabelProp ?? i18n.pause
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
 
@@ -1810,6 +1808,7 @@ function MessageBubble({
   onRegenerate,
   queueHint,
 }: MessageBubbleProps) {
+  const { t: i18n } = useI18n()
   if (entry.kind === 'pending') {
     return (
       <div className="msg assistant pending">
@@ -1873,7 +1872,7 @@ function MessageBubble({
       ) : null}
       {entry.text ? <div className="msg-text">{entry.text}</div> : null}
       {isAssistant && entry.interrupted ? (
-        <div className="msg-interrupted">已中断</div>
+        <div className="msg-interrupted">{i18n.interrupted}</div>
       ) : null}
       {showActions ? (
         <div className="msg-actions">
@@ -1883,7 +1882,7 @@ function MessageBubble({
               className="msg-action is-playing"
               type="button"
               onClick={onStopStreamAudio}
-              aria-label="停止播放"
+              aria-label={i18n.stopPlayback}
             >
               <PlayingBarsIcon className="app-icon app-icon-md" />
             </button>
@@ -1896,7 +1895,7 @@ function MessageBubble({
               type="button"
               onClick={onRegenerate}
               disabled={!canRegenerate || !onRegenerate}
-              aria-label="重新生成"
+              aria-label={i18n.regenerate}
             >
               <RefreshIcon className="app-icon app-icon-md" />
             </button>
@@ -1908,6 +1907,7 @@ function MessageBubble({
 }
 
 function AssistantPlayButton({ url }: { url: string | null }) {
+  const { t: i18n } = useI18n()
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
 
@@ -1966,7 +1966,7 @@ function AssistantPlayButton({ url }: { url: string | null }) {
       type="button"
       onClick={handleClick}
       disabled={disabled}
-      aria-label={isPlaying ? '暂停播放' : '朗读'}
+      aria-label={isPlaying ? i18n.stopPlayback : i18n.readAloud}
     >
       {isPlaying
         ? <PlayingBarsIcon className="app-icon app-icon-md" />
@@ -1977,6 +1977,7 @@ function AssistantPlayButton({ url }: { url: string | null }) {
 }
 
 function CopyButton({ text }: { text: string }) {
+  const { t: i18n } = useI18n()
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -2016,7 +2017,7 @@ function CopyButton({ text }: { text: string }) {
       onClick={() => {
         void handleClick()
       }}
-      aria-label={copied ? '已复制' : '复制'}
+      aria-label={copied ? i18n.copied : i18n.copy}
     >
       <CopyIcon className="app-icon app-icon-md" />
     </button>
@@ -2024,6 +2025,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function RecordingOverlay({ willCancel }: { willCancel: boolean }) {
+  const { t: i18n } = useI18n()
   return (
     <div
       className={['recording-overlay', willCancel ? 'will-cancel' : ''].filter(Boolean).join(' ')}
@@ -2033,7 +2035,7 @@ function RecordingOverlay({ willCancel }: { willCancel: boolean }) {
       <div className="recording-overlay-bg" aria-hidden="true" />
       <div className="recording-overlay-inner">
         <div className="recording-overlay-text">
-          {willCancel ? '松手取消' : '松手发送，上移取消'}
+          {willCancel ? i18n.cancel : i18n.releaseToCancel}
         </div>
         <div className="recording-waveform" aria-hidden="true">
           {Array.from({ length: 28 }).map((_, i) => (
@@ -2068,35 +2070,36 @@ function SettingsSummary({
   turnStreamingEnabled,
   onOpen,
 }: SettingsSummaryProps) {
+  const { t: i18n } = useI18n()
   return (
     <div className="settings-summary-card">
       <div className="settings-summary-head">
-        <div className="settings-summary-title">当前参数</div>
+        <div className="settings-summary-title">{i18n.currentParams}</div>
         <button className="settings-link-button" type="button" onClick={onOpen}>
           <SettingsIcon className="app-icon app-icon-sm" />
-          <span>设置</span>
+          <span>{i18n.settings}</span>
         </button>
       </div>
       <div className="settings-chip-row">
         <span className="settings-chip">{modeLabel}</span>
-        <span className="settings-chip">Preset: {presetName}</span>
+        <span className="settings-chip">{i18n.preset}: {presetName}</span>
         <span className="settings-chip">
-          Ref: {refAudio.base64 ? refAudio.name : '未设置'}
+          Ref: {refAudio.base64 ? refAudio.name : i18n.notSet}
         </span>
         <span className="settings-chip">Len: {lengthPenalty.toFixed(2)}</span>
         {typeof maxNewTokens === 'number' ? (
           <span className="settings-chip">Tokens: {maxNewTokens}</span>
         ) : null}
         {typeof turnTtsEnabled === 'boolean' ? (
-          <span className="settings-chip">{turnTtsEnabled ? '语音回复开' : '语音回复关'}</span>
+          <span className="settings-chip">{i18n.voiceReply} {turnTtsEnabled ? i18n.on : i18n.off}</span>
         ) : null}
         {typeof turnStreamingEnabled === 'boolean' ? (
           <span className="settings-chip">
-            {turnStreamingEnabled ? '流式输出开' : '流式输出关'}
+            {i18n.streamingOutput} {turnStreamingEnabled ? i18n.on : i18n.off}
           </span>
         ) : null}
       </div>
-      <div className="settings-summary-prompt">{summarizePrompt(systemPrompt)}</div>
+      <div className="settings-summary-prompt">{summarizePrompt(systemPrompt, i18n)}</div>
     </div>
   )
 }
@@ -2160,6 +2163,7 @@ function SettingsSheet({
   onPlayRefAudio,
   onToggleRecordRefAudio,
 }: SettingsSheetProps) {
+  const { lang, setLang: onSetLang, t: i18n } = useI18n()
   if (!open) {
     return null
   }
@@ -2174,7 +2178,7 @@ function SettingsSheet({
       >
         <div className="settings-sheet-head">
           <div>
-            <div className="settings-sheet-title">设置</div>
+            <div className="settings-sheet-title">{i18n.settings}</div>
             <div className="settings-sheet-subtitle">{activeLabel}</div>
           </div>
           <button className="settings-close-button" type="button" onClick={onClose}>
@@ -2183,7 +2187,7 @@ function SettingsSheet({
         </div>
 
         <div className="settings-section">
-          <div className="settings-section-title">Preset</div>
+          <div className="settings-section-title">{i18n.preset}</div>
           <div className="preset-chip-row">
             {activePresets.map((preset) => (
               <button
@@ -2217,7 +2221,7 @@ function SettingsSheet({
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault()
-                  if (window.confirm(`删除预设"${preset.name}"？`)) {
+                  if (window.confirm(i18n.deletePresetConfirm(preset.name))) {
                     onDeleteUserPreset(preset.id)
                   }
                 }}
@@ -2230,24 +2234,24 @@ function SettingsSheet({
               type="button"
               onClick={onSaveAsPreset}
             >
-              + 保存当前
+              {i18n.saveCurrentPreset}
             </button>
           </div>
           {activePresets.length === 0 && activeUserPresets.length === 0 && (
             <div className="settings-empty-copy" style={{ marginTop: 4 }}>
-              暂无预设，点击"+ 保存当前"创建。
+              {i18n.noPresetsYet}
             </div>
           )}
         </div>
 
         <div className="settings-section">
-          <div className="settings-section-title">参考音频</div>
+          <div className="settings-section-title">{i18n.refAudio}</div>
           <div className="ref-audio-card">
             <div className="ref-audio-title">
-              {activeSettings.refAudio.base64 ? activeSettings.refAudio.name : '未设置参考音频'}
+              {activeSettings.refAudio.base64 ? activeSettings.refAudio.name : i18n.refAudioNotSet}
             </div>
             <div className="ref-audio-meta">
-              来源：{activeSettings.refAudio.source}
+              {i18n.refAudioSource}{activeSettings.refAudio.source}
               {activeSettings.refAudio.duration
                 ? ` · ${activeSettings.refAudio.duration.toFixed(1)}s`
                 : ''}
@@ -2259,14 +2263,14 @@ function SettingsSheet({
                 onClick={onUseDefaultRefAudio}
                 disabled={!defaultRefAudio?.base64}
               >
-                默认
+                {i18n.default_}
               </button>
               <button
                 className="secondary-btn compact"
                 type="button"
                 onClick={onUploadRefAudio}
               >
-                上传
+                {i18n.upload}
               </button>
               <button
                 className={`secondary-btn compact${refAudioRecording ? ' ref-audio-recording-active' : ''}`}
@@ -2276,10 +2280,10 @@ function SettingsSheet({
                 {refAudioRecording ? (
                   <>
                     <span className="rec-dot" />
-                    停止录制
+                    {i18n.stopRecording}
                   </>
                 ) : (
-                  '录制'
+                  i18n.record
                 )}
               </button>
               <button
@@ -2288,14 +2292,14 @@ function SettingsSheet({
                 onClick={onPlayRefAudio}
                 disabled={!activeSettings.refAudio.base64}
               >
-                播放
+                {i18n.play}
               </button>
               <button
                 className="secondary-btn compact"
                 type="button"
                 onClick={onClearRefAudio}
               >
-                清空
+                {i18n.clear}
               </button>
             </div>
           </div>
@@ -2303,7 +2307,7 @@ function SettingsSheet({
 
         <div className="settings-section">
           <label className="settings-section-title" htmlFor="settings-system-prompt">
-            System Prompt
+            {i18n.systemPrompt}
           </label>
           <textarea
             id="settings-system-prompt"
@@ -2316,10 +2320,10 @@ function SettingsSheet({
         </div>
 
         <div className="settings-section">
-          <div className="settings-section-title">参数</div>
+          <div className="settings-section-title">{i18n.params}</div>
           <div className="settings-grid">
             <label className="settings-field">
-              <span>Length Penalty</span>
+              <span>{i18n.lengthPenalty}</span>
               <input
                 className="settings-input"
                 type="number"
@@ -2335,7 +2339,7 @@ function SettingsSheet({
 
             {activeMode === 'turnbased' ? (
               <label className="settings-field">
-                <span>Max Tokens</span>
+                <span>{i18n.maxTokens}</span>
                 <input
                   className="settings-input"
                   type="number"
@@ -2361,7 +2365,7 @@ function SettingsSheet({
                     onTurnTtsEnabledChange(event.target.checked)
                   }}
                 />
-                <span>Turn-based 语音回复</span>
+                <span>{i18n.turnBased} {i18n.voiceReply}</span>
               </label>
               <label className="settings-toggle">
                 <input
@@ -2371,10 +2375,30 @@ function SettingsSheet({
                     onTurnStreamingEnabledChange(event.target.checked)
                   }}
                 />
-                <span>Turn-based 流式输出</span>
+                <span>{i18n.turnBased} {i18n.streamingOutput}</span>
               </label>
             </>
           ) : null}
+
+          <label className="settings-toggle">
+            <span>{lang === 'zh' ? '语言' : 'Language'}</span>
+            <span className="settings-lang-toggle">
+              <button
+                className={`lang-chip${lang === 'zh' ? ' active' : ''}`}
+                type="button"
+                onClick={() => onSetLang('zh')}
+              >
+                中文
+              </button>
+              <button
+                className={`lang-chip${lang === 'en' ? ' active' : ''}`}
+                type="button"
+                onClick={() => onSetLang('en')}
+              >
+                En
+              </button>
+            </span>
+          </label>
         </div>
       </div>
     </div>
@@ -2419,6 +2443,7 @@ function HistoryDrawer({
   onOpenSettings,
   onOpenShare,
 }: HistoryDrawerProps) {
+  const { t: i18n } = useI18n()
   const sorted = sessions.slice().sort((a, b) => b.updatedAt - a.updatedAt)
   return (
     <div
@@ -2426,7 +2451,7 @@ function HistoryDrawer({
       aria-hidden={!open}
     >
       <div className="history-drawer-backdrop" onClick={onClose} />
-      <aside className="history-drawer" role="dialog" aria-label="历史会话">
+      <aside className="history-drawer" role="dialog" aria-label={i18n.historySessions}>
         <div className="history-drawer-top">
           <button
             type="button"
@@ -2434,13 +2459,13 @@ function HistoryDrawer({
             onClick={onNewSession}
           >
             <EditSquareIcon className="app-icon app-icon-md" />
-            <span>新建对话</span>
+            <span>{i18n.createNewChat}</span>
           </button>
         </div>
 
         <div className="history-drawer-list">
           {sorted.length === 0 ? (
-            <div className="history-drawer-empty">还没有历史对话</div>
+            <div className="history-drawer-empty">{i18n.noHistoryYet}</div>
           ) : (
             sorted.map((s) => (
               <div
@@ -2459,7 +2484,7 @@ function HistoryDrawer({
                 >
                   <span className="history-drawer-item-title">{s.title}</span>
                   <span className="history-drawer-item-time">
-                    {formatRelativeTime(s.updatedAt)}
+                    {formatRelativeTime(s.updatedAt, i18n)}
                   </span>
                 </button>
                 <button
@@ -2467,11 +2492,11 @@ function HistoryDrawer({
                   className="history-drawer-item-delete"
                   onClick={(e) => {
                     e.stopPropagation()
-                    if (window.confirm(`删除「${s.title}」？此操作不可撤销。`)) {
+                    if (window.confirm(i18n.deleteSessionConfirm(s.title))) {
                       onDelete(s.id)
                     }
                   }}
-                  aria-label="删除"
+                  aria-label={i18n.delete}
                 >
                   <TrashIcon className="app-icon app-icon-sm" />
                 </button>
@@ -2486,10 +2511,10 @@ function HistoryDrawer({
             className="history-drawer-bottom-item"
             onClick={onOpenShare}
             disabled={!shareReady}
-            title={shareReady ? '分享当前对话' : '当前对话还没有后端记录可分享'}
+            title={shareReady ? i18n.shareChat : i18n.noBackendRecord}
           >
             <ShareIcon className="app-icon app-icon-md" />
-            <span>分享对话</span>
+            <span>{i18n.shareTitle}</span>
           </button>
           <button
             type="button"
@@ -2497,23 +2522,21 @@ function HistoryDrawer({
             onClick={onOpenSettings}
           >
             <SettingsIcon className="app-icon app-icon-md" />
-            <span>设置</span>
+            <span>{i18n.settings}</span>
           </button>
           <button
             type="button"
             className="history-drawer-bottom-item is-danger"
             onClick={() => {
               if (
-                window.confirm(
-                  '确定清空本机所有对话和媒体？此操作不可撤销，相当于该手机从未使用过本应用。',
-                )
+                window.confirm(i18n.clearAllDataConfirm)
               ) {
                 onClearAll()
               }
             }}
           >
             <TrashIcon className="app-icon app-icon-md" />
-            <span>清空全部数据</span>
+            <span>{i18n.clearAllData}</span>
           </button>
         </div>
       </aside>
@@ -2546,35 +2569,34 @@ function ShareDialog({
   onCancel,
   onSubmit,
 }: ShareDialogProps) {
+  const { t: i18n } = useI18n()
   if (!open) return null
   return (
     <div
       className="share-dialog-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="分享对话"
+      aria-label={i18n.shareTitle}
       onClick={(e) => {
         if (e.target === e.currentTarget && !submitting) onCancel()
       }}
     >
       <div className="share-dialog">
-        <div className="share-dialog-title">分享对话</div>
+        <div className="share-dialog-title">{i18n.shareTitle}</div>
         <div className="share-dialog-hint">
-          可以加一句评语（可选），帮助回看时记住这是哪段对话。
-          <br />
-          点击「分享」后，链接会复制到剪贴板。
+          {i18n.shareHint}
         </div>
         <div className="share-dialog-meta">
-          <span className="share-dialog-meta-label">链接</span>
+          <span className="share-dialog-meta-label">{i18n.linkLabel}</span>
           <span className="share-dialog-meta-value">{shareUrl || '—'}</span>
         </div>
         <div className="share-dialog-meta">
-          <span className="share-dialog-meta-label">Session</span>
+          <span className="share-dialog-meta-label">{i18n.sessionLabel}</span>
           <span className="share-dialog-meta-value">{sessionId}</span>
         </div>
         <textarea
           className="share-dialog-input"
-          placeholder="评语（可选，最多 2000 字）"
+          placeholder={i18n.commentPlaceholder}
           maxLength={2000}
           value={comment}
           disabled={submitting}
@@ -2591,7 +2613,7 @@ function ShareDialog({
             disabled={submitting}
             onClick={onCancel}
           >
-            {successInfo ? '关闭' : '取消'}
+            {successInfo ? i18n.close : i18n.cancel}
           </button>
           {!successInfo ? (
             <button
@@ -2600,7 +2622,7 @@ function ShareDialog({
               disabled={submitting || !sessionId}
               onClick={onSubmit}
             >
-              {submitting ? '分享中…' : '分享'}
+              {submitting ? i18n.sharing : i18n.share}
             </button>
           ) : null}
         </div>
@@ -2610,6 +2632,10 @@ function ShareDialog({
 }
 
 function App() {
+  const [lang, setLangState] = useState<Lang>(detectLang)
+  const i18n = getT(lang)
+  const setLang = (l: Lang) => { setLangState(l); persistLang(l) }
+
   const [screen, setScreen] = useState<Screen>('turn')
   const [composeMode, setComposeMode] = useState<'voice' | 'text'>('voice')
   // Release the mic when the user leaves voice mode so the OS recording
@@ -2738,7 +2764,7 @@ function App() {
   })
   const [serviceState, setServiceState] = useState<ServiceState>({
     phase: 'loading',
-    summary: 'Checking backend',
+    summary: '',
     detail: 'Polling /status...',
   })
   // Lightweight queue indicator for the turn-based screen. Mirrors the desktop
@@ -2803,7 +2829,7 @@ function App() {
   const activeModeSettings = settings[activePresetMode]
   const activeModePresets = presetsByMode[activePresetMode]
   const activeLengthPenalty = getLengthPenaltyForMode(settings, activePresetMode)
-  const activeModeLabel = getPresetModeLabel(activePresetMode)
+  const activeModeLabel = getPresetModeLabel(activePresetMode, i18n)
 
   // Best backend session id available for sharing — prefer the most recent
   // assistant reply that carried one (so it survives reload), fall back to
@@ -2837,7 +2863,7 @@ function App() {
   function handleOpenShare() {
     const sid = getShareSessionId()
     if (!sid) {
-      setRecordError('当前对话还没有产生后端记录，先发条消息试试。')
+      setRecordError(i18n.noBackendRecord)
       return
     }
     setShareSessionId(sid)
@@ -2869,11 +2895,11 @@ function App() {
       const ok = await copyToClipboard(url)
       setShareSuccess(
         ok
-          ? `已复制到剪贴板：\n${url}`
-          : `分享链接（请手动复制）：\n${url}`,
+          ? i18n.copiedToClipboard(url)
+          : i18n.copyManually(url),
       )
     } catch (err) {
-      setShareError(`分享失败：${getErrorMessage(err)}`)
+      setShareError(i18n.shareFailed(getErrorMessage(err)))
     } finally {
       setShareSubmitting(false)
     }
@@ -2881,7 +2907,7 @@ function App() {
   const audioPresetName =
     presetsByMode.audio_duplex.find(
       (preset) => preset.id === settings.audio_duplex.presetId,
-    )?.name ?? '自定义'
+    )?.name ?? i18n.custom
 
   useEffect(() => {
     messagesRef.current = messages
@@ -2950,14 +2976,14 @@ function App() {
           ...prev[idx],
           messages,
           updatedAt: now,
-          title: '新对话',
+          title: i18n.newChat,
         }
         const next = prev.slice()
         next[idx] = updated
         void idbPutSession(updated)
         return next
       }
-      const title = deriveSessionTitle(messages)
+      const title = deriveSessionTitle(messages, i18n)
       if (idx === -1) {
         const created: ChatSession = {
           id: activeSessionId,
@@ -3019,7 +3045,7 @@ function App() {
 
         setServiceState({
           phase: 'ready',
-          summary: data.gateway_healthy ? 'Backend ready' : 'Gateway degraded',
+          summary: data.gateway_healthy ? i18n.backendReady : i18n.gatewayDegraded,
           detail: `${data.idle_workers}/${data.total_workers} idle, queue ${data.queue_length}, offline ${data.offline_workers}`,
         })
       } catch (error) {
@@ -3029,7 +3055,7 @@ function App() {
 
         setServiceState({
           phase: 'error',
-          summary: 'Backend unreachable',
+          summary: i18n.backendUnreachable,
           detail: getErrorMessage(error),
         })
       }
@@ -3085,9 +3111,7 @@ function App() {
         // implementation in static/turnbased.html.
         const elapsedSec = Math.floor((Date.now() - startedAt) / 1000)
         const eta = Math.max(1, data.queue_length * 15 - elapsedSec)
-        setQueueHint(
-          `排队中：前面 ${data.queue_length} 人，预计 ~${eta}s`,
-        )
+        setQueueHint(i18n.queueHint(data.queue_length, eta))
       } catch {
         // Silent — main /status poller surfaces gateway-down state.
       }
@@ -3198,7 +3222,7 @@ function App() {
         const nextDefaultRefAudio: RefAudioState | null = defaultRefPayload?.base64
           ? {
               source: 'default',
-              name: defaultRefPayload.name || '默认参考音频',
+              name: defaultRefPayload.name || i18n.defaultRefAudio,
               duration: defaultRefPayload.duration || 0,
               base64: defaultRefPayload.base64,
             }
@@ -3255,7 +3279,7 @@ function App() {
               continue
             }
 
-            const extractedRefAudio = extractRefAudioFromPreset(firstPreset)
+            const extractedRefAudio = extractRefAudioFromPreset(firstPreset, i18n)
 
             nextSettings[mode] = buildModeSettings(nextSettings[mode], {
               presetId: firstPreset.id,
@@ -3413,7 +3437,7 @@ function App() {
 
     try {
       const loadedPreset = await ensurePresetLoaded(mode, preset)
-      const extractedRefAudio = extractRefAudioFromPreset(loadedPreset)
+      const extractedRefAudio = extractRefAudioFromPreset(loadedPreset, i18n)
 
       updateModeSettings(mode, {
         presetId: loadedPreset.id,
@@ -3424,7 +3448,7 @@ function App() {
           : cloneRefAudio(EMPTY_REF_AUDIO),
       })
     } catch (error) {
-      reportSettingsMessage(`加载 preset 失败：${getErrorMessage(error)}`)
+      reportSettingsMessage(i18n.requestFailedDetail(getErrorMessage(error)))
     }
   }
 
@@ -3432,7 +3456,7 @@ function App() {
 
   function handleSaveCurrentAsPreset(mode: PresetMode) {
     const modeSettings = settings[mode]
-    const name = window.prompt('为这个预设起个名字', '')?.trim()
+    const name = window.prompt(i18n.presetNamePrompt, '')?.trim()
     if (!name) return
     const now = Date.now()
     const preset: UserPreset = {
@@ -3447,7 +3471,7 @@ function App() {
     setUserPresets((prev) => [...prev, preset])
     void idbPutUserPreset(preset)
     updateModeSettings(mode, { presetId: `user:${preset.id}` })
-    reportSettingsMessage(`已保存预设"${name}"`)
+    reportSettingsMessage(i18n.presetSaved(name))
   }
 
   function handleSelectUserPreset(mode: PresetMode, presetId: string) {
@@ -3480,7 +3504,7 @@ function App() {
 
   function handleUseDefaultRefAudio(mode: PresetMode) {
     if (!defaultRefAudio?.base64) {
-      reportSettingsMessage('当前没有可用的默认参考音频。')
+      reportSettingsMessage(i18n.refAudioNoDefault)
       return
     }
 
@@ -3535,7 +3559,7 @@ function App() {
         URL.revokeObjectURL(durationAudio.src)
       }
     } catch (error) {
-      reportSettingsMessage(`处理参考音频失败：${getErrorMessage(error)}`)
+      reportSettingsMessage(i18n.refAudioProcessFailed(getErrorMessage(error)))
     } finally {
       event.target.value = ''
     }
@@ -3562,13 +3586,13 @@ function App() {
       refRecStreamRef.current = null
 
       if (chunks.length === 0) {
-        reportSettingsMessage('录制时间太短，请重试。')
+        reportSettingsMessage(i18n.refAudioRecordTooShort)
         return
       }
 
       const merged = concatFloat32(chunks)
       if (merged.length === 0) {
-        reportSettingsMessage('录制失败：没有采集到音频。')
+        reportSettingsMessage(i18n.refAudioRecordFailed)
         return
       }
 
@@ -3580,23 +3604,23 @@ function App() {
         presetId: null,
         refAudio: {
           source: 'upload',
-          name: `录制 ${new Date().toLocaleTimeString()}`,
+          name: i18n.refAudioRecordDuration(new Date().toLocaleTimeString()),
           duration: Math.round(durationSec * 10) / 10,
           base64,
         },
       })
-      reportSettingsMessage(`已录制 ${durationSec.toFixed(1)}s 参考音频`)
+      reportSettingsMessage(i18n.refAudioRecorded(durationSec.toFixed(1)))
       return
     }
 
     // ── Start recording ──
     if (!navigator.mediaDevices?.getUserMedia) {
-      reportSettingsMessage('当前环境不支持麦克风。')
+      reportSettingsMessage(i18n.refAudioMicUnsupported)
       return
     }
     const AudioContextCtor = getAudioContextCtor()
     if (!AudioContextCtor) {
-      reportSettingsMessage('当前浏览器不支持录音。')
+      reportSettingsMessage(i18n.refAudioRecordUnsupported)
       return
     }
 
@@ -3640,7 +3664,7 @@ function App() {
       refRecStartRef.current = performance.now()
       setRefAudioRecording(true)
     } catch (err) {
-      reportSettingsMessage(`无法开始录制：${getErrorMessage(err)}`)
+      reportSettingsMessage(i18n.refAudioRecordError(getErrorMessage(err)))
     }
   }
 
@@ -3729,7 +3753,7 @@ function App() {
 
   function handlePlayActiveRefAudio() {
     if (!activeModeSettings.refAudio.base64) {
-      reportSettingsMessage('当前没有可播放的参考音频。')
+      reportSettingsMessage(i18n.refAudioNoPlayable)
       return
     }
 
@@ -4077,11 +4101,11 @@ function App() {
     const now = Date.now()
     setSessions((prev) => {
       const idx = prev.findIndex((s) => s.id === sessionId)
-      const title = deriveSessionTitle(finalMessages)
+      const title = deriveSessionTitle(finalMessages, i18n)
       if (idx === -1) {
         const created: ChatSession = {
           id: sessionId,
-          title: title || '新对话',
+          title: title || i18n.newChat,
           createdAt: now,
           updatedAt: now,
           messages: finalMessages,
@@ -4155,7 +4179,7 @@ function App() {
       id: createId('pending'),
       role: 'assistant',
       kind: 'pending',
-      text: '正在思考',
+      text: i18n.thinking,
     })
     setIsGenerating(true)
 
@@ -4241,7 +4265,7 @@ function App() {
       }
 
       if (!payload) {
-        throw lastError ?? new Error('请求失败')
+        throw lastError ?? new Error(i18n.requestFailed)
       }
 
       let assistantAudioUrl: string | null = null
@@ -4262,7 +4286,7 @@ function App() {
         id: createId('assistant'),
         role: 'assistant',
         kind: 'assistant',
-        text: payload.text?.trim() || '(空回复)',
+        text: payload.text?.trim() || i18n.emptyReply,
         audioPreviewUrl: assistantAudioUrl,
         // Keep the raw bytes so we can rebuild the Blob URL after a
         // page reload (Blob URLs themselves don't survive).
@@ -4286,8 +4310,8 @@ function App() {
     } catch (error) {
       const errorText =
         controller.signal.aborted
-          ? '已停止当前回复。'
-          : `请求失败：${getErrorMessage(error)}`
+          ? i18n.stoppedReply
+          : i18n.requestFailedDetail(getErrorMessage(error))
 
       if (isStillActive() && !controller.signal.aborted) {
         setMessages([
@@ -4326,7 +4350,7 @@ function App() {
       id: pendingId,
       role: 'assistant',
       kind: 'pending',
-      text: '正在生成…',
+      text: i18n.generating,
     })
     setIsGenerating(true)
 
@@ -4493,7 +4517,7 @@ function App() {
       } catch (error) {
         // Constructor itself blew up (rare). Treat as a retryable failure
         // until MAX_ATTEMPTS is reached.
-        scheduleRetryOrFail(attempt, `连接失败：${getErrorMessage(error)}`)
+        scheduleRetryOrFail(attempt, i18n.connectFailed(getErrorMessage(error)))
         return
       }
 
@@ -4505,7 +4529,7 @@ function App() {
           ws.send(requestBody)
         } catch (error) {
           finalize(null, {
-            errorMessage: `发送失败：${getErrorMessage(error)}`,
+            errorMessage: i18n.sendFailed(getErrorMessage(error)),
             cutPlayback: true,
           })
           try {
@@ -4571,7 +4595,7 @@ function App() {
 
         if (msg.type === 'done') {
           receivedAnyData = true
-          const finalText = (fullText || msg.text || '').trim() || '(空回复)'
+          const finalText = (fullText || msg.text || '').trim() || i18n.emptyReply
           const recordingSessionId = msg.recording_session_id ?? null
 
           if (recordingSessionId) {
@@ -4602,7 +4626,7 @@ function App() {
           // Backend-reported error: don't retry, surface immediately.
           receivedAnyData = true
           finalize(null, {
-            errorMessage: `请求失败：${msg.error || 'unknown error'}`,
+            errorMessage: i18n.requestFailedDetail(msg.error || 'unknown error'),
             cutPlayback: true,
           })
           try {
@@ -4639,7 +4663,7 @@ function App() {
               id: createId('assistant'),
               role: 'assistant',
               kind: 'assistant',
-              text: fullText.trim() || '已停止当前回复。',
+              text: fullText.trim() || i18n.stoppedReply,
               audioPreviewUrl: null,
               recordingSessionId: null,
             },
@@ -4649,12 +4673,10 @@ function App() {
         }
 
         if (!receivedAnyData) {
-          scheduleRetryOrFail(attempt, 'WebSocket 连接异常')
+          scheduleRetryOrFail(attempt, i18n.wsError)
         } else {
-          // Stream started and then the socket dropped — that's a real
-          // mid-stream failure; surface it instead of silently retrying.
           finalize(null, {
-            errorMessage: '连接已关闭',
+            errorMessage: i18n.wsClosed,
             cutPlayback: true,
           })
         }
@@ -4719,7 +4741,7 @@ function App() {
     f: File,
     kind: 'image' | 'audio' | 'video',
   ): Promise<{ attachment?: Attachment; error?: string }> {
-    const sizeErr = checkAttachmentSize(f, kind)
+    const sizeErr = checkAttachmentSize(f, kind, i18n)
     if (sizeErr) return { error: sizeErr }
     let att: Attachment
     try {
@@ -4729,9 +4751,9 @@ function App() {
           : await mediaFileToAttachment(f, kind)
     } catch (err) {
       console.warn('attach failed', f.name, err)
-      return { error: `附件处理失败：${getErrorMessage(err)}` }
+      return { error: i18n.attachProcessFailed(getErrorMessage(err)) }
     }
-    const durErr = checkVideoDuration(att)
+    const durErr = checkVideoDuration(att, i18n)
     if (durErr) {
       // Drop the half-built attachment; revoke its blob URL so the
       // browser doesn't hold the (large) video in memory.
@@ -4910,7 +4932,7 @@ function App() {
       setMessages(nextMessages)
       await submitConversation(nextMessages)
     } catch (error) {
-      setRecordError(`录音处理失败：${getErrorMessage(error)}`)
+      setRecordError(i18n.recordingFailed(getErrorMessage(error)))
       flushTrace('finalize.error', { err: getErrorMessage(error) })
     } finally {
       setIsPreparingRecording(false)
@@ -4943,7 +4965,7 @@ function App() {
       // small error so the press doesn't silently vanish.
       if (action === 'send' && heldMs >= SILENT_DISCARD_MS) {
         console.warn('[record] long hold but never captured', { heldMs })
-        setRecordError('麦克风还没准备好，请稍后再试。')
+        setRecordError(i18n.micNotReady)
         flushTrace('long-hold-no-capture', { heldMs: Math.round(heldMs) })
       } else {
         flushTrace('short-tap-discard', { heldMs: Math.round(heldMs) })
@@ -5069,7 +5091,7 @@ function App() {
     if (!warm || !audioCaptureCtxRef.current || !mediaStreamRef.current) {
       trace('begin.fail.initFailed', { warm })
       console.warn('[record] mic init failed', { warm })
-      setRecordError('无法开始录音：麦克风初始化失败。')
+      setRecordError(i18n.micInitFailed)
       discardRecordingState()
       flushTrace('mic-init-failed')
       return
@@ -5096,7 +5118,7 @@ function App() {
       console.warn('[record] AudioContext not running after resume', {
         state: ctx.state,
       })
-      setRecordError('音频通道未启动，请重试。')
+      setRecordError(i18n.audioChannelFailed)
       discardRecordingState()
       flushTrace('ctx-not-running', { state: ctx.state })
       return
@@ -5179,9 +5201,10 @@ function App() {
     void sendTextMessage()
   }
 
-  const voiceMainLabel = isRecording ? '松开发送' : '按住说话'
+  const voiceMainLabel = isRecording ? i18n.releaseToSend : i18n.holdToTalk
 
   return (
+    <I18nContext.Provider value={{ lang, setLang, t: i18n }}>
     <div className="mobile-app">
       <input
         ref={refAudioInputRef}
@@ -5292,7 +5315,7 @@ function App() {
               className="topbar-icon-btn"
               type="button"
               onClick={() => setHistoryOpen(true)}
-              aria-label="打开菜单"
+              aria-label={i18n.openMenu}
             >
               <HamburgerIcon className="app-icon app-icon-md" />
             </button>
@@ -5301,8 +5324,8 @@ function App() {
               <div className="topbar-title-main">
                 {sessions.find((s) => s.id === activeSessionId)?.title ||
                   (messages.length > 0
-                    ? deriveSessionTitle(messages)
-                    : '新对话')}
+                    ? deriveSessionTitle(messages, i18n)
+                    : i18n.newChat)}
               </div>
               <div className={`topbar-title-sub ${serviceState.phase}`}>
                 <span className="service-tiny-dot" aria-hidden="true" />
@@ -5316,7 +5339,7 @@ function App() {
                 type="button"
                 onClick={() => duplex.openScreen('audio')}
                 disabled={isGenerating || isRecording || isPreparingRecording}
-                aria-label="进入音频双工"
+                aria-label={i18n.enterAudioDuplex}
               >
                 <PhoneIcon className="app-icon app-icon-md" />
               </button>
@@ -5337,7 +5360,7 @@ function App() {
                   window.location.assign('/mobile-omni/')
                 }}
                 disabled={isGenerating || isRecording || isPreparingRecording}
-                aria-label="进入视频双工"
+                aria-label={i18n.enterVideoDuplex}
               >
                 <VideoCallIcon className="app-icon app-icon-md" />
               </button>
@@ -5403,7 +5426,7 @@ function App() {
                       type="button"
                       className="attach-chip-remove"
                       onClick={() => removePendingAttachment(a.id)}
-                      aria-label="移除附件"
+                      aria-label={i18n.removeAttachment}
                     >
                       ×
                     </button>
@@ -5483,7 +5506,7 @@ function App() {
                 type="button"
                 onClick={() => cameraInputRef.current?.click()}
                 disabled={isGenerating || isPreparingRecording}
-                aria-label="拍照"
+                aria-label={i18n.takePhoto}
               >
                 <CameraSnapIcon className="app-icon app-icon-md" />
               </button>
@@ -5506,7 +5529,7 @@ function App() {
                       }
                     }}
                     className="pill-input"
-                    placeholder="发消息…"
+                    placeholder={i18n.placeholder}
                     rows={1}
                     value={draft}
                     onChange={(event) => {
@@ -5539,7 +5562,7 @@ function App() {
                   onPointerCancel={handleTalkPointerCancel}
                 >
                   <span className="pill-talk-label">
-                    {isRecording ? '说话中…' : voiceMainLabel}
+                    {isRecording ? i18n.speaking : voiceMainLabel}
                   </span>
                 </button>
               )}
@@ -5564,7 +5587,7 @@ function App() {
                     setComposeMode('voice')
                   }
                 }}
-                aria-label={composeMode === 'voice' ? '切换到键盘' : '切换到语音'}
+                aria-label={composeMode === 'voice' ? i18n.switchToKeyboard : i18n.switchToVoice}
               >
                 {composeMode === 'voice' ? (
                   <KeyboardIcon className="app-icon app-icon-md" />
@@ -5578,7 +5601,7 @@ function App() {
                 type="button"
                 onClick={() => setAttachMenuOpen((v) => !v)}
                 disabled={isGenerating || isPreparingRecording}
-                aria-label={attachMenuOpen ? '关闭附件菜单' : '附件'}
+                aria-label={attachMenuOpen ? i18n.closeAttachMenu : i18n.openAttachMenu}
                 aria-expanded={attachMenuOpen}
               >
                 {attachMenuOpen ? (
@@ -5604,7 +5627,7 @@ function App() {
                     void sendTextMessage()
                   }}
                   disabled={!isGenerating && isPreparingRecording}
-                  aria-label={isGenerating ? '停止' : '发送'}
+                  aria-label={isGenerating ? i18n.stopGeneration : i18n.sendMessage}
                 >
                   {isGenerating ? (
                     <StopIcon className="app-icon app-icon-md" />
@@ -5619,7 +5642,7 @@ function App() {
               <div
                 className="attach-drawer"
                 role="dialog"
-                aria-label="选择附件"
+                aria-label={i18n.selectAttachment}
               >
                 <button
                   type="button"
@@ -5632,7 +5655,7 @@ function App() {
                   <span className="attach-drawer-icon attach-drawer-icon-camera">
                     <CameraSnapIcon className="app-icon app-icon-lg" />
                   </span>
-                  <span className="attach-drawer-label">相机</span>
+                  <span className="attach-drawer-label">{i18n.camera}</span>
                 </button>
                 <button
                   type="button"
@@ -5645,7 +5668,7 @@ function App() {
                   <span className="attach-drawer-icon attach-drawer-icon-album">
                     <PhotoIcon className="app-icon app-icon-lg" />
                   </span>
-                  <span className="attach-drawer-label">相册</span>
+                  <span className="attach-drawer-label">{i18n.album}</span>
                 </button>
                 <button
                   type="button"
@@ -5658,7 +5681,7 @@ function App() {
                   <span className="attach-drawer-icon attach-drawer-icon-file">
                     <FileIcon className="app-icon app-icon-lg" />
                   </span>
-                  <span className="attach-drawer-label">文件</span>
+                  <span className="attach-drawer-label">{i18n.files}</span>
                 </button>
                 <button
                   type="button"
@@ -5672,7 +5695,7 @@ function App() {
                   <span className="attach-drawer-icon attach-drawer-icon-phone">
                     <PhoneIcon className="app-icon app-icon-lg" />
                   </span>
-                  <span className="attach-drawer-label">打电话</span>
+                  <span className="attach-drawer-label">{i18n.phoneCall}</span>
                 </button>
               </div>
             ) : null}
@@ -5706,6 +5729,7 @@ function App() {
         />
       )}
     </div>
+    </I18nContext.Provider>
   )
 }
 

@@ -11,6 +11,9 @@
  * ========================================================= */
 
 (function bootstrapMobileOmni() {
+    function _mbT(key, fallback) {
+        return window.I18n?.t?.[key] ?? fallback;
+    }
     const BACK_URL = '/mobile/';
 
     const ICON_BACK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
@@ -34,7 +37,7 @@
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'mobile-back-btn';
-        btn.setAttribute('aria-label', 'Back to mobile turn page');
+        btn.setAttribute('aria-label', _mbT('backToMobile', 'Back to mobile'));
         btn.innerHTML = ICON_BACK;
         const goBack = (e) => {
             if (e) { e.preventDefault(); e.stopPropagation(); }
@@ -159,8 +162,8 @@
         clone.id = 'fullscreenBtn';
         clone.className = btn.className;
         clone.classList.add('visible');
-        clone.setAttribute('title', 'Settings');
-        clone.setAttribute('aria-label', 'Open settings');
+        clone.setAttribute('title', _mbT('settings', 'Settings'));
+        clone.setAttribute('aria-label', _mbT('openSettings', 'Open settings'));
         clone.innerHTML = ICON_GEAR;
         btn.parentNode.replaceChild(clone, btn);
         const open = (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } openSettingsSheet(); };
@@ -194,8 +197,8 @@
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'mb-stage-share-btn';
-        btn.setAttribute('aria-label', '分享通话');
-        btn.title = '分享';
+        btn.setAttribute('aria-label', _mbT('shareCallLabel', 'Share call'));
+        btn.title = _mbT('share', 'Share');
         btn.innerHTML = ICON_SHARE;
         // Inline styles to bypass any specificity / load-order surprises.
         // Mirrors the gear's geometry (.fullscreen-btn): 36x36 at bottom:70
@@ -303,7 +306,7 @@
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'mobile-torch-btn';
-        btn.setAttribute('aria-label', 'Toggle flashlight');
+        btn.setAttribute('aria-label', _mbT('toggleFlashlight', 'Toggle flashlight'));
         btn.innerHTML = ICON_TORCH;
         btn.addEventListener('click', toggleTorch);
         btn.addEventListener('touchend', (e) => { e.preventDefault(); toggleTorch(); }, { passive: false });
@@ -392,88 +395,6 @@
     }
 
     // ========================================================================
-    // (legacy) settings-sheet share injection — kept as an alternate access
-    // point in case the stage button proves problematic again on some
-    // device. injectStageShareButton() is the canonical entry, this is a
-    // backup that re-injects every time .settings-sheet remounts.
-    // ========================================================================
-    let shareDomObserver = null;
-
-    function findSourceShareButton() {
-        return document.querySelector('#save-share-container .ss-btn');
-    }
-
-    function buildShareSection(sourceBtn) {
-        const section = document.createElement('div');
-        section.className = 'settings-section mb-share-section';
-        section.innerHTML = `
-            <div class="settings-section-title">分享</div>
-            <div class="mb-share-row">
-                <button class="secondary-btn compact mb-share-btn" type="button">
-                    <span class="mb-share-icon" aria-hidden="true"></span>
-                    分享通话
-                </button>
-                <span class="mb-share-hint"></span>
-            </div>
-        `;
-        const iconHost = section.querySelector('.mb-share-icon');
-        if (iconHost) iconHost.innerHTML = ICON_SHARE;
-        const btn = section.querySelector('.mb-share-btn');
-        const hint = section.querySelector('.mb-share-hint');
-
-        function syncState() {
-            const disabled = !sourceBtn || !!sourceBtn.disabled;
-            btn.disabled = disabled;
-            hint.textContent = disabled
-                ? '通话开始后可分享'
-                : '上传录制并复制链接，可附评语';
-        }
-        syncState();
-        if (sourceBtn) {
-            new MutationObserver(syncState).observe(sourceBtn, {
-                attributes: true,
-                attributeFilter: ['disabled'],
-            });
-        }
-
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (!sourceBtn || sourceBtn.disabled) return;
-            setTimeout(() => sourceBtn.click(), 0);
-        });
-
-        return section;
-    }
-
-    function injectShareIntoSheet() {
-        const sheet = document.querySelector('.settings-sheet');
-        if (!sheet) return false;
-        if (sheet.querySelector('.mb-share-section')) return true;
-        const sourceBtn = findSourceShareButton();
-        const section = buildShareSection(sourceBtn);
-        const head = sheet.querySelector('.settings-sheet-head');
-        if (head?.nextSibling) {
-            sheet.insertBefore(section, head.nextSibling);
-        } else {
-            sheet.appendChild(section);
-        }
-        return true;
-    }
-
-    function watchForSettingsSheet() {
-        // The React widget mounts/unmounts `.settings-sheet` each open/close
-        // cycle, so we re-inject every time it appears.
-        if (shareDomObserver) return;
-        shareDomObserver = new MutationObserver(() => {
-            injectShareIntoSheet();
-        });
-        shareDomObserver.observe(document.body, { childList: true, subtree: true });
-        // First-shot in case sheet is already mounted.
-        injectShareIntoSheet();
-    }
-
-    // ========================================================================
     // Init
     // ========================================================================
     function init() {
@@ -488,7 +409,6 @@
             watchVideoElement();
             bindPinchZoom();
             injectStageShareButton();
-            watchForSettingsSheet();
         }, 0);
     }
 

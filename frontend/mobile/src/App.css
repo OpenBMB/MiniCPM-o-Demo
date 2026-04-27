@@ -1,7 +1,9 @@
 .mobile-app {
   position: relative;
   width: 100%;
-  min-height: 100dvh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
   background: #fff;
 }
 
@@ -278,13 +280,13 @@
 }
 
 .app-icon-md {
-  width: 18px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
 }
 
 .app-icon-lg {
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
 }
 
 .app-icon-xl {
@@ -1664,6 +1666,34 @@
   color: #111827;
   font-size: 13px;
   font-weight: 700;
+}
+
+.settings-lang-toggle {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.lang-chip {
+  padding: 6px 18px;
+  border-radius: 20px;
+  border: 1px solid #e5e7eb;
+  background: transparent;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.lang-chip.active {
+  background: #1e6fff;
+  color: #fff;
+  border-color: #1e6fff;
+}
+
+.lang-chip:not(.active):active {
+  background: #f3f4f6;
 }
 
 .duplex-screen {
