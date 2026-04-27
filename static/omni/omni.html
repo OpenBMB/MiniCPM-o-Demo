@@ -6,6 +6,7 @@
     <title>MiniCPMO45 Omni Demo</title>
     <link rel="stylesheet" href="/static/duplex/duplex-shared.css">
     <link rel="stylesheet" href="/static/omni/omni.css">
+    <script src="/static/shared/i18n.js"></script>
 </head>
 <body>
 
@@ -328,7 +329,118 @@
 <script type="module" src="/static/omni/omni-app.js"></script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
+import { t } from '/static/shared/i18n-module.js';
 initNav('omni');
+
+const _i18n = (sel, text) => { const el = document.querySelector(sel); if (el) el.textContent = text; };
+_i18n('#serviceStatus', t.connecting);
+_i18n('#btnResetSettings', t.resetSettings);
+_i18n('#videoPlaceholder span', t.cameraLoading);
+_i18n('#camFlipBtn', ''); document.getElementById('camFlipBtn')?.setAttribute('title', t.flipCamera);
+_i18n('#mirrorBtn', ''); document.getElementById('mirrorBtn')?.setAttribute('title', t.mirrorFlip);
+_i18n('#fullscreenBtn', ''); document.getElementById('fullscreenBtn')?.setAttribute('title', t.fullscreen);
+_i18n('#subtitleToggleBtn', ''); document.getElementById('subtitleToggleBtn')?.setAttribute('title', t.subtitlesOnOff);
+_i18n('.status-lamp .label', t.live);
+_i18n('#fsBtnForceListen', t.forceListen);
+_i18n('#fsBtnHD', t.hd);
+_i18n('#fsBtnPause', t.pause_);
+for (const btn of [document.getElementById('fsBtnStart'), document.getElementById('fsBtnStop')]) {
+    if (!btn) continue;
+    btn.childNodes.forEach(n => {
+        if (n.nodeType === 3) {
+            if (n.textContent.includes('Start')) n.textContent = t.start;
+            else if (n.textContent.includes('Stop')) n.textContent = t.stop_;
+        }
+    });
+}
+_i18n('#btnForceListen', t.forceListen);
+_i18n('#btnHD', t.hd);
+_i18n('#btnPause', t.pause_);
+_i18n('#btnStop', t.stop_);
+_i18n('#btnStart', t.start);
+
+for (const btn of document.querySelectorAll('[data-mode="live"]')) {
+    btn.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = n.textContent.replace('Live', t.liveMode); });
+}
+for (const btn of document.querySelectorAll('[data-mode="file"]')) {
+    btn.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = n.textContent.replace('File', t.fileMode); });
+}
+
+_i18n('.fo-file-btn', t.chooseVideo);
+_i18n('#fileName', t.noFile);
+
+for (const s of document.querySelectorAll('.config-group > summary')) {
+    const txt = s.textContent.trim();
+    const map = {
+        'Response Length Controls': t.responseLengthControls,
+        'Vision Settings': t.visionSettings,
+        'Other Settings': t.otherSettings,
+        'Audio Devices': t.audioDevices,
+        'Fullscreen Subtitle': t.fullscreenSubtitle,
+        'System Prompt Details': t.systemPromptDetails,
+    };
+    if (map[txt]) s.textContent = map[txt];
+}
+
+_i18n('.conv-header span', t.conversation);
+_i18n('#convEmpty span', t.startSessionToSee);
+
+document.querySelectorAll('#fileOptions .fo-group-title').forEach(el => {
+    const m = { 'Audio': t.audio, 'Video': t.video };
+    if (m[el.textContent.trim()]) el.textContent = m[el.textContent.trim()];
+});
+document.querySelectorAll('#fileOptions .fo-label').forEach(el => {
+    const m = { 'Source': t.source, 'Playback Volume': t.playbackVolume, 'Sample t': t.sampleT, 'Pad s': t.padS };
+    if (m[el.textContent.trim()]) el.textContent = m[el.textContent.trim()];
+});
+
+const _rt = (name, val, txt) => {
+    const inp = document.querySelector(`input[name="${name}"][value="${val}"]`);
+    if (inp) inp.parentElement.childNodes.forEach(n => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = ' ' + txt; });
+};
+_rt('fileAudioMode', 'video', t.videoOnly);
+_rt('fileAudioMode', 'mic', t.micOnly);
+_rt('fileAudioMode', 'mixed', t.videoMic);
+_rt('omniTtsRefMode', 'extract', t.sameAsLLM);
+_rt('omniTtsRefMode', 'independent', t.independent);
+
+_i18n('#btnMixerToggle', t.mixer);
+
+document.querySelectorAll('.cg-label').forEach(el => {
+    const m = {
+        'Length Penalty': t.lengthPenalty, 'High-Definition Vision': t.hdVision,
+        'Delay': t.delay, 'MaxKV': t.maxKV,
+        'Mic': t.mic, 'Speaker': t.speaker,
+        'Height': t.height, 'Opacity %': t.opacityPercent,
+        'LLM Ref Audio (system prompt)': t.llmRefAudio,
+        'TTS Ref Audio (voice cloning)': t.ttsRefAudio,
+    };
+    if (m[el.textContent.trim()]) el.textContent = m[el.textContent.trim()];
+});
+
+document.querySelectorAll('.lp-preset-btn').forEach(btn => {
+    const lp = btn.dataset.lp, hint = btn.nextElementSibling;
+    if (lp === '1.2') { btn.textContent = t.verbose; if (hint) hint.textContent = t.verboseHint; }
+    else if (lp === '1.1') { btn.textContent = t.balanced; if (hint) hint.textContent = t.balancedHint; }
+    else if (lp === '1.05') { btn.textContent = t.concise; if (hint) hint.textContent = t.conciseHint; }
+});
+
+const _sib = (id, txt) => { const s = document.getElementById(id)?.nextElementSibling; if (s) s.textContent = txt; };
+_sib('playbackDelay', t.ms);
+_sib('maxKvTokens', t.tok);
+const _tokN = document.getElementById('maxKvTokens')?.nextElementSibling;
+if (_tokN?.nextElementSibling) _tokN.nextElementSibling.textContent = t.maxKVHint;
+_sib('fsSubHeight', t.percentFromBottom);
+
+const _sp = document.getElementById('systemPrompt');
+if (_sp) _sp.placeholder = t.systemPromptPlaceholder;
+
+_i18n('#omniBtnRefreshDevices', t.refresh);
+_i18n('#omniWaveformPlaceholder span', t.micWaveform);
+
+const _recL = document.getElementById('recCheckbox')?.parentElement;
+if (_recL) _recL.childNodes.forEach(n => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = ' ' + t.rec; });
+_i18n('#btnDownloadRec', t.downloadRec);
 </script>
 <script type="module">
 import { initFaqSidebar } from '/static/shared/faq-sidebar.js';

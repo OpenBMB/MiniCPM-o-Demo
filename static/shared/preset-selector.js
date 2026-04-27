@@ -50,6 +50,11 @@ class PresetSelector {
         }
     }
 
+    _t(key, fallback) {
+        const i = window.I18n && window.I18n.t;
+        return (i && i[key]) || fallback;
+    }
+
     _render() {
         const wrap = document.createElement('div');
         wrap.className = 'preset-selector-wrap';
@@ -57,8 +62,8 @@ class PresetSelector {
         const header = document.createElement('div');
         header.className = 'preset-header';
         header.innerHTML = `
-            <span class="preset-title">Preset System Prompt</span>
-            <span class="preset-subtitle">Controls response language, voice style, rhythm and timbre. You can further edit the system prompt text in Advanced. The web UI does not replace the C++ TTS cache (\`prompt_cache.gguf\`); for full TTS voice replacement, see the <a href="https://github.com/OpenSQZ/MiniCPM-V-CookBook/blob/main/deployment/llama.cpp-omni/%E6%8D%A2%E9%9F%B3%E8%89%B2%E6%8C%87%E5%8D%97.md" target="_blank" rel="noopener">voice guide</a>.</span>
+            <span class="preset-title">${this._t('presetTitle', 'Preset System Prompt')}</span>
+            <span class="preset-subtitle">${this._t('presetSubtitle', 'Controls response language, voice style, rhythm and timbre. Customizable via Advanced. You can customize the reference audio and system prompt in advanced settings. More presets are coming soon.')}</span>
         `;
         wrap.appendChild(header);
 
@@ -80,8 +85,8 @@ class PresetSelector {
 
         const advBtn = document.createElement('button');
         advBtn.className = 'preset-adv-btn';
-        advBtn.textContent = 'Advanced \u25BE';
-        advBtn.title = 'Show/hide system prompt details for customization';
+        advBtn.textContent = this._t('presetAdvanced', 'Advanced') + ' \u25BE';
+        advBtn.title = this._t('presetAdvancedTooltip', 'Show/hide system prompt details for customization');
         advBtn.addEventListener('click', () => this._toggleAdvanced());
         this._advBtn = advBtn;
         row.appendChild(advBtn);
@@ -94,7 +99,7 @@ class PresetSelector {
         overlay.innerHTML = `
             <div class="preset-loading-inner">
                 <div class="preset-loading-bar"><div class="preset-loading-fill"></div></div>
-                <span class="preset-loading-text">Loading preset media...</span>
+                <span class="preset-loading-text">${this._t('presetLoadingMedia', 'Loading preset media…')}</span>
             </div>
         `;
         overlay.style.display = 'none';
@@ -120,7 +125,7 @@ class PresetSelector {
         }
 
         if (this._detailsEl) this._detailsEl.removeAttribute('open');
-        if (this._advBtn) this._advBtn.textContent = 'Advanced \u25BE';
+        if (this._advBtn) this._advBtn.textContent = this._t('presetAdvanced', 'Advanced') + ' \u25BE';
 
         // Phase 1: apply text immediately
         if (this._onSelect) {
@@ -221,10 +226,10 @@ class PresetSelector {
         if (!this._detailsEl) return;
         if (this._detailsEl.hasAttribute('open')) {
             this._detailsEl.removeAttribute('open');
-            this._advBtn.textContent = 'Advanced \u25BE';
+            this._advBtn.textContent = this._t('presetAdvanced', 'Advanced') + ' \u25BE';
         } else {
             this._detailsEl.setAttribute('open', '');
-            this._advBtn.textContent = 'Advanced \u25B4';
+            this._advBtn.textContent = this._t('presetAdvanced', 'Advanced') + ' \u25B4';
         }
     }
 }

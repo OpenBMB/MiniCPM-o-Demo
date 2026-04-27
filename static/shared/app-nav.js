@@ -12,15 +12,19 @@
  *   <script>AppNav.init('turnbased');</script>
  */
 
+import { t } from '/static/shared/i18n-module.js';
+
 const _NAV_SELECTOR = '.nav-links';
 
 // Apps to hide from the global nav (still reachable by direct route).
 const _NAV_HIDDEN_APP_IDS = new Set(['half_duplex_audio']);
 
-// Extra static links injected after Home and before the dynamic apps list.
-const _NAV_EXTRA_LINKS = [
-    { route: '/mobile', name: 'Mobile' },
-];
+// Map API app_id → i18n key for display name override.
+const _APP_NAME_I18N = {
+    turnbased: 'turnbasedChat',
+    omni: 'omniFullDuplex',
+    audio_duplex: 'audioDuplexTitle',
+};
 
 async function _fetchApps() {
     try {
@@ -39,18 +43,19 @@ function _renderNav(apps, currentAppId) {
 
     const homeActive = !currentAppId ? ' class="active"' : '';
 
-    const extras = _NAV_EXTRA_LINKS.map(e => {
-        return `<a href="${e.route}">${e.name}</a>`;
-    });
+    const extras = `<a href="/mobile">${t.mobile}</a>`;
 
     const links = apps
         .filter(a => !_NAV_HIDDEN_APP_IDS.has(a.app_id))
         .map(a => {
             const active = a.app_id === currentAppId ? ' class="active"' : '';
-            return `<a href="${a.route}"${active}>${a.name}</a>`;
+            const i18nKey = _APP_NAME_I18N[a.app_id];
+            const label = (i18nKey && t[i18nKey]) || a.name;
+            return `<a href="${a.route}"${active}>${label}</a>`;
         });
 
-    navEl.innerHTML = `<a href="/"${homeActive}>Home</a>` + extras.join('') + links.join('');
+    navEl.innerHTML = `<a href="/"${homeActive}>${t.home}</a>` + extras + links.join('');
+
 }
 
 /**

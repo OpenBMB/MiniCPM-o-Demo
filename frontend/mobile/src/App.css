@@ -1668,6 +1668,34 @@
   font-weight: 700;
 }
 
+.settings-lang-toggle {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.lang-chip {
+  padding: 6px 18px;
+  border-radius: 20px;
+  border: 1px solid #e5e7eb;
+  background: transparent;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.lang-chip.active {
+  background: #1e6fff;
+  color: #fff;
+  border-color: #1e6fff;
+}
+
+.lang-chip:not(.active):active {
+  background: #f3f4f6;
+}
+
 .duplex-screen {
   position: relative;
   display: flex;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useI18n } from '../i18n'
 import type {
   RefAudioState,
   PresetMetadata,
@@ -129,6 +130,7 @@ export type OmniSettingsWidgetProps = {
 }
 
 export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidgetProps) {
+  const { lang, setLang: onSetLang, t: i18n } = useI18n()
   const [systemPrompt, setSystemPrompt] = useState('')
   const [lengthPenalty, setLengthPenalty] = useState(1.1)
   const [playbackDelay, setPlaybackDelay] = useState(0)
@@ -211,7 +213,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
         if (payload.base64) {
           const dra: RefAudioState = {
             source: 'default',
-            name: payload.name || '默认参考音频',
+            name: payload.name || i18n.defaultRefAudio,
             duration: payload.duration || 0,
             base64: payload.base64,
           }
@@ -265,7 +267,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
   }
 
   function handleSaveAsPreset() {
-    const name = window.prompt('为这个预设起个名字', '')?.trim()
+    const name = window.prompt(i18n.presetNamePrompt, '')?.trim()
     if (!name) return
     const now = Date.now()
     const p: UserPreset = {
@@ -279,7 +281,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
     setUserPresets((prev) => [...prev, p])
     setActivePresetId(`user:${p.id}`)
     void idbPut(p)
-    showToast(`已保存预设"${name}"`)
+    showToast(i18n.presetSaved(name))
   }
 
   function handleDeleteUserPreset(presetId: string) {
@@ -290,7 +292,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
 
   function handleUseDefault() {
     if (!defaultRefAudio?.base64) {
-      showToast('没有可用的默认参考音频。')
+      showToast(i18n.refAudioNoDefault)
       return
     }
     setRefAudio(defaultRefAudio)
@@ -307,7 +309,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
 
   function handlePlay() {
     if (!refAudio.base64) {
-      showToast('没有可播放的参考音频。')
+      showToast(i18n.refAudioNoPlayable)
       return
     }
     playPcmBase64(refAudio.base64, 16000)
@@ -339,7 +341,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
         URL.revokeObjectURL(tmp.src)
       }
     } catch (err) {
-      showToast(`处理音频失败：${err instanceof Error ? err.message : String(err)}`)
+      showToast(i18n.refAudioProcessFailed(err instanceof Error ? err.message : String(err)))
     } finally {
       e.target.value = ''
     }
@@ -363,23 +365,23 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
       recStreamRef.current?.getTracks().forEach((t) => t.stop())
       recStreamRef.current = null
 
-      if (chunks.length === 0) { showToast('录制太短，请重试。'); return }
+      if (chunks.length === 0) { showToast(i18n.refAudioRecordTooShort); return }
       const merged = concatFloat32(chunks)
-      if (merged.length === 0) { showToast('录制失败。'); return }
+      if (merged.length === 0) { showToast(i18n.refAudioRecordFailed); return }
       const resampled = resampleLinear(merged, sr, 16000)
       const base64 = float32ToBase64(resampled)
       const dur = Math.round((ms / 1000) * 10) / 10
-      const ra: RefAudioState = { source: 'upload', name: `录制 ${new Date().toLocaleTimeString()}`, duration: dur, base64 }
+      const ra: RefAudioState = { source: 'upload', name: i18n.refAudioRecordDuration(new Date().toLocaleTimeString()), duration: dur, base64 }
       setRefAudio(ra)
       setActivePresetId(null)
       syncToBridge({ ref: ra })
-      showToast(`已录制 ${dur.toFixed(1)}s 参考音频`)
+      showToast(i18n.refAudioRecorded(dur.toFixed(1)))
       return
     }
 
-    if (!navigator.mediaDevices?.getUserMedia) { showToast('不支持麦克风。'); return }
+    if (!navigator.mediaDevices?.getUserMedia) { showToast(i18n.refAudioMicUnsupported); return }
     const Ctor = getAudioContextCtor()
-    if (!Ctor) { showToast('不支持录音。'); return }
+    if (!Ctor) { showToast(i18n.refAudioRecordUnsupported); return }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -415,7 +417,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
       recStartRef.current = performance.now()
       setRecording(true)
     } catch (err) {
-      showToast(`无法录制：${err instanceof Error ? err.message : String(err)}`)
+      showToast(i18n.refAudioRecordError(err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -475,8 +477,8 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
       <div className="settings-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="settings-sheet-head">
           <div>
-            <div className="settings-sheet-title">设置</div>
-            <div className="settings-sheet-subtitle">视频双工</div>
+            <div className="settings-sheet-title">{i18n.settings}</div>
+            <div className="settings-sheet-subtitle">{i18n.videoDuplex}</div>
           </div>
           <button
             className="settings-close-button"
@@ -487,7 +489,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
         </div>
 
         <div className="settings-section">
-          <div className="settings-section-title">Preset</div>
+          <div className="settings-section-title">{i18n.preset}</div>
           <div className="preset-chip-row">
             {presets.map((p) => (
               <button
@@ -507,46 +509,46 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
                 onClick={() => selectUserPreset(p)}
                 onContextMenu={(e) => {
                   e.preventDefault()
-                  if (window.confirm(`删除预设"${p.name}"？`)) handleDeleteUserPreset(p.id)
+                  if (window.confirm(i18n.deletePresetConfirm(p.name))) handleDeleteUserPreset(p.id)
                 }}
               >
                 {p.name}
               </button>
             ))}
             <button className="save-preset-chip" type="button" onClick={handleSaveAsPreset}>
-              + 保存当前
+              {i18n.saveCurrentPreset}
             </button>
           </div>
           {presets.length === 0 && userPresets.length === 0 && (
             <div className="settings-empty-copy" style={{ marginTop: 4 }}>
-              暂无预设
+              {i18n.noPresetsYet}
             </div>
           )}
         </div>
 
         <div className="settings-section">
-          <div className="settings-section-title">参考音频</div>
+          <div className="settings-section-title">{i18n.refAudio}</div>
           <div className="ref-audio-card">
-            <div className="ref-audio-title">{refAudio.base64 ? refAudio.name : '未设置参考音频'}</div>
+            <div className="ref-audio-title">{refAudio.base64 ? refAudio.name : i18n.refAudioNotSet}</div>
             <div className="ref-audio-meta">
-              来源：{refAudio.source}
+              {i18n.refAudioSource}{refAudio.source}
               {refAudio.duration ? ` · ${refAudio.duration.toFixed(1)}s` : ''}
             </div>
             <div className="ref-audio-actions">
-              <button className="secondary-btn compact" type="button" onClick={handleUseDefault} disabled={!defaultRefAudio?.base64}>默认</button>
-              <button className="secondary-btn compact" type="button" onClick={handleUploadClick}>上传</button>
+              <button className="secondary-btn compact" type="button" onClick={handleUseDefault} disabled={!defaultRefAudio?.base64}>{i18n.default_}</button>
+              <button className="secondary-btn compact" type="button" onClick={handleUploadClick}>{i18n.upload}</button>
               <button className={`secondary-btn compact${recording ? ' ref-audio-recording-active' : ''}`} type="button" onClick={handleToggleRecord}>
-                {recording ? <><span className="rec-dot" />停止录制</> : '录制'}
+                {recording ? <><span className="rec-dot" />{i18n.stopRecording}</> : i18n.record}
               </button>
-              <button className="secondary-btn compact" type="button" onClick={handlePlay} disabled={!refAudio.base64}>播放</button>
-              <button className="secondary-btn compact" type="button" onClick={handleClear}>清空</button>
+              <button className="secondary-btn compact" type="button" onClick={handlePlay} disabled={!refAudio.base64}>{i18n.play}</button>
+              <button className="secondary-btn compact" type="button" onClick={handleClear}>{i18n.clear}</button>
             </div>
           </div>
           <input ref={fileInputRef} type="file" accept="audio/*" hidden onChange={handleFileChange} />
         </div>
 
         <div className="settings-section">
-          <label className="settings-section-title" htmlFor="omni-settings-prompt">System Prompt</label>
+          <label className="settings-section-title" htmlFor="omni-settings-prompt">{i18n.systemPrompt}</label>
           <textarea
             id="omni-settings-prompt"
             className="settings-textarea"
@@ -556,10 +558,10 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
         </div>
 
         <div className="settings-section">
-          <div className="settings-section-title">参数</div>
+          <div className="settings-section-title">{i18n.params}</div>
           <div className="settings-grid">
             <label className="settings-field">
-              <span>Length Penalty</span>
+              <span>{i18n.lengthPenalty}</span>
               <input className="settings-input" type="number" min="0.1" max="5" step="0.05" value={lengthPenalty} onChange={(e) => handleLpChange(Number(e.target.value))} />
             </label>
             <label className="settings-field">
@@ -577,7 +579,14 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
                 onChange={(e) => handleStopOnPruneChange(e.target.checked)}
                 style={{ width: 18, height: 18 }}
               />
-              <span style={{ fontSize: 13 }}>Stop on KV pruning (sliding window)</span>
+              <span style={{ fontSize: 13 }}>{lang === 'zh' ? '滑动窗口截断时停止' : 'Stop on KV pruning (sliding window)'}</span>
+            </label>
+            <label className="settings-toggle">
+              <span>{lang === 'zh' ? '语言' : 'Language'}</span>
+              <span className="settings-lang-toggle">
+                <button className={`lang-chip${lang === 'zh' ? ' active' : ''}`} type="button" onClick={() => onSetLang('zh')}>中文</button>
+                <button className={`lang-chip${lang === 'en' ? ' active' : ''}`} type="button" onClick={() => onSetLang('en')}>En</button>
+              </span>
             </label>
           </div>
         </div>

@@ -1,7 +1,8 @@
+import type { Translations } from '../i18n/types'
 import type { DuplexMode, DuplexScreenName, DuplexStatus } from './types'
 
-export function getDuplexModeLabel(mode: DuplexMode): string {
-  return mode === 'audio' ? '音频双工' : '视频双工'
+export function getDuplexModeLabel(mode: DuplexMode, t: Translations): string {
+  return mode === 'audio' ? t.audioDuplex : t.videoDuplex
 }
 
 export function getDuplexScreenName(mode: DuplexMode): DuplexScreenName {
@@ -11,19 +12,21 @@ export function getDuplexScreenName(mode: DuplexMode): DuplexScreenName {
 export function getDuplexBadgeText(
   status: DuplexStatus,
   mode: DuplexMode,
+  t: Translations,
 ): string {
+  const label = getDuplexModeLabel(mode, t)
   switch (status) {
     case 'live':
-      return `${getDuplexModeLabel(mode)}进行中`
+      return t.duplexInProgress(label)
     case 'queueing':
-      return '排队中'
+      return t.queuing
     case 'paused':
-      return '已暂停'
+      return t.paused
     case 'error':
-      return '连接异常'
+      return t.error
     case 'stopped':
-      return '已结束'
+      return t.duplexEnded(label)
     default:
-      return '连接中'
+      return t.connecting
   }
 }

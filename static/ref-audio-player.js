@@ -180,6 +180,10 @@
 })();
 
 
+function _rapT(key, fallback) {
+    return window.I18n?.t?.[key] ?? fallback;
+}
+
 class RefAudioPlayer {
     /**
      * @param {HTMLElement} container
@@ -275,8 +279,8 @@ class RefAudioPlayer {
         row.className = 'rap-empty';
         row.innerHTML = `
             <div class="rap-empty-row">
-                <span>No reference audio</span>
-                <span class="rap-btn" style="display:inline-block">Upload</span>
+                <span>${_rapT('noRefAudio', 'No reference audio')}</span>
+                <span class="rap-btn" style="display:inline-block">${_rapT('upload', 'Upload')}</span>
             </div>
         `;
         row.addEventListener('click', () => this._fileInput.click());
@@ -338,7 +342,7 @@ class RefAudioPlayer {
 
         const uploadBtn = document.createElement('span');
         uploadBtn.className = 'rap-btn';
-        uploadBtn.textContent = 'Upload';
+        uploadBtn.textContent = _rapT('upload', 'Upload');
         uploadBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this._fileInput.click();
@@ -348,7 +352,7 @@ class RefAudioPlayer {
         const removeBtn = document.createElement('span');
         removeBtn.className = 'rap-btn rap-btn-remove';
         removeBtn.textContent = '✕';
-        removeBtn.title = 'Reset to default';
+        removeBtn.title = _rapT('resetToDefault', 'Reset to default');
         removeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this._stop();
@@ -520,7 +524,10 @@ class RefAudioPlayer {
             const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
 
             if (decoded.duration > 20) {
-                alert(`Audio too long: ${decoded.duration.toFixed(1)}s (max 20s)`);
+                const msg = typeof window.I18n?.t?.audioTooLong === 'function'
+                    ? window.I18n.t.audioTooLong(decoded.duration.toFixed(1), 20)
+                    : `Audio too long: ${decoded.duration.toFixed(1)}s (max 20s)`;
+                alert(msg);
                 audioCtx.close();
                 return;
             }
@@ -553,7 +560,10 @@ class RefAudioPlayer {
             // notify parent
             this.onUpload(base64, file.name, decoded.duration);
         } catch (e) {
-            alert('Failed to process audio: ' + e.message);
+            const msg = typeof window.I18n?.t?.processAudioFailed === 'function'
+                ? window.I18n.t.processAudioFailed(e.message)
+                : 'Failed to process audio: ' + e.message;
+            alert(msg);
         }
     }
 }

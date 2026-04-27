@@ -890,9 +890,14 @@ async def get_frontend_defaults():
 
     前端页面加载时调用此接口获取 playback_delay_ms 等可配置的默认值，
     避免前端硬编码。返回值来自 config.json。
+    若 gateway 启动时指定了 --lang，此处也会包含 default_lang 字段。
     """
     from config import get_config
-    return get_config().frontend_defaults()
+    defaults = get_config().frontend_defaults()
+    server_lang = GATEWAY_CONFIG.get("default_lang")
+    if server_lang:
+        defaults["default_lang"] = server_lang
+    return defaults
 
 
 # ============ System Prompt 预设 ============
@@ -1670,6 +1675,9 @@ def main():
                              help="降级为 HTTP（不推荐，麦克风等浏览器 API 需要 HTTPS）")
     parser.add_argument("--ssl-certfile", type=str, default="certs/cert.pem", help="SSL cert file path")
     parser.add_argument("--ssl-keyfile", type=str, default="certs/key.pem", help="SSL key file path")
+    parser.add_argument("--lang", type=str, default=None, choices=["zh", "en"],
+                         help="Default UI language (zh/en). Overrides config.json. "
+                              "Clients can still switch; this sets the server-side default.")
     args = parser.parse_args()
 
     # --http 被指定时，关闭 HTTPS
@@ -1684,6 +1692,9 @@ def main():
         worker_list = cfg.worker_addresses(args.num_workers)
     else:
         worker_list = cfg.worker_addresses(cfg.num_workers)
+
+    if args.lang:
+        GATEWAY_CONFIG["default_lang"] = args.lang
 
     GATEWAY_CONFIG.update({
         "workers": worker_list,
