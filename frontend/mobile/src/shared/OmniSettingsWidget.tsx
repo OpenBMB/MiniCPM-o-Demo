@@ -581,14 +581,17 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
               />
               <span style={{ fontSize: 13 }}>{lang === 'zh' ? '滑动窗口截断时停止' : 'Stop on KV pruning (sliding window)'}</span>
             </label>
-            <label className="settings-toggle">
-              <span>{lang === 'zh' ? '语言' : 'Language'}</span>
-              <span className="settings-lang-toggle">
-                <button className={`lang-chip${lang === 'zh' ? ' active' : ''}`} type="button" onClick={() => onSetLang('zh')}>中文</button>
-                <button className={`lang-chip${lang === 'en' ? ' active' : ''}`} type="button" onClick={() => onSetLang('en')}>En</button>
-              </span>
-            </label>
           </div>
+        </div>
+
+        <div className="settings-section">
+          <label className="settings-toggle">
+            <span>{lang === 'zh' ? '语言' : 'Language'}</span>
+            <span className="settings-lang-toggle">
+              <button className={`lang-chip${lang === 'zh' ? ' active' : ''}`} type="button" onClick={() => onSetLang('zh')}>中文</button>
+              <button className={`lang-chip${lang === 'en' ? ' active' : ''}`} type="button" onClick={() => onSetLang('en')}>En</button>
+            </span>
+          </label>
         </div>
 
         {toast && (

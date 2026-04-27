@@ -109,20 +109,6 @@ body.mobile-omni #save-share-container .ss-toast {
     pointer-events: auto;
 }
 
-/* ─────────── Settings-sheet share section (injected by JS) ─────────── */
-.mb-share-section .mb-share-row {
-    display: flex; align-items: center; gap: 10px;
-}
-.mb-share-section .mb-share-btn {
-    flex: 0 0 auto;
-}
-.mb-share-section .mb-share-hint {
-    flex: 1 1 auto;
-    font-size: 12.5px;
-    color: #888;
-    line-height: 1.4;
-}
-
 /* Per spec 4.2.2: HD / File mode buttons removed on mobile.
  * The mode-selector / file-chooser sit inside .panel-mode which is already
  * hidden, but #fsBtnHD lives in the bottom strip and must be hidden too. */
