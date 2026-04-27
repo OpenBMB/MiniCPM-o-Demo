@@ -76,6 +76,10 @@ Worker Pool (:22400+)
 
 ## 快速开始
 
+> **想要更轻量的部署？** 本节介绍的是 PyTorch 后端（约 22 GB 显存）。
+> 如果你想用 `llama.cpp-omni` 跑同一套 demo（Q4_K_M ≈ 9 GB 显存，TTFT 更低），
+> 请直接看 [docs/zh/cpp-backend.md](docs/zh/cpp-backend.md)。
+
 ### 检查系统要求
 1. 确保你有一张显存大于 28GB 的 NVIDIA GPU。
 2. 确保你的机器安装了 Linux 操作系统。

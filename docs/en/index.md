@@ -10,3 +10,4 @@ The system supports four interaction modes (Turn-based Chat, Half-Duplex, Omnimo
 - [Model](model.md) — Multimodal model internals and data flow
 - [API Reference](api.md) — Interface definitions and usage
 - [Deployment](deployment.md) — Requirements, configuration, and deployment steps
+- [C++ Backend](cpp-backend.md) — Run the demo on `llama.cpp-omni` instead of PyTorch

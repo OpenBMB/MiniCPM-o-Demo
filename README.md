@@ -73,6 +73,11 @@ Worker Pool (:22400+)
 
 ## Quick Start
 
+> **Want a lighter setup?** This Quick Start covers the PyTorch backend
+> (~22 GB VRAM). To run the same demo on top of `llama.cpp-omni`
+> (Q4_K_M ≈ 9 GB VRAM, lower TTFT), see
+> [docs/en/cpp-backend.md](docs/en/cpp-backend.md).
+
 ### Check System Requirements
 1. Make sure you have an NVIDIA GPU with more than 28GB of VRAM.
 2. Make sure your machine is running a Linux operating system.
