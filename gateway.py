@@ -1690,6 +1690,7 @@ def _render_doc(slug: str) -> str:
     # Rewrite .md links to /docs/ routes
     for s, fname, _ in _DOCS_PAGES:
         md_text = md_text.replace(f"]({fname})", f"](/docs/{s})")
+    md_text = md_text.replace("](realtime-protocol-schema.json)", "](/docs/realtime-protocol-schema.json)")
 
     html_content = markdown.markdown(
         md_text,
@@ -1715,9 +1716,14 @@ async def docs_index():
     return RedirectResponse(url="/docs/overview", status_code=302)
 
 
-@app.get("/docs/{slug}", response_class=HTMLResponse)
+@app.get("/docs/{slug}")
 async def docs_page(slug: str):
-    """Render a Markdown doc as a styled HTML page"""
+    """Render a Markdown doc as a styled HTML page, or serve raw files"""
+    if slug.endswith(".json"):
+        file_path = os.path.join(_DOCS_DIR, slug)
+        if os.path.exists(file_path):
+            return FileResponse(file_path, media_type="application/json")
+        raise HTTPException(status_code=404, detail=f"File not found: {slug}")
     html = _render_doc(slug)
     if html is None:
         raise HTTPException(status_code=404, detail=f"Doc page not found: {slug}")
