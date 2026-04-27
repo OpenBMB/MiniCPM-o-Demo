@@ -563,6 +563,10 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
               <span>Max KV (tok)</span>
               <input className="settings-input" type="number" min="512" max="16384" step="512" value={maxKv} onChange={(e) => handleKvChange(Number(e.target.value))} />
             </label>
+          </div>
+        </div>
+
+        <div className="settings-section">
           <label className="settings-toggle">
             <span>{lang === 'zh' ? '语言' : 'Language'}</span>
             <span className="settings-lang-toggle">
@@ -570,7 +574,6 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
               <button className={`lang-chip${lang === 'en' ? ' active' : ''}`} type="button" onClick={() => onSetLang('en')}>En</button>
             </span>
           </label>
-          </div>
         </div>
 
         {toast && (
