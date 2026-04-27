@@ -381,88 +381,6 @@
     }
 
     // ========================================================================
-    // (legacy) settings-sheet share injection — kept as an alternate access
-    // point in case the stage button proves problematic again on some
-    // device. injectStageShareButton() is the canonical entry, this is a
-    // backup that re-injects every time .settings-sheet remounts.
-    // ========================================================================
-    let shareDomObserver = null;
-
-    function findSourceShareButton() {
-        return document.querySelector('#save-share-container .ss-btn');
-    }
-
-    function buildShareSection(sourceBtn) {
-        const section = document.createElement('div');
-        section.className = 'settings-section mb-share-section';
-        section.innerHTML = `
-            <div class="settings-section-title">${_mbT('share', 'Share')}</div>
-            <div class="mb-share-row">
-                <button class="secondary-btn compact mb-share-btn" type="button">
-                    <span class="mb-share-icon" aria-hidden="true"></span>
-                    ${_mbT('shareCallLabel', 'Share call')}
-                </button>
-                <span class="mb-share-hint"></span>
-            </div>
-        `;
-        const iconHost = section.querySelector('.mb-share-icon');
-        if (iconHost) iconHost.innerHTML = ICON_SHARE;
-        const btn = section.querySelector('.mb-share-btn');
-        const hint = section.querySelector('.mb-share-hint');
-
-        function syncState() {
-            const disabled = !sourceBtn || !!sourceBtn.disabled;
-            btn.disabled = disabled;
-            hint.textContent = disabled
-                ? _mbT('shareCallAvailableAfter', 'Available after call starts')
-                : _mbT('shareCallUploadHint', 'Upload recording and copy link, add optional comment');
-        }
-        syncState();
-        if (sourceBtn) {
-            new MutationObserver(syncState).observe(sourceBtn, {
-                attributes: true,
-                attributeFilter: ['disabled'],
-            });
-        }
-
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (!sourceBtn || sourceBtn.disabled) return;
-            setTimeout(() => sourceBtn.click(), 0);
-        });
-
-        return section;
-    }
-
-    function injectShareIntoSheet() {
-        const sheet = document.querySelector('.settings-sheet');
-        if (!sheet) return false;
-        if (sheet.querySelector('.mb-share-section')) return true;
-        const sourceBtn = findSourceShareButton();
-        const section = buildShareSection(sourceBtn);
-        const head = sheet.querySelector('.settings-sheet-head');
-        if (head?.nextSibling) {
-            sheet.insertBefore(section, head.nextSibling);
-        } else {
-            sheet.appendChild(section);
-        }
-        return true;
-    }
-
-    function watchForSettingsSheet() {
-        // The React widget mounts/unmounts `.settings-sheet` each open/close
-        // cycle, so we re-inject every time it appears.
-        if (shareDomObserver) return;
-        shareDomObserver = new MutationObserver(() => {
-            injectShareIntoSheet();
-        });
-        shareDomObserver.observe(document.body, { childList: true, subtree: true });
-        // First-shot in case sheet is already mounted.
-        injectShareIntoSheet();
-    }
-
-    // ========================================================================
     // Init
     // ========================================================================
     function init() {
@@ -477,7 +395,6 @@
             watchVideoElement();
             bindPinchZoom();
             injectStageShareButton();
-            watchForSettingsSheet();
         }, 0);
     }
 
