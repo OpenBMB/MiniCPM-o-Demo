@@ -22,8 +22,8 @@
 | 组件 | 来源 | 说明 |
 |---|---|---|
 | 本 demo（Python 服务 + 前端） | 你正在阅读的这个分支 | gateway / worker / 静态页面 / mobile React 工程 |
-| `llama.cpp-omni`（C++ 引擎） | [`tc-mb/llama.cpp-omni`](https://github.com/tc-mb/llama.cpp-omni)，分支 `feat/omni-duplex-round1` | 我们从这里编出 `llama-server`；`worker.py` 会以子进程方式拉起它 |
-| MiniCPM-o-4_5 GGUF 权重 | 见 [llama.cpp-omni README](https://github.com/tc-mb/llama.cpp-omni/tree/feat/omni-duplex-round1#prerequisites) | PyTorch 路径与 C++ 路径共用同一份权重，需自行下载 |
+| `llama.cpp-omni`（C++ 引擎） | [`tc-mb/llama.cpp-omni`](https://github.com/tc-mb/llama.cpp-omni)，分支 `feat/web-demo` | 我们从这里编出 `llama-server`；`worker.py` 会以子进程方式拉起它 |
+| MiniCPM-o-4_5 GGUF 权重 | 见 [llama.cpp-omni README](https://github.com/tc-mb/llama.cpp-omni/tree/feat/web-demo#prerequisites) | PyTorch 路径与 C++ 路径共用同一份权重，需自行下载 |
 
 ---
 
@@ -32,7 +32,7 @@
 ```bash
 git clone https://github.com/tc-mb/llama.cpp-omni.git
 cd llama.cpp-omni
-git checkout feat/omni-duplex-round1
+git checkout feat/web-demo
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target llama-server -j

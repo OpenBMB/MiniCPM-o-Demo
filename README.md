@@ -22,8 +22,8 @@ frontend) stays the same — only the inference backend swaps out.
 | Piece | Where it comes from | Notes |
 |---|---|---|
 | This demo (Python service + frontend) | The current branch you are reading | gateway / worker / static pages / mobile React app |
-| `llama.cpp-omni` (C++ engine) | [`tc-mb/llama.cpp-omni`](https://github.com/tc-mb/llama.cpp-omni), branch `feat/omni-duplex-round1` | We compile `llama-server` from this; `worker.py` will spawn it as a subprocess |
-| MiniCPM-o-4_5 GGUF weights | See the [llama.cpp-omni README](https://github.com/tc-mb/llama.cpp-omni/tree/feat/omni-duplex-round1#prerequisites) | Same weights for both PyTorch and C++ paths; downloaded separately |
+| `llama.cpp-omni` (C++ engine) | [`tc-mb/llama.cpp-omni`](https://github.com/tc-mb/llama.cpp-omni), branch `feat/web-demo` | We compile `llama-server` from this; `worker.py` will spawn it as a subprocess |
+| MiniCPM-o-4_5 GGUF weights | See the [llama.cpp-omni README](https://github.com/tc-mb/llama.cpp-omni/tree/feat/web-demo#prerequisites) | Same weights for both PyTorch and C++ paths; downloaded separately |
 
 ---
 
@@ -32,7 +32,7 @@ frontend) stays the same — only the inference backend swaps out.
 ```bash
 git clone https://github.com/tc-mb/llama.cpp-omni.git
 cd llama.cpp-omni
-git checkout feat/omni-duplex-round1
+git checkout feat/web-demo
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target llama-server -j
