@@ -198,6 +198,13 @@ const zh = {
   shareCallUploadHint: '上传录制并复制链接，可附评语',
   toggleFlashlight: '切换闪光灯',
 
+  // preset selector
+  presetTitle: '预设系统提示词',
+  presetSubtitle: '控制回复语言、音色风格、节奏和音质。可通过"高级"自定义。你可以在高级设置中自定义参考音频和系统提示词。更多预设即将推出。',
+  presetAdvanced: '高级',
+  presetAdvancedTooltip: '显示/隐藏系统提示词详情以便自定义',
+  presetLoadingMedia: '正在加载预设素材…',
+
   // language
   language: '语言',
   langZh: '中文',
@@ -383,6 +390,13 @@ const en = {
   shareCallAvailableAfter: 'Available after call starts',
   shareCallUploadHint: 'Upload recording and copy link, add optional comment',
   toggleFlashlight: 'Toggle flashlight',
+
+  // preset selector
+  presetTitle: 'Preset System Prompt',
+  presetSubtitle: 'Controls response language, voice style, rhythm and timbre. Customizable via Advanced. You can customize the reference audio and system prompt in advanced settings. More presets are coming soon.',
+  presetAdvanced: 'Advanced',
+  presetAdvancedTooltip: 'Show/hide system prompt details for customization',
+  presetLoadingMedia: 'Loading preset media…',
 
   // language
   language: 'Language',
