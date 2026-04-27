@@ -43,10 +43,15 @@
 
 ```
 Client  ──WSS──→  Server
-                  ← session.queued / queue_update / queue_done  (排队，可能跳过)
+                  ← session.queued          (可选：有排队时才出现)
+                  ← session.queue_update    (可选：排队位置变化时出现，0~N 次)
+                  ← session.queue_done      (必达：Worker 分配完成)
 Client  → session.update      "我要中文助手，用这个音色"
 Server  → session.created     "好的，准备就绪，session_id=xxx"
 ```
+
+> **重要**：客户端**必须等到收到 `session.queue_done` 后**才能发送 `session.update`。
+> `session.queue_done` 是**必达事件**——即使无需排队（Worker 空闲），服务端也会立即发送它。
 
 ### Stream
 
@@ -296,6 +301,13 @@ Client:  session.close ──→
 ```
           connect
              │
+             ▼
+    ┌──── QUEUED ─────┐
+    │                  │    等待 Worker 分配
+    │                  │    客户端不可发送任何消息
+    │                  │    可能收到: session.queued / session.queue_update
+    └────────┬─────────┘
+             │ 收到 session.queue_done
              ▼
     ┌─── CONNECTED ───┐
     │                  │    只允许发: session.update

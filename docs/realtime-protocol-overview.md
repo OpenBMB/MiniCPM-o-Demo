@@ -42,3 +42,16 @@ wss://host/v1/realtime?mode={video|audio}
 - 文字领先音频：由于模型架构，`text` 内容领先 `audio` 数百毫秒
 - 排队机制：FIFO 队列，含位置和 ETA 估算
 - 打断机制：通过 `force_listen=true` 字段
+
+## 示例代码
+
+完整的客户端实现示例请参考本仓库的全双工 demo 页面，它们直接使用 Realtime API 协议：
+
+| 页面 | 说明 |
+|------|------|
+| [`static/omni/`](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol/static/omni) | 视频双工 — 实时音视频对话 |
+| [`static/audio-duplex/`](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol/static/audio-duplex) | 音频双工 — 实时纯音频对话 |
+
+核心协议封装库：[`static/duplex/lib/realtime-session.js`](https://github.com/OpenBMB/MiniCPM-o-Demo/blob/realtime-protocol/static/duplex/lib/realtime-session.js)
+
+> 仓库地址：<https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol>

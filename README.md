@@ -1,8 +1,50 @@
-# MiniCPM-o 4.5 PyTorch Simple Demo System
+# MiniCPM-o 4.5 PyTorch Demo — Realtime API Protocol
 
-[中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/MiniCPM-o-Demo/site/en/index.html)
+> **This is a fork of [OpenBMB/MiniCPM-o-Demo](https://github.com/OpenBMB/MiniCPM-o-Demo)** (`realtime-protocol` branch).
+> It adds an **OpenAI Realtime-style WebSocket API** on top of the original demo system, enabling third-party clients to interact with MiniCPM-o 4.5 via a standardized protocol.
 
-[Ready-to-use Demo Website](https://openbmb.github.io/MiniCPM-o-Demo/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
+[中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/MiniCPM-o-Demo/site/en/index.html) | [**Realtime API Docs**](docs/realtime-protocol-overview.md)
+
+## What's New in This Fork
+
+This fork introduces the **MiniCPM-o Realtime API** — a WebSocket-based protocol for full-duplex audio/video conversations with MiniCPM-o 4.5. The API follows OpenAI Realtime conventions (`namespace.action` event naming) and is implemented as a **pure translation layer** in the gateway, with zero changes to the model or worker.
+
+### Realtime API at a Glance
+
+| | |
+|---|---|
+| **Endpoint** | `wss://host/v1/realtime?mode={video\|audio}` |
+| **Protocol** | JSON over WebSocket, event-driven |
+| **Modes** | Video duplex (audio + video, 5 min) / Audio duplex (audio only, 10 min) |
+| **Audio format** | 16 kHz float32 PCM input, 24 kHz float32 PCM output |
+| **Documentation** | [Protocol Overview](docs/realtime-protocol-overview.md) · [Video Duplex](docs/video-duplex-protocol.md) · [Audio Duplex](docs/audio-duplex-protocol.md) · [JSON Schema](docs/realtime-protocol-schema.json) |
+
+### Example Code
+
+The full-duplex demo pages in this repository serve as production-quality examples of Realtime API usage:
+
+| Page | Description |
+|------|-------------|
+| [`static/omni/`](static/omni/) | Video duplex — real-time audio + video conversation with camera |
+| [`static/audio-duplex/`](static/audio-duplex/) | Audio duplex — real-time audio-only conversation |
+
+Both pages include a **Protocol Data Flow** panel that visualizes all WebSocket events in real time, making them useful for understanding the protocol in action.
+
+### Architecture
+
+```
+┌─────────────┐     OpenAI Realtime      ┌──────────────┐    old protocol    ┌────────────┐
+│   Client    │ ←──── WebSocket ────→    │   Gateway    │ ←── WebSocket ──→  │   Worker   │
+│ (browser /  │   session.update         │  /v1/realtime│   prepare          │  (PyTorch) │
+│  Python)    │   append / listen / ...  │  translation │   audio_chunk      │  unchanged │
+└─────────────┘                          └──────────────┘   result / ...     └────────────┘
+```
+
+The gateway (`gateway.py`) translates between Realtime API events and the existing worker protocol. **No model code or worker code was modified.**
+
+---
+
+## Original README
 
 This demo system is officially provided by the `MiniCPM-o 4.5` model training team. It uses a PyTorch + CUDA inference backend, combined with a lightweight frontend-backend design, aiming to demonstrate the full audio-video omnimodal full-duplex capabilities of MiniCPM-o 4.5 in a transparent, concise, and lossless manner.
 
