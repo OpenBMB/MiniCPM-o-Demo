@@ -31,8 +31,6 @@ export class RealtimeSession {
         this.sessionId = '';
         this.chunksSent = 0;
         this.paused = false;
-        this.pauseState = 'active';
-        this.serverPauseConfirmed = false;
         this.forceListenActive = false;
         this.currentSpeakText = '';
         this._speakHandle = null;
@@ -81,7 +79,6 @@ export class RealtimeSession {
     onCleanup() {}
     onMetrics(data) {}
     onRunningChange(running) {}
-    onPauseStateChange(state) {}
     onForceListenChange(active) {}
     /** New: protocol event logged (for data flow panel). */
     onProtocolEvent(entry) {}
@@ -238,7 +235,6 @@ export class RealtimeSession {
 
         const newMsg = {
             type: 'input_audio_buffer.append',
-            seq: this.chunksSent,
             audio: msg.audio_base64,
         };
 
@@ -257,31 +253,9 @@ export class RealtimeSession {
 
         const hasVideo = newMsg.video_frames ? ` +${newMsg.video_frames.length}fr` : '';
         this._logProtoEvent('client', 'input_audio_buffer.append',
-            `seq=${newMsg.seq}${hasVideo}${newMsg.force_listen ? ' force' : ''}`);
+            `#${this.chunksSent}${hasVideo}${newMsg.force_listen ? ' force' : ''}`);
 
         this.onMetrics({ type: 'result', chunksSent: this.chunksSent });
-    }
-
-    pauseToggle() {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-        if (this.pauseState === 'active') {
-            this.paused = true;
-            this.pauseState = 'pausing';
-            this.serverPauseConfirmed = false;
-            this.onPauseStateChange('pausing');
-            this.onMetrics({ type: 'state', sessionState: 'Pausing...' });
-            const msg = { type: 'session.pause' };
-            this.ws.send(JSON.stringify(msg));
-            this._logProtoEvent('client', 'session.pause', '');
-        } else if (this.pauseState === 'paused') {
-            this.paused = false;
-            this.pauseState = 'active';
-            this.onPauseStateChange('active');
-            this.onMetrics({ type: 'state', sessionState: 'Active' });
-            const msg = { type: 'session.resume' };
-            this.ws.send(JSON.stringify(msg));
-            this._logProtoEvent('client', 'session.resume', '');
-        }
     }
 
     toggleForceListen() {
@@ -324,12 +298,9 @@ export class RealtimeSession {
         }
         this._started = false;
         this.paused = false;
-        this.pauseState = 'active';
-        this.serverPauseConfirmed = false;
         this.forceListenActive = false;
         this.onRunningChange(false);
         this.onForceListenChange(false);
-        this.onPauseStateChange('active');
         this.onMetrics({ type: 'state', sessionState: 'Stopped' });
     }
 
@@ -350,8 +321,6 @@ export class RealtimeSession {
         this.currentSpeakText = '';
         this._speakHandle = null;
         this.paused = false;
-        this.pauseState = 'active';
-        this.serverPauseConfirmed = false;
         this.forceListenActive = false;
         this._queueReject = null;
         this._eventLog = [];
@@ -373,25 +342,6 @@ export class RealtimeSession {
                 this._handleSpeak(msg);
                 break;
 
-            case 'response.done':
-                this._logProtoEvent('server', 'response.done',
-                    `t=${msg.current_time}`, msg);
-                break;
-
-            case 'session.paused':
-                this._logProtoEvent('server', 'session.paused', '', msg);
-                this.serverPauseConfirmed = true;
-                this._tryCompletePause();
-                break;
-
-            case 'session.resumed':
-                this._logProtoEvent('server', 'session.resumed', '', msg);
-                this.paused = false;
-                this.pauseState = 'active';
-                this.onPauseStateChange('active');
-                this.onSystemLog('Session resumed');
-                break;
-
             case 'session.go_away':
                 this._logProtoEvent('server', 'session.go_away',
                     `reason=${msg.reason}`, msg);
@@ -408,7 +358,6 @@ export class RealtimeSession {
             case 'error':
                 this._logProtoEvent('server', 'error',
                     `${msg.error?.code}: ${msg.error?.message}`, msg);
-                if (this.paused && msg.error?.code === 'session_paused') break;
                 this.onSystemLog(`Error: ${msg.error?.message || msg.error}`);
                 break;
 
@@ -420,15 +369,6 @@ export class RealtimeSession {
                 if (msg.audio_data) {
                     this.audioPlayer.playChunk(msg.audio_data, performance.now());
                 }
-                break;
-            case 'paused':
-                this.serverPauseConfirmed = true;
-                this._tryCompletePause();
-                break;
-            case 'resumed':
-                this.paused = false;
-                this.pauseState = 'active';
-                this.onPauseStateChange('active');
                 break;
             case 'stopped':
                 this.onSystemLog('Session stopped');
@@ -596,19 +536,4 @@ export class RealtimeSession {
         }
     }
 
-    _tryCompletePause() {
-        if (this.pauseState !== 'pausing') return;
-        if (!this.serverPauseConfirmed) return;
-        const ap = this.audioPlayer;
-        if (ap.playing && ap.ctx && ap.nextTime > ap.ctx.currentTime + 0.05) {
-            setTimeout(() => this._tryCompletePause(), 100);
-            return;
-        }
-        if (ap.turnActive) ap.endTurn();
-        this.pauseState = 'paused';
-        this.paused = true;
-        this.onPauseStateChange('paused');
-        this.onMetrics({ type: 'state', sessionState: 'Paused' });
-        this.onSystemLog('Session paused');
-    }
 }
