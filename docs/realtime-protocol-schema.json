@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "minicpm-o-realtime-protocol-v2",
   "title": "MiniCPM-o Realtime API Protocol Schema",
-  "description": "WebSocket JSON message schema for MiniCPM-o Realtime API. Supports two modes: video duplex (mode=video) and audio duplex (mode=audio). Audio: 16kHz float32 PCM (input), 24kHz float32 PCM (output). Video: JPEG base64.",
+  "description": "WebSocket JSON message schema for MiniCPM-o Realtime API. Endpoint: wss://host/v1/realtime?mode={video|audio}[&session_id=xxx]. session_id is optional — if omitted the server generates one (rt_{timestamp_ms}). session.created returns the effective session_id. Audio: 16kHz float32 PCM (input), 24kHz float32 PCM (output). Video: JPEG base64.",
 
   "definitions": {
 

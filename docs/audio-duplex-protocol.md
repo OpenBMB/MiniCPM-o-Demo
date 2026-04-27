@@ -15,7 +15,7 @@
 
 | 项目 | 值 |
 |------|-----|
-| 端点 | `wss://host/v1/realtime?mode=audio&session_id=xxx` |
+| 端点 | `wss://host/v1/realtime?mode=audio`（`session_id` 可选，见下） |
 | 帧格式 | JSON 文本帧 |
 | 上行音频 | **16 kHz**，单声道，float32 PCM，base64 编码 |
 | 下行音频 | **24 kHz**，单声道，float32 PCM，base64 编码 |
@@ -37,11 +37,16 @@
 
 ### Setup
 
+连接 URL：`wss://host/v1/realtime?mode=audio[&session_id=xxx]`
+
+- `session_id` **可选**。客户端可传入自定义 ID 用于日志追踪；省略时服务端自动生成（格式 `rt_{timestamp_ms}`）。
+- `session.created` 返回的 `session_id` 即最终生效值（传了用客户端的，没传用服务端的）。
+
 ```
 Client  ──WSS──→  Server
                   ← session.queued / queue_update / queue_done  (排队，可能跳过)
 Client  → session.update      "我要中文助手，用这个音色"
-Server  → session.created     "好的，准备就绪"
+Server  → session.created     "好的，准备就绪，session_id=xxx"
 ```
 
 ### Stream
