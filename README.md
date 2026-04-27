@@ -327,6 +327,12 @@ docker compose up -d
 <br/>
 
 
+## C++ Backend (llama.cpp)
+
+This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling you to run MiniCPM-o 4.5 on lower-spec consumer hardware. See the [side-comni branch](https://github.com/chmod777john/MiniCPM-o-Demo/tree/side-comni) for setup instructions and details.
+
+---
+
 ## Known Issues and Improvement Plans
 
 - In Turn-based Chat mode, image input is temporarily unavailable — only audio and text input are supported. An image Q&A mode will be split out soon.

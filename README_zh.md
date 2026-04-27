@@ -330,6 +330,12 @@ docker compose up -d
 <br/>
 
 
+## C++ 后端（llama.cpp）
+
+本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以在更低配置的消费级设备上运行 MiniCPM-o 4.5。详见 [side-comni 分支](https://github.com/chmod777john/MiniCPM-o-Demo/tree/side-comni)。
+
+---
+
 ## 已知问题和改进计划
 
 - 轮次对话模式下，图片输入暂时不可用，仅支持音频和文本输入，近期会拆分出图片问答模式。
