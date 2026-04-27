@@ -98,7 +98,7 @@
             "type": "array",
             "items": { "$ref": "#/definitions/base64_string" },
             "maxItems": 4,
-            "description": "JPEG frames, base64-encoded. Required in video mode, forbidden in audio mode."
+            "description": "JPEG frames, base64-encoded. Recommended in video mode; behavior is undefined if sent in audio mode."
           },
           "force_listen":   { "type": "boolean", "default": false, "description": "Force model into listen state (interrupt speaking)" },
           "max_slice_nums": { "type": "integer", "minimum": 1, "maximum": 9, "description": "Override vision slices for this chunk (video mode only)" }
@@ -139,13 +139,6 @@
           "audio":           { "$ref": "#/definitions/base64_string", "description": "24kHz mono float32 PCM, base64-encoded. Middle chunks = 1s (24000 samples), first/last chunk may be shorter" },
           "end_of_turn":     { "type": "boolean", "description": "Turn EOS: true when model finishes this utterance and is about to switch back to listen" },
           "kv_cache_length": { "type": "integer", "minimum": 0, "description": "Current KV cache token count (max 8192)" },
-          "cost_all_ms":     { "type": "number", "minimum": 0, "description": "Total inference time (ms)" },
-          "cost_llm_ms":     { "type": "number", "minimum": 0, "description": "LLM forward time (ms)" },
-          "cost_tts_ms":     { "type": "number", "minimum": 0, "description": "TTS synthesis time (ms)" },
-          "wall_clock_ms":   { "type": "number", "minimum": 0, "description": "Wall-clock time from chunk receipt to result send (ms)" },
-          "n_tokens":        { "type": "integer", "minimum": 0, "description": "Number of LLM tokens generated" },
-          "vision_slices":   { "type": "integer", "minimum": 0, "description": "Number of vision slices processed (video mode only)" },
-          "vision_tokens":   { "type": "integer", "minimum": 0, "description": "Number of vision tokens consumed (video mode only)" },
           "source":          { "type": "string", "description": "Audio source tag (e.g. 'tts_async')" }
         }
       },
@@ -156,11 +149,7 @@
         "additionalProperties": false,
         "properties": {
           "type":            { "const": "response.listen" },
-          "kv_cache_length": { "type": "integer", "minimum": 0 },
-          "cost_all_ms":     { "type": "number", "minimum": 0 },
-          "wall_clock_ms":   { "type": "number", "minimum": 0 },
-          "vision_slices":   { "type": "integer", "minimum": 0, "description": "Video mode only" },
-          "vision_tokens":   { "type": "integer", "minimum": 0, "description": "Video mode only" }
+          "kv_cache_length": { "type": "integer", "minimum": 0 }
         }
       },
 

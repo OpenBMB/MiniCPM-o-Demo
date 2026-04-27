@@ -8,7 +8,7 @@
 // Layer 0: Pure logic
 import { AudioDeviceSelector } from '../lib/audio-device-selector.js';
 import { resampleAudio, arrayBufferToBase64, escapeHtml } from '../duplex/lib/duplex-utils.js';
-import { DuplexSession } from '../duplex/lib/duplex-session.js';
+import { RealtimeSession } from '../duplex/lib/realtime-session.js';
 import { SessionRecorder } from '../duplex/lib/session-recorder.js';
 import { measureLUFS } from '../duplex/lib/lufs.js';
 import { MixerController } from '../duplex/lib/mixer-controller.js';
@@ -19,7 +19,6 @@ import {
     getStatusPanelHTML,
     initHealthCheck,
     loadFrontendDefaults,
-    setDefaultPauseBtnState,
     setDefaultForceListenBtnState,
     setDuplexButtonStates,
     setQueueButtonStates,
@@ -835,10 +834,14 @@ async function startSession() {
         });
     }
 
-    session = new DuplexSession('adx', {
+    session = new RealtimeSession('adx', {
         getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
+        getWsUrl: (sessionId) => {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            return `${proto}://${location.host}/v1/realtime?mode=audio&session_id=${sessionId}`;
+        },
     });
 
     setStatusLamp('preparing');
@@ -856,21 +859,6 @@ async function startSession() {
     session.onSpeakEnd = () => scrollChatLog();
     session.onListenResult = (result) => { if (result.text) addUserLog(result.text); };
     session.onRunningChange = (running) => setDuplexButtonStates(running);
-    session.onPauseStateChange = (state) => {
-        setDefaultPauseBtnState(state);
-        if (session && session.running) {
-            if (state === 'active') setStatusLamp('live');
-            else if (state === 'paused') setStatusLamp('preparing');
-        }
-        // Pause/resume media provider and recording to keep timeline aligned
-        if (state === 'paused' || state === 'pausing') {
-            if (media && media.pause) media.pause();
-            if (sessionRecorder && sessionRecorder.pause) sessionRecorder.pause();
-        } else if (state === 'active') {
-            if (media && media.resume) media.resume();
-            if (sessionRecorder && sessionRecorder.resume) sessionRecorder.resume();
-        }
-    };
     session.onQueueUpdate = (data) => {
         const lamp = document.getElementById('statusLamp');
         if (data) {
@@ -905,6 +893,34 @@ async function startSession() {
         await playSessionChime();
     };
     session.onForceListenChange = (active) => setDefaultForceListenBtnState(active);
+
+    // Protocol Data Flow panel
+    const flowLog = document.getElementById('flowLog');
+    const flowBadge = document.getElementById('flowBadge');
+    let flowCount = 0;
+    session.onProtocolEvent = (entry) => {
+        flowCount++;
+        if (flowBadge) flowBadge.textContent = flowCount;
+        if (!flowLog) return;
+        const div = document.createElement('div');
+        const cls = entry.type.includes('listen') ? ' is-listen'
+            : entry.type.includes('audio.delta') || entry.type.includes('speak') ? ' is-speak'
+            : entry.type.includes('error') ? ' is-error' : '';
+        div.className = `flow-entry${cls}`;
+        const ts = new Date(entry.ts).toLocaleTimeString('en', { hour12: false, fractionalSecondDigits: 1 });
+        const arrow = entry.dir === 'client' ? '→' : '←';
+        div.innerHTML = `<span class="flow-ts">${ts}</span><span class="flow-arrow ${entry.dir}">${arrow}</span><span class="flow-type">${entry.type}</span><span class="flow-summary">${entry.summary}</span>`;
+        flowLog.appendChild(div);
+        flowLog.scrollTop = flowLog.scrollHeight;
+    };
+    const btnClearFlow = document.getElementById('btnClearFlow');
+    if (btnClearFlow) btnClearFlow.onclick = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (flowLog) flowLog.innerHTML = '';
+        flowCount = 0;
+        if (flowBadge) flowBadge.textContent = '0';
+    };
+
     session.onCleanup = () => {
         _duplexCountdown.stop();
         if (_stopDingDong) { _stopDingDong(); _stopDingDong = null; }
@@ -959,14 +975,14 @@ async function startSession() {
     document.getElementById('chatEmpty').style.display = 'none';
     addSystemLog('Connecting...' + (recEnabled ? ' (recording enabled)' : ''));
 
-    // Build prepare payload
+    // Build prepare payload (new protocol field names)
     const preparePayload = {
-        config: { length_penalty: parseFloat(document.getElementById('duplexLengthPenalty').value) || 1.05 },
+        voice_config: { length_penalty: parseFloat(document.getElementById('duplexLengthPenalty').value) || 1.05 },
     };
     const refBase64 = refAudio.getBase64();
-    if (refBase64) preparePayload.ref_audio_base64 = refBase64;
+    if (refBase64) preparePayload.ref_audio = refBase64;
     const ttsRef = duplexTtsRef.getBase64();
-    if (ttsRef && ttsRef !== refBase64) preparePayload.tts_ref_audio_base64 = ttsRef;
+    if (ttsRef && ttsRef !== refBase64) preparePayload.tts_ref_audio = ttsRef;
 
     try {
         // Wire AI audio recording hook
@@ -1016,7 +1032,6 @@ async function startSession() {
     }
 }
 
-function pauseSession() { if (session) session.pauseToggle(); }
 function stopSession() {
     if (!session) return;
     if (_queuePhase) { session.cancelQueue(); } else { session.stop(); }
@@ -1072,7 +1087,7 @@ async function startMicrophone() {
 wireDuplexControls({
     onStart: startSession,
     onStop: stopSession,
-    onPause: pauseSession,
+    onPause: () => {},
     onForceListen: toggleForceListen,
 });
 

@@ -30,7 +30,7 @@ from io import BytesIO
 import httpx
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Body
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -169,6 +169,48 @@ async def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
     }
+
+
+# ============ 前端诊断日志 (用于排查录音故障) ============
+
+_DEBUG_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".run-logs")
+_DEBUG_LOG_PATH = os.path.join(_DEBUG_LOG_DIR, "mobile-record-trace.jsonl")
+_DEBUG_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB rolling cap
+
+
+def _append_debug_trace(payload: Dict[str, Any]) -> None:
+    """Append a single JSON line to the rolling debug log."""
+    try:
+        os.makedirs(_DEBUG_LOG_DIR, exist_ok=True)
+        # Roll over if oversized.
+        try:
+            if os.path.exists(_DEBUG_LOG_PATH) and os.path.getsize(_DEBUG_LOG_PATH) > _DEBUG_LOG_MAX_BYTES:
+                rolled = _DEBUG_LOG_PATH + ".1"
+                if os.path.exists(rolled):
+                    os.remove(rolled)
+                os.rename(_DEBUG_LOG_PATH, rolled)
+        except OSError:
+            pass
+        record = {
+            "ts": datetime.now().isoformat(timespec="milliseconds"),
+            **payload,
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("failed to write mobile record trace: %s", exc)
+
+
+@app.post("/api/_debug/record_trace")
+async def post_record_trace(payload: Dict[str, Any]):
+    """Receive a recording-session trace from the mobile frontend.
+
+    The frontend posts one record per press-to-talk attempt with the
+    full event timeline so we can diagnose failures (overlay shown but
+    no audio captured) without asking users to copy console logs.
+    """
+    _append_debug_trace(payload)
+    return {"ok": True}
 
 
 @app.get("/status", response_model=ServiceStatus)
@@ -342,7 +384,10 @@ async def chat_ws_proxy(ws: WebSocket):
         # 连接 Worker WebSocket
         import websockets
         ws_url = f"ws://{assigned_worker.host}:{assigned_worker.port}/ws/chat"
-        worker_ws = await websockets.connect(ws_url)
+        # max_size on the client side caps how large an *incoming* frame can
+        # be from the worker; chat chunks are small but we bump it for
+        # symmetry with the gateway uvicorn config.
+        worker_ws = await websockets.connect(ws_url, max_size=128 * 1024 * 1024)
 
         # 转发请求
         await worker_ws.send(raw)
@@ -510,6 +555,143 @@ async def half_duplex_ws(ws: WebSocket, session_id: str):
             duration = (datetime.now() - task_start).total_seconds() if task_start else 0
             worker_pool.release_worker(worker, request_type="half_duplex_audio", duration_s=duration)
             logger.info(f"Half-Duplex WS ended: session={session_id}, Worker released ({duration:.1f}s)")
+
+
+# ============ Half-Duplex Omni WebSocket（音频+视频，独占 Worker，FIFO 排队 + 代理） ============
+
+@app.websocket("/ws/half_duplex_omni/{session_id}")
+async def half_duplex_omni_ws(ws: WebSocket, session_id: str):
+    """Half-Duplex Omni WebSocket 代理
+
+    与 half_duplex_ws 相同的排队+代理模式，目标 Worker 端点为 /ws/half_duplex_omni。
+    """
+    if not app_registry.is_enabled("half_duplex_omni"):
+        await ws.close(code=1008, reason="Half-Duplex Omni is currently disabled")
+        return
+    if worker_pool is None:
+        await ws.close(code=1013, reason="Service not ready")
+        return
+
+    session_id = _sanitize_session_id(session_id)
+    await ws.accept()
+
+    try:
+        ticket, future = worker_pool.enqueue("half_duplex_omni", session_id=session_id)
+    except WorkerPool.QueueFullError:
+        await ws.send_json({
+            "type": "error",
+            "error": f"Queue full ({worker_pool.max_queue_size} requests)",
+        })
+        await ws.close(code=1013, reason="Queue full")
+        return
+
+    worker: Optional[WorkerConnection] = None
+    if future.done():
+        worker = future.result()
+    else:
+        try:
+            await ws.send_json({
+                "type": "queued",
+                "position": ticket.position,
+                "estimated_wait_s": ticket.estimated_wait_s,
+                "ticket_id": ticket.ticket_id,
+                "queue_length": worker_pool.queue_length,
+            })
+            while not future.done():
+                try:
+                    worker = await asyncio.wait_for(
+                        asyncio.shield(future), timeout=3.0
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    updated = worker_pool.get_ticket(ticket.ticket_id)
+                    if updated:
+                        await ws.send_json({
+                            "type": "queue_update",
+                            "position": updated.position,
+                            "estimated_wait_s": updated.estimated_wait_s,
+                            "queue_length": worker_pool.queue_length,
+                        })
+                except asyncio.CancelledError:
+                    worker_pool.cancel(ticket.ticket_id)
+                    return
+        except (WebSocketDisconnect, Exception) as e:
+            logger.info(f"Half-Duplex-Omni WS disconnected during queue: session={session_id} ({e})")
+            worker_pool.cancel(ticket.ticket_id)
+            return
+        if worker is None and future.done():
+            worker = future.result()
+
+    if worker is None:
+        await ws.send_json({"type": "error", "error": "No worker available"})
+        await ws.close(code=1013, reason="No worker available")
+        return
+
+    await ws.send_json({"type": "queue_done"})
+    logger.info(f"Half-Duplex-Omni WS connected: session={session_id} → {worker.worker_id}")
+
+    worker.mark_busy(GatewayWorkerStatus.BUSY_HALF_DUPLEX, "half_duplex_omni", session_id=session_id)
+    task_start = datetime.now()
+
+    worker_ws = None
+
+    try:
+        import websockets
+        ws_url = f"ws://{worker.host}:{worker.port}/ws/half_duplex_omni?session_id={session_id}"
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                worker_ws = await websockets.connect(ws_url, open_timeout=5)
+                break
+            except Exception as conn_err:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Half-Duplex-Omni WS connect to {worker.worker_id} failed (attempt {attempt + 1}): "
+                        f"{conn_err}, retrying in 1s..."
+                    )
+                    await asyncio.sleep(1.0)
+                else:
+                    raise
+
+        async def client_to_worker():
+            try:
+                async for raw in ws.iter_text():
+                    await worker_ws.send(raw)
+            except WebSocketDisconnect:
+                pass
+
+        async def worker_to_client():
+            try:
+                async for raw in worker_ws:
+                    await ws.send_text(raw)
+            except Exception:
+                pass
+
+        done, pending = await asyncio.wait(
+            [
+                asyncio.create_task(client_to_worker()),
+                asyncio.create_task(worker_to_client()),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+
+    except Exception as e:
+        logger.error(f"Half-Duplex-Omni WS error: {e}", exc_info=True)
+    finally:
+        if worker_ws:
+            try:
+                await worker_ws.close()
+            except Exception:
+                pass
+
+        if worker:
+            duration = (datetime.now() - task_start).total_seconds() if task_start else 0
+            worker_pool.release_worker(worker, request_type="half_duplex_omni", duration_s=duration)
+            logger.info(f"Half-Duplex-Omni WS ended: session={session_id}, Worker released ({duration:.1f}s)")
 
 
 # ============ 前端诊断日志写入 ============
@@ -690,7 +872,11 @@ async def duplex_ws(ws: WebSocket, session_id: str):
 
         if worker:
             duration = (datetime.now() - task_start).total_seconds() if task_start else 0
-            worker_pool.release_worker(worker, request_type=duplex_type, duration_s=duration)
+            worker_pool.release_worker(
+                worker,
+                request_type=duplex_type,
+                duration_s=duration,
+            )
             logger.info(f"Duplex WS ended: session={session_id}, type={duplex_type}, Worker released ({duration:.1f}s)")
 
 
@@ -1031,9 +1217,11 @@ async def update_eta_config(new_config: EtaConfig):
     alpha_str = f", ema_alpha={new_config.ema_alpha}" if new_config.ema_alpha is not None else ""
     logger.info(
         f"ETA config updated: chat={new_config.eta_chat_s}s, "
+        f"streaming={new_config.eta_streaming_s}s, "
         f"half_duplex={new_config.eta_half_duplex_s}s, "
         f"audio_duplex={new_config.eta_audio_duplex_s}s, "
-        f"omni_duplex={new_config.eta_omni_duplex_s}s{alpha_str}"
+        f"omni_duplex={new_config.eta_omni_duplex_s}s, "
+        f"duplex={new_config.eta_duplex_s}s{alpha_str}"
     )
     return worker_pool.eta_tracker.get_status()
 
@@ -1060,6 +1248,40 @@ async def list_cache():
 # ============ Session API ============
 
 _BASE_DIR = os.path.dirname(__file__)
+
+
+def _list_active_sessions_payload() -> Dict[str, Any]:
+    """Gateway 当前占用 Worker 的会话列表（Admin / 测试共用）。"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    sessions: List[Dict[str, Any]] = []
+    for w in worker_pool.workers.values():
+        if not w.current_session_id:
+            continue
+        last_active = w.last_heartbeat or w.task_started_at or datetime.now()
+        sessions.append(
+            {
+                "session_id": w.current_session_id,
+                "worker_id": w.worker_id,
+                "messages_hash": w.cached_hash or "",
+                "last_active": last_active.isoformat()
+                if hasattr(last_active, "isoformat")
+                else str(last_active),
+            }
+        )
+    return {"total": len(sessions), "sessions": sessions}
+
+
+@app.get("/sessions")
+async def list_active_sessions():
+    """列出活跃会话（与 admin.html `GET /sessions` 一致）。"""
+    return _list_active_sessions_payload()
+
+
+@app.get("/api/sessions")
+async def list_active_sessions_api():
+    """同 list_active_sessions，REST 风格路径便于与 `/api/sessions/{id}` 并列。"""
+    return _list_active_sessions_payload()
 
 
 def _session_dir(session_id: str) -> str:
@@ -1198,6 +1420,59 @@ async def upload_session_recording(session_id: str, file: UploadFile = File(...)
     return {"status": "ok", "path": f"frontend_replay{ext}", "size_bytes": total}
 
 
+_COMMENT_MAX_CHARS = 2000
+
+
+@app.post("/api/sessions/{session_id}/comment")
+async def save_session_comment(session_id: str, payload: Dict[str, Any] = Body(...)):
+    """保存用户对该 session 的评语，写入 data/sessions/{session_id}/comment.txt"""
+    sdir = _session_dir(session_id)
+    if not os.path.isdir(sdir):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    raw = payload.get("comment")
+    if raw is None:
+        raw = ""
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="comment must be a string")
+    comment = raw.strip()
+    if len(comment) > _COMMENT_MAX_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Comment too long (max {_COMMENT_MAX_CHARS} chars)",
+        )
+
+    dest = os.path.join(sdir, "comment.txt")
+    if comment:
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(comment)
+    else:
+        # Empty comment ⇒ remove any prior comment file so it doesn't linger.
+        try:
+            os.remove(dest)
+        except FileNotFoundError:
+            pass
+
+    logger.info(f"[Session] comment saved: {session_id} ({len(comment)} chars)")
+    return {"status": "ok", "len": len(comment)}
+
+
+@app.get("/api/sessions/{session_id}/comment")
+async def get_session_comment(session_id: str):
+    """读取 session 的评语；不存在则返回空字符串。"""
+    sdir = _session_dir(session_id)
+    if not os.path.isdir(sdir):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    dest = os.path.join(sdir, "comment.txt")
+    if not os.path.exists(dest):
+        return {"comment": ""}
+    try:
+        with open(dest, "r", encoding="utf-8") as f:
+            return {"comment": f.read()}
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/s/{session_id}", response_class=HTMLResponse)
 async def session_viewer(session_id: str):
     """Session 回看页面"""
@@ -1287,6 +1562,17 @@ async def half_duplex():
     if os.path.exists(page_path):
         return FileResponse(page_path)
     return HTMLResponse("<h1>Half-Duplex Audio</h1><p>Page not found</p>")
+
+
+@app.get("/half_duplex_omni", response_class=HTMLResponse)
+async def half_duplex_omni():
+    """Half-Duplex Omni Demo 页面（音频+视频）"""
+    if not app_registry.is_enabled("half_duplex_omni"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "half-duplex-omni", "half_duplex_omni.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Half-Duplex Omni</h1><p>Page not found</p>")
 
 
 @app.get("/audio_duplex", response_class=HTMLResponse)
@@ -1431,7 +1717,6 @@ async def realtime_ws(ws: WebSocket):
                     msg_type = msg.get("type", "")
 
                     if msg_type == "session.update":
-                        # Translate session.update → prepare
                         session_cfg = msg.get("session", {})
                         worker_msg = {
                             "type": "prepare",
@@ -1486,12 +1771,7 @@ async def realtime_ws(ws: WebSocket):
                         if msg.get("is_listen"):
                             await ws.send_json({
                                 "type": "response.listen",
-                                "current_time": msg.get("current_time"),
                                 "kv_cache_length": kv_len,
-                                "cost_all_ms": msg.get("cost_all_ms"),
-                                "wall_clock_ms": msg.get("wall_clock_ms"),
-                                "vision_slices": msg.get("vision_slices"),
-                                "vision_tokens": msg.get("vision_tokens"),
                             })
                         else:
                             await ws.send_json({
@@ -1499,15 +1779,7 @@ async def realtime_ws(ws: WebSocket):
                                 "text": msg.get("text", ""),
                                 "audio": msg.get("audio_data"),
                                 "end_of_turn": msg.get("end_of_turn", False),
-                                "current_time": msg.get("current_time"),
                                 "kv_cache_length": kv_len,
-                                "cost_all_ms": msg.get("cost_all_ms"),
-                                "cost_llm_ms": msg.get("cost_llm_ms"),
-                                "cost_tts_ms": msg.get("cost_tts_ms"),
-                                "wall_clock_ms": msg.get("wall_clock_ms"),
-                                "n_tokens": msg.get("n_tokens"),
-                                "vision_slices": msg.get("vision_slices"),
-                                "vision_tokens": msg.get("vision_tokens"),
                             })
                         if kv_len >= 8192 and not session_closed.is_set():
                             logger.info(f"Realtime context full (kv={kv_len}): session={session_id}")
@@ -1573,7 +1845,6 @@ async def realtime_ws(ws: WebSocket):
                 worker,
                 request_type=duplex_type,
                 duration_s=duration,
-                post_release_status=GatewayWorkerStatus.LOADING,
             )
             logger.info(f"Realtime WS ended: session={session_id}, Worker released ({duration:.1f}s)")
 
@@ -1670,11 +1941,10 @@ def main():
     # Worker 地址：优先命令行，否则根据 num_workers 自动生成
     if args.workers:
         worker_list = args.workers.split(",")
-    elif args.num_workers:
+    elif args.num_workers is not None:
         worker_list = cfg.worker_addresses(args.num_workers)
     else:
-        # 默认 1 个 Worker
-        worker_list = cfg.worker_addresses(1)
+        worker_list = cfg.worker_addresses(cfg.num_workers)
 
     GATEWAY_CONFIG.update({
         "workers": worker_list,
@@ -1708,7 +1978,16 @@ def main():
     else:
         logger.warning("Running in HTTP mode (no TLS). Browser microphone/camera APIs may not work.")
 
-    uvicorn.run(app, host=args.host, port=port, **ssl_kwargs)
+    # Bump WS max payload from uvicorn's 16 MiB default to 128 MiB so that
+    # base64-encoded video attachments coming in from the browser can be
+    # proxied to a worker without being rejected with code 1009.
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=port,
+        ws_max_size=128 * 1024 * 1024,
+        **ssl_kwargs,
+    )
 
 
 if __name__ == "__main__":

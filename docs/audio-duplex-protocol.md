@@ -19,7 +19,7 @@
 | 帧格式 | JSON 文本帧 |
 | 上行音频 | **16 kHz**，单声道，float32 PCM，base64 编码 |
 | 下行音频 | **24 kHz**，单声道，float32 PCM，base64 编码 |
-| 上行视频 | **不支持**。`video_frames` 字段不允许出现 |
+| 上行视频 | 不建议发送。携带 `video_frames` 时行为未定义 |
 | 会话总时长上限 | **600 秒（10 分钟）**，含所有等待和空闲时间 |
 | 有效对话时间 | 待补充 |
 | 上下文窗口 | **8192 tokens**，不可配置。满时服务端主动关闭会话 |
@@ -128,7 +128,7 @@ Server  → session.created     "好的，准备就绪"
 | `audio` | string | **是** | 16 kHz 单声道 float32 PCM，1 秒 = 16000 samples = 64000 bytes，base64 编码。最小 4000 samples (250ms) |
 | `force_listen` | bool | 否 | 强制模型进入 listen 状态（打断模型说话），默认 false |
 
-> 音频双工模式**不允许**携带 `video_frames` 字段。发了会返回 `invalid_payload` 错误。
+> 音频双工模式下不建议携带 `video_frames` 字段，携带时行为未定义。
 
 ### session.close（客户端 → 服务端）
 
@@ -161,11 +161,7 @@ Server  → session.created     "好的，准备就绪"
     "text": "今天天气真好",
     "audio": "<base64, 24000 samples = 1s, float32 PCM>",
     "end_of_turn": false,
-    "kv_cache_length": 1024,
-    "cost_all_ms": 450,
-    "cost_llm_ms": 200,
-    "cost_tts_ms": 150,
-    "wall_clock_ms": 480
+    "kv_cache_length": 1024
 }
 ```
 
@@ -175,10 +171,6 @@ Server  → session.created     "好的，准备就绪"
 | `audio` | string | 是 | 24 kHz 单声道 float32 PCM，base64 编码 |
 | `end_of_turn` | bool | 是 | 本轮生成是否结束（turn EOS）。true 时表示模型说完了这句话，即将切回 listen |
 | `kv_cache_length` | int | 是 | 当前 KV 缓存已使用 token 数（上限 8192） |
-| `cost_all_ms` | number | 否 | 总推理耗时（毫秒） |
-| `cost_llm_ms` | number | 否 | LLM forward 耗时（毫秒） |
-| `cost_tts_ms` | number | 否 | TTS 合成耗时（毫秒） |
-| `wall_clock_ms` | number | 否 | 从收到 chunk 到发出结果的墙钟时间（毫秒） |
 
 #### 关于文字与音频的对齐
 
@@ -207,9 +199,7 @@ Server  → session.created     "好的，准备就绪"
 ```json
 {
     "type": "response.listen",
-    "kv_cache_length": 1024,
-    "cost_all_ms": 120,
-    "wall_clock_ms": 130
+    "kv_cache_length": 1024
 }
 ```
 
@@ -310,7 +300,7 @@ Client:  session.close ──→
              │ 收到 session.created
              ▼
     ┌──── ACTIVE ─────┐
-    │                  │    允许发: append (不含 video_frames) / close
+    │                  │    允许发: append / close
     │                  │    append 中可携带 force_listen=true
     └────────┬─────────┘
              │ close / timeout / context_full / 异常
@@ -329,7 +319,7 @@ Client:  session.close ──→
 | `not_ready` | 会话未建立就发数据 | 否 |
 | `unknown_event` | 不认识的事件 type | 否 |
 | `missing_field` | 必填字段缺失 | 否 |
-| `invalid_payload` | 字段值非法（base64 解码失败、音频双工模式下携带了 video_frames） | 否 |
+| `invalid_payload` | 字段值非法（base64 解码失败等） | 否 |
 
 ### 服务端错误
 
@@ -348,7 +338,7 @@ Client:  session.close ──→
     "type": "error",
     "error": {
         "code": "invalid_payload",
-        "message": "video_frames is not allowed in audio duplex mode",
+        "message": "audio base64 decode failed",
         "type": "client_error"
     }
 }

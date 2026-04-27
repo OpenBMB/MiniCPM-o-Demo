@@ -69,19 +69,7 @@ export class MetricsPanel {
             if (el) el.textContent = data.chunksSent;
         }
 
-        // Latency
-        if (data.latencyMs) {
-            const el = this._el('latencyDisplay');
-            if (el) {
-                if (data.costAllMs !== undefined && data.costAllMs > 0) {
-                    el.textContent = `${Math.round(data.latencyMs)}ms (${Math.round(data.costAllMs)})`;
-                    el.title = `wall_clock=${Math.round(data.latencyMs)}ms, cost_all=${Math.round(data.costAllMs)}ms, prefill\u2248${Math.round(data.latencyMs - data.costAllMs)}ms`;
-                } else {
-                    el.textContent = `${Math.round(data.latencyMs)}ms`;
-                    el.title = `cost_all_ms=${Math.round(data.latencyMs)}ms`;
-                }
-            }
-        }
+        // Latency (removed cost fields from protocol)
 
         // TTFS
         if (data.ttfsMs) {

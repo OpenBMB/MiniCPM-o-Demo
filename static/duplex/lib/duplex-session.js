@@ -436,16 +436,12 @@ export class DuplexSession {
             // Emit result metrics
             this.onMetrics({
                 type: 'result',
-                latencyMs: result.wall_clock_ms || result.cost_all_ms || 0,
-                costAllMs: result.cost_all_ms,
                 driftMs: this._lastDriftMs,
                 kvCacheLength: result.kv_cache_length,
                 maxKvTokens: maxKv,
                 ttfsMs: (!result.is_listen && this._lastTTFS) ? this._lastTTFS : null,
                 modelState: result.is_listen ? 'listening' : (result.end_of_turn ? 'end_of_turn' : 'speaking'),
                 chunksSent: this.chunksSent,
-                visionSlices: result.vision_slices,
-                visionTokens: result.vision_tokens,
             });
 
             // Clear TTFS after emitting

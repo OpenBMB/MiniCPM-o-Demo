@@ -191,6 +191,20 @@
         </div>
     </div>
 
+    <!-- Protocol Data Flow (collapsible debug panel) -->
+    <details class="panel-flow" id="panelFlow">
+        <summary class="flow-toggle">
+            Protocol Data Flow
+            <span class="flow-badge" id="flowBadge">0</span>
+            <button class="flow-clear-btn" id="btnClearFlow" title="Clear log">Clear</button>
+        </summary>
+        <div class="flow-legend">
+            <span class="flow-tag tag-client">→ Client</span>
+            <span class="flow-tag tag-server">← Server</span>
+        </div>
+        <div class="flow-log" id="flowLog"></div>
+    </details>
+
     </div><!-- /col-right -->
 
     <!-- Controls (spans full width) -->

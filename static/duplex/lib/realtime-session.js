@@ -332,7 +332,7 @@ export class RealtimeSession {
         switch (type) {
             case 'response.listen':
                 this._logProtoEvent('server', 'response.listen',
-                    `kv=${msg.kv_cache_length} cost=${msg.cost_all_ms}ms`, msg);
+                    `kv=${msg.kv_cache_length}`, msg);
                 this._handleListen(msg);
                 break;
 
@@ -407,8 +407,6 @@ export class RealtimeSession {
         const result = {
             is_listen: true,
             kv_cache_length: msg.kv_cache_length,
-            cost_all_ms: msg.cost_all_ms,
-            wall_clock_ms: msg.wall_clock_ms,
         };
 
         this._checkKvCache(result);
@@ -447,13 +445,6 @@ export class RealtimeSession {
             audio_data: msg.audio,
             end_of_turn: msg.end_of_turn || false,
             kv_cache_length: msg.kv_cache_length,
-            cost_all_ms: msg.cost_all_ms,
-            cost_llm_ms: msg.cost_llm_ms,
-            cost_tts_ms: msg.cost_tts_ms,
-            wall_clock_ms: msg.wall_clock_ms,
-            n_tokens: msg.n_tokens,
-            vision_slices: msg.vision_slices,
-            vision_tokens: msg.vision_tokens,
         };
 
         this._checkKvCache(result);
@@ -477,8 +468,6 @@ export class RealtimeSession {
         if (result.is_listen) {
             this._handleListen({
                 kv_cache_length: result.kv_cache_length,
-                cost_all_ms: result.cost_all_ms,
-                wall_clock_ms: result.wall_clock_ms,
             });
         } else {
             this._handleSpeak({
@@ -486,13 +475,6 @@ export class RealtimeSession {
                 audio: result.audio_data,
                 end_of_turn: result.end_of_turn,
                 kv_cache_length: result.kv_cache_length,
-                cost_all_ms: result.cost_all_ms,
-                cost_llm_ms: result.cost_llm_ms,
-                cost_tts_ms: result.cost_tts_ms,
-                wall_clock_ms: result.wall_clock_ms,
-                n_tokens: result.n_tokens,
-                vision_slices: result.vision_slices,
-                vision_tokens: result.vision_tokens,
             });
         }
     }
@@ -502,16 +484,12 @@ export class RealtimeSession {
         requestAnimationFrame(() => {
             this.onMetrics({
                 type: 'result',
-                latencyMs: result.wall_clock_ms || result.cost_all_ms || 0,
-                costAllMs: result.cost_all_ms,
                 driftMs: this._lastDriftMs,
                 kvCacheLength: result.kv_cache_length,
                 maxKvTokens: maxKv,
                 ttfsMs: (!result.is_listen && this._lastTTFS) ? this._lastTTFS : null,
                 modelState: result.is_listen ? 'listening' : (result.end_of_turn ? 'end_of_turn' : 'speaking'),
                 chunksSent: this.chunksSent,
-                visionSlices: result.vision_slices,
-                visionTokens: result.vision_tokens,
             });
             if (!result.is_listen && this._lastTTFS) this._lastTTFS = 0;
         });

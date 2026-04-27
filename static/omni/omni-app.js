@@ -27,7 +27,6 @@ import {
     getMixerPanelHTML,
 } from '../duplex/ui/duplex-ui.js';
 import { startDingDongLoop, playAlarmBell, playSessionChime } from '../duplex/lib/queue-chimes.js';
-import { createTtsRefController } from '../duplex/ui/tts-ref-controller.js';
 import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
 
 // ============================================================================
@@ -44,7 +43,7 @@ let media = null;
 
 // Save & Share
 const _saveShareUI = typeof SaveShareUI !== 'undefined'
-    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'omni_duplex' })
+    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'omni_duplex', collectComment: true })
     : null;
 let selectedFile = null;
 let cameraPreview = null;
@@ -156,6 +155,7 @@ const settingsPersistence = new SettingsPersistence('omni_settings', [
     // Session
     { id: 'playbackDelay', type: 'number' },
     { id: 'maxKvTokens', type: 'number' },
+    { id: 'stopOnKvShrink', type: 'checkbox' },
     { id: 'omniLengthPenalty', type: 'number' },
     { id: 'visionHD', type: 'checkbox' },
     // Fullscreen subtitle
@@ -164,8 +164,6 @@ const settingsPersistence = new SettingsPersistence('omni_settings', [
     { id: 'fsAlphaTop', type: 'number' },
     // System prompt
     { id: 'systemPrompt', type: 'textarea' },
-    // TTS ref mode
-    { type: 'radio', name: 'omniTtsRefMode' },
     // Recording
     { id: 'recCheckbox', type: 'checkbox' },
     // Mixer
@@ -207,11 +205,7 @@ document.getElementById('btnResetSettings')?.addEventListener('click', () => {
 // ============================================================================
 // Ref Audio Management (init before preset so preset can update it)
 // ============================================================================
-const omniTtsRef = createTtsRefController('omni', () => refAudio.getBase64());
-const refAudio = initRefAudio('omniRefAudioPlayer', {
-    onTtsHintUpdate: () => omniTtsRef.updateHint(),
-});
-omniTtsRef.init();
+const refAudio = initRefAudio('omniRefAudioPlayer');
 
 // ============================================================================
 // Preset Selector
@@ -1461,6 +1455,7 @@ async function startSession() {
     session = new RealtimeSession('omni', {
         getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
+        getStopOnSlidingWindow: () => !!document.getElementById('stopOnKvShrink')?.checked,
         outputSampleRate: SAMPLE_RATE_OUT,
     });
     session.onMetrics = (data) => metricsPanel.update(data);
@@ -1603,7 +1598,7 @@ async function startSession() {
                 ? ((recvTime - session._sessionStartTime) / 1000).toFixed(1) : '?';
             _diagEvents.push({
                 ev: 'chunk', n: session._resultCount, t: parseFloat(elapsed),
-                model_ms: result.cost_all_ms || 0,
+                model_ms: 0,
                 drift_ms: session._lastDriftMs,
                 ahead_ms: session.audioPlayer.lastAheadMs || 0,
                 gaps: session.audioPlayer.gapCount || 0,
@@ -1619,15 +1614,13 @@ async function startSession() {
         }, 0);
     };
 
-    // Build prepare payload
+    // Build prepare payload (new protocol field names)
     const preparePayload = {
-        config: { length_penalty: parseFloat(document.getElementById('omniLengthPenalty').value) || 1.0 },
+        voice_config: { length_penalty: parseFloat(document.getElementById('omniLengthPenalty').value) || 1.0 },
         max_slice_nums: getEffectiveMaxSliceNums(),
     };
     const refBase64 = refAudio.getBase64();
-    if (refBase64) preparePayload.ref_audio_base64 = refBase64;
-    const ttsRef = omniTtsRef.getBase64();
-    if (ttsRef && ttsRef !== refBase64) preparePayload.tts_ref_audio_base64 = ttsRef;
+    if (refBase64) preparePayload.ref_audio = refBase64;
 
     try {
         // Wire AI audio recording hook
@@ -1800,11 +1793,6 @@ wireDuplexControls({
 });
 document.getElementById('btnHD')?.addEventListener('click', toggleHD);
 
-// TTS ref mode radios
-document.querySelectorAll('input[name="omniTtsRefMode"]').forEach(radio => {
-    radio.addEventListener('change', () => omniTtsRef.onModeChange());
-});
-
 // ============================================================================
 // Mixer Controller (shared module)
 // ============================================================================
@@ -1837,9 +1825,22 @@ if (document.readyState !== 'loading') {
     document.addEventListener('DOMContentLoaded', () => mixerCtrl.init());
 }
 
-// Cleanup on page unload (release media, WS, AudioContext)
-window.addEventListener('beforeunload', () => {
-    if (session?.running) session.stop();
-});
+// Cleanup on page unload (release media, WS, AudioContext).
+// IMPORTANT: also tear down the live camera preview. If we leave it dangling,
+// the OS-level camera handle may not be released before the next page (e.g.
+// /mobile/ → /mobile-omni/) calls getUserMedia again, producing a black/empty
+// stream on the second entry (especially on Android WebView and iOS Safari).
+// Use pagehide too because iOS Safari is unreliable with beforeunload during
+// same-origin navigations.
+function _cleanupOmniMedia() {
+    try { if (session?.running) session.stop(); } catch (_) {}
+    try { if (media) { media.stop(); media = null; } } catch (_) {}
+    try {
+        if (cameraPreview) { cameraPreview.stopPreview(); cameraPreview = null; }
+    } catch (_) {}
+}
+window.addEventListener('beforeunload', _cleanupOmniMedia);
+window.addEventListener('pagehide', _cleanupOmniMedia);
+window.__omniCleanupMedia = _cleanupOmniMedia;
 
 /* ---------- end of file ---------- */
