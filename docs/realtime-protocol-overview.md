@@ -91,9 +91,27 @@ Server  → session.closed      "好的，再见"
 ```
 时间 ──────────────────────────────────────────────────────────→
 
-Client:  session.update ─┐
-Server:  session.created ←┘
+                           ┌─────────────────────────────────┐
+                           │  Phase 1: 连接 & 排队            │
+                           └─────────────────────────────────┘
+Client:  WSS Connect ─────→
+                           ← Server: session.queued          (你排在第 3 位，约等 45 秒)
+                           ← Server: session.queue_update    (第 2 位，约 20 秒)
+                           ← Server: session.queue_update    (第 1 位，约 5 秒)
+                           ← Server: session.queue_done      (轮到你了！)
 
+  ⚠️ 排队阶段客户端不应发送任何消息，只被动接收排队事件。
+  ⚠️ 如果 Worker 立即可用，排队阶段会被跳过（不会收到 session.queued）。
+
+                           ┌─────────────────────────────────┐
+                           │  Phase 2: 会话初始化              │
+                           └─────────────────────────────────┘
+Client:  session.update ─┐  (发送 system prompt、ref audio 等配置)
+Server:  session.created ←┘  (模型就绪，返回 session_id)
+
+                           ┌─────────────────────────────────┐
+                           │  Phase 3: 全双工对话              │
+                           └─────────────────────────────────┘
 Client:  append(audio₁) ──→
 Client:  append(audio₂) ──→
 Client:  append(audio₃) ──→     ← Server: listen   (模型在听你说话)
@@ -107,8 +125,11 @@ Client:  append(audio₁₀) ─→     ← Server: listen   (说完了，又在
 Client:  append(audio₁₁) ─→
 ...
 
+                           ┌─────────────────────────────────┐
+                           │  Phase 4: 关闭                   │
+                           └─────────────────────────────────┘
 Client:  session.close ──→
-                           ← Server: session.closed
+                           ← Server: session.closed {reason: "stopped"}
 ```
 
 注意：客户端**始终**在发 append，不管服务端是在听还是在说。这就是"全双工"。
@@ -219,17 +240,21 @@ Client:  session.close ──→
 
 | 事件 | 方向 | 用途 |
 |------|------|------|
-| `session.pause` | C→S | 暂停（保留 GPU 资源，不释放模型） |
-| `session.resume` | C→S | 恢复 |
-| `session.paused` | S→C | 暂停确认 |
-| `session.resumed` | S→C | 恢复确认 |
-| `response.done` | S→C | 一次完整回复结束（在 listen 之前） |
-| `response.cancel` | C→S | 取消当前生成（打断） |
 | `session.go_away` | S→C | 服务端即将断连警告 |
 | `session.queued` | S→C | 排队通知（排队期间） |
 | `session.queue_update` | S→C | 排队位置更新 |
 | `session.queue_done` | S→C | 排队结束，Worker 已分配 |
 | `error` | S→C | 错误 |
+
+### 不纳入协议的功能
+
+以下功能**不属于协议层**，由实现层自行处理：
+
+| 功能 | 为什么不需要协议事件 |
+|------|---------------------|
+| **暂停/恢复** | 客户端停止发 `append` 即等效暂停，模型会持续 `listen` 等待。无需 `session.pause`/`resume` 事件 |
+| **取消生成** | 全双工模式下，模型同时在听和说。打断说话用 `force_listen` 字段（已在 `append` 中），不需要独立的 `response.cancel` 事件 |
+| **回复结束标记** | `output_audio.delta` 中的 `end_of_turn=true` 已标记一轮回复结束，不需要额外的 `response.done` 事件 |
 
 ---
 
@@ -247,7 +272,6 @@ Client:  session.close ──→
 |---------------------|------------------------|
 | `session.update` | `prepare` |
 | `input_audio_buffer.append` | `audio_chunk` |
-| `session.pause` | `pause` |
 | `session.close` | `stop` |
 
 | Worker 回的（旧协议） | Gateway 翻译成（新协议） |
@@ -255,7 +279,6 @@ Client:  session.close ──→
 | `prepared` | `session.created` |
 | `result { is_listen: true }` | `response.listen` |
 | `result { is_listen: false }` | `response.output_audio.delta` |
-| `paused` | `session.paused` |
 | `stopped` | `session.closed` |
 
 这意味着：
@@ -351,13 +374,8 @@ Client:  session.close ──→
              │ 收到 session.created
              ▼
     ┌──── ACTIVE ─────┐
-    │                  │    允许发: append / pause / close / force_listen
-    │                  │
-    │                  ├──pause──→ PAUSING
-    │                  │              │ 收到 session.paused
-    │                  │              ▼
-    │                  │           PAUSED ──resume──→ ACTIVE
-    │                  │
+    │                  │    允许发: append / close
+    │                  │    append 中可携带 force_listen=true
     └────────┬─────────┘
              │ close 或 异常
              ▼
@@ -373,7 +391,6 @@ Client:  session.close ──→
 | `append` 缺少 `audio` 字段 | 必填字段缺失 | `missing_field` |
 | `audio` 不是合法的 base64 | 解码失败 | `invalid_payload` |
 | `video_frames` 中的 JPEG 解码失败 | 图片损坏 | `invalid_payload` |
-| 在 `PAUSED` 状态下发 `append` | 暂停期间不接受输入 | `session_paused` |
 | 发送速度过快（队列溢出） | 超出处理能力 | **静默丢弃**（不返回 error） |
 | JSON 解析失败（非法 JSON） | 二进制或损坏的帧 | 直接关闭 WebSocket (1003) |
 
@@ -417,7 +434,6 @@ Client:  session.close ──→
 | `unknown_event` | client_error | 不认识的事件 type | 否 |
 | `missing_field` | client_error | 必填字段缺失 | 否 |
 | `invalid_payload` | client_error | 字段值非法（base64/JPEG 解码失败等） | 否 |
-| `session_paused` | client_error | 暂停期间不接受该操作 | 否 |
 | `service_unavailable` | server_error | 服务未就绪 | 是 (1013) |
 | `queue_full` | server_error | 排队已满 | 是 (1013) |
 | `worker_busy` | server_error | 没有空闲 Worker | 是 (1013) |

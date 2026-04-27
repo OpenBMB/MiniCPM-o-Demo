@@ -24,7 +24,6 @@
             "unknown_event",
             "missing_field",
             "invalid_payload",
-            "session_paused",
             "service_unavailable",
             "queue_full",
             "worker_busy",
@@ -48,10 +47,7 @@
       "oneOf": [
         { "$ref": "#/definitions/client/session.update" },
         { "$ref": "#/definitions/client/input_audio_buffer.append" },
-        { "$ref": "#/definitions/client/session.pause" },
-        { "$ref": "#/definitions/client/session.resume" },
-        { "$ref": "#/definitions/client/session.close" },
-        { "$ref": "#/definitions/client/response.cancel" }
+        { "$ref": "#/definitions/client/session.close" }
       ]
     },
 
@@ -60,9 +56,6 @@
         { "$ref": "#/definitions/server/session.created" },
         { "$ref": "#/definitions/server/response.output_audio.delta" },
         { "$ref": "#/definitions/server/response.listen" },
-        { "$ref": "#/definitions/server/response.done" },
-        { "$ref": "#/definitions/server/session.paused" },
-        { "$ref": "#/definitions/server/session.resumed" },
         { "$ref": "#/definitions/server/session.go_away" },
         { "$ref": "#/definitions/server/session.closed" },
         { "$ref": "#/definitions/server/session.queued" },
@@ -115,25 +108,6 @@
         }
       },
 
-      "session.pause": {
-        "type": "object",
-        "required": ["type"],
-        "additionalProperties": false,
-        "properties": {
-          "type":    { "const": "session.pause" },
-          "timeout": { "type": "number", "minimum": 1, "maximum": 3600, "default": 300, "description": "Max pause duration in seconds before auto-close" }
-        }
-      },
-
-      "session.resume": {
-        "type": "object",
-        "required": ["type"],
-        "additionalProperties": false,
-        "properties": {
-          "type": { "const": "session.resume" }
-        }
-      },
-
       "session.close": {
         "type": "object",
         "required": ["type"],
@@ -141,15 +115,6 @@
         "properties": {
           "type":   { "const": "session.close" },
           "reason": { "type": "string", "description": "Optional close reason" }
-        }
-      },
-
-      "response.cancel": {
-        "type": "object",
-        "required": ["type"],
-        "additionalProperties": false,
-        "properties": {
-          "type": { "const": "response.cancel" }
         }
       }
     },
@@ -204,35 +169,6 @@
         }
       },
 
-      "response.done": {
-        "type": "object",
-        "required": ["type"],
-        "additionalProperties": false,
-        "properties": {
-          "type":         { "const": "response.done" },
-          "current_time": { "type": "integer" }
-        }
-      },
-
-      "session.paused": {
-        "type": "object",
-        "required": ["type"],
-        "additionalProperties": false,
-        "properties": {
-          "type":    { "const": "session.paused" },
-          "timeout": { "type": "number", "description": "Remaining seconds before auto-close" }
-        }
-      },
-
-      "session.resumed": {
-        "type": "object",
-        "required": ["type"],
-        "additionalProperties": false,
-        "properties": {
-          "type": { "const": "session.resumed" }
-        }
-      },
-
       "session.go_away": {
         "type": "object",
         "required": ["type", "reason"],
@@ -252,7 +188,7 @@
           "type":   { "const": "session.closed" },
           "reason": {
             "type": "string",
-            "enum": ["stopped", "timeout", "pause_timeout", "server_shutdown", "error"],
+            "enum": ["stopped", "timeout", "server_shutdown", "error"],
             "description": "Why the session was closed"
           }
         }
