@@ -18,6 +18,9 @@ export class RealtimeSession {
             getStopOnSlidingWindow: config.getStopOnSlidingWindow || (() => false),
             outputSampleRate: config.outputSampleRate || 24000,
             getWsUrl: config.getWsUrl || (() => {
+                const params = new URLSearchParams(location.search);
+                const api = params.get('api');
+                if (api) return api;
                 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
                 return `${proto}://${location.host}/v1/realtime`;
             }),

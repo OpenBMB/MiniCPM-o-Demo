@@ -839,6 +839,9 @@ async function startSession() {
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
         getWsUrl: () => {
+            const params = new URLSearchParams(location.search);
+            const api = params.get('api');
+            if (api) return api;
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
             return `${proto}://${location.host}/v1/realtime?mode=audio`;
         },
@@ -1021,7 +1024,7 @@ async function startSession() {
         setStatusLamp('live');
         addSystemLog('Session active — speak now');
 
-        if (_saveShareUI && session.recordingSessionId) _saveShareUI.setSessionId(session.recordingSessionId);
+        if (_saveShareUI && session.sessionId) _saveShareUI.setSessionId(session.sessionId);
     } catch (e) {
         const isCancelled = e.message?.includes('cancelled');
         if (!isCancelled) addSystemLog(`Error: ${e.message}`);
