@@ -2,7 +2,7 @@
 
 [English Documentation](README.md) | [详细文档](https://openbmb.github.io/MiniCPM-o-Demo/site/zh/index.html)
 
-[可直接使用的在线演示系统](https://openbmb.github.io/MiniCPM-o-Demo/) | [Discord](https://discord.gg/UTbTeCQe) | [飞书群](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
+[可直接使用的在线演示系统](https://minicpmo45.modelbest.cn/) | [Discord](https://discord.gg/UTbTeCQe) | [飞书群](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
 
 本演示系统为 `MiniCPM-o 4.5` 模型训练团队官方提供的演示系统。本演示系统使用 PyTorch + CUDA 推理后端，结合简易的前后端设计，旨在以透明、简洁、无性能损失的方式，全面地演示 MiniCPM-o 4.5 的音视频全模态全双工能力。
 
@@ -332,7 +332,11 @@ docker compose up -d
 
 ## C++ 后端（llama.cpp）
 
-本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以在更低配置的消费级设备上运行 MiniCPM-o 4.5。详见 [side-comni 分支](https://github.com/chmod777john/MiniCPM-o-Demo/tree/side-comni)。
+本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以在更低配置的消费级设备上运行 MiniCPM-o 4.5。详见 [Comni 分支](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/Comni)。
+
+### 桌面端应用（Windows & macOS）
+
+提供 Windows 和 macOS 的开箱即用安装包，前往 [llama.cpp-omni Releases](https://github.com/tc-mb/llama.cpp-omni/releases/) 下载。
 
 ---
 
