@@ -2,7 +2,7 @@
 
 [中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/MiniCPM-o-Demo/site/en/index.html)
 
-[Ready-to-use Demo Website](https://openbmb.github.io/MiniCPM-o-Demo/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
+[Ready-to-use Demo Website](https://minicpmo45.modelbest.cn/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
 
 This demo system is officially provided by the `MiniCPM-o 4.5` model training team. It uses a PyTorch + CUDA inference backend, combined with a lightweight frontend-backend design, aiming to demonstrate the full audio-video omnimodal full-duplex capabilities of MiniCPM-o 4.5 in a transparent, concise, and lossless manner.
 
@@ -329,7 +329,11 @@ docker compose up -d
 
 ## C++ Backend (llama.cpp)
 
-This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling you to run MiniCPM-o 4.5 on lower-spec consumer hardware. See the [side-comni branch](https://github.com/chmod777john/MiniCPM-o-Demo/tree/side-comni) for setup instructions and details.
+This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling you to run MiniCPM-o 4.5 on lower-spec consumer hardware. See the [Comni branch](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/Comni) for setup instructions and details.
+
+### Desktop App (Windows & macOS)
+
+Ready-to-use desktop installers are available for Windows and macOS. Download from [llama.cpp-omni Releases](https://github.com/tc-mb/llama.cpp-omni/releases/).
 
 ---
 
