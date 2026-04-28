@@ -202,8 +202,8 @@ Server  → session.created     "好的，准备就绪，session_id=xxx"
 #### 关于输出音频长度
 
 - **非首个、非末尾的 delta**：音频长度固定为 **1 秒**（24000 samples）
-- **首个 delta**：音频可能短于 1 秒（模型启动延迟）
-- **末尾 delta**（`end_of_turn=true`）：音频可能短于 1 秒（句尾截断）
+- **首个 delta**：音频可能短于 1 秒
+- **末尾 delta**（`end_of_turn=true`）：音频可能短于 1 秒
 
 ### response.listen（服务端 → 客户端）
 
