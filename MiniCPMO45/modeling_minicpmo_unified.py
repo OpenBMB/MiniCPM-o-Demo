@@ -4471,11 +4471,12 @@ class DuplexCapability:
             self._init_token2wav_cache(prompt_wav_path)
             self._reset_token2wav_for_new_turn()
 
-        # Prefill system prompt prefix
+        # Prefill system prompt prefix (batch)
         if prefix_system_prompt:
             tokens = self.tokenizer.encode(prefix_system_prompt, add_special_tokens=False)
-            for token_id in tokens:
-                self.decoder.feed(self.decoder.embed_token(token_id))
+            if tokens:
+                embeds = self.decoder.embed_tokens(tokens)
+                self.decoder.feed(embeds)
 
         # Prefill reference audio
         if ref_audio is not None:
@@ -4508,9 +4509,10 @@ class DuplexCapability:
                     context_previous_marker=context_previous_marker,  # 首次滑窗时动态添加
                 )
 
-                # 现在 feed suffix
-                for token_id in suffix_token_ids:
-                    self.decoder.feed(self.decoder.embed_token(token_id))
+                # 现在 feed suffix (batch)
+                if suffix_token_ids:
+                    suffix_embeds = self.decoder.embed_tokens(suffix_token_ids)
+                    self.decoder.feed(suffix_embeds)
 
                 logger.info(
                     "[Duplex] prepare: context-preserve mode, prefix=%d, suffix=%d tokens, marker='%s'",
@@ -4522,8 +4524,9 @@ class DuplexCapability:
                 # 非 context 保留模式：先 feed suffix，再注册总长度
                 if suffix_system_prompt:
                     tokens = self.tokenizer.encode(suffix_system_prompt, add_special_tokens=False)
-                    for token_id in tokens:
-                        self.decoder.feed(self.decoder.embed_token(token_id))
+                    if tokens:
+                        suffix_embeds = self.decoder.embed_tokens(tokens)
+                        self.decoder.feed(suffix_embeds)
                 self.decoder.register_system_prompt()
 
         if prefix_system_prompt or suffix_system_prompt:
