@@ -8,7 +8,7 @@ instead of the PyTorch backend.
 
 Use the C++ backend when you need:
 
-- Lower VRAM (Q4_K_M needs roughly 9 GB instead of ~22 GB)
+- Lower VRAM
 - Lower TTFT and faster decode on the same hardware
 - A self-contained `llama-server` process that you can also call directly via HTTP
 
@@ -28,6 +28,11 @@ frontend) stays the same — only the inference backend swaps out.
 ---
 
 ## 2. Build `llama-server`
+
+> Prefer not to compile? `tc-mb/llama.cpp-omni` ships pre-built
+> one-click installers (Comni for Windows / macOS) on its
+> [Releases page](https://github.com/tc-mb/llama.cpp-omni/releases/latest).
+> The instructions below are for the from-source path used by this repo.
 
 ```bash
 git clone https://github.com/tc-mb/llama.cpp-omni.git
