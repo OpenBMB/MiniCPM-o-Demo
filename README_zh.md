@@ -8,7 +8,7 @@
 
 什么时候用 C++ 后端：
 
-- 显存吃紧（Q4_K_M 大约 9 GB，PyTorch 路径约 22 GB）
+- 显存吃紧
 - 想要更低的 TTFT 与更快的解码
 - 需要一个独立的 `llama-server` 进程，可单独通过 HTTP 调用
 
@@ -28,6 +28,10 @@
 ---
 
 ## 2. 编译 `llama-server`
+
+> 不想自己编译？`tc-mb/llama.cpp-omni` 在 [Releases 页面](https://github.com/tc-mb/llama.cpp-omni/releases/latest)
+> 提供了一键安装包（Comni for Windows / macOS），下载即用。
+> 下面这一节是给走源码路径（也就是本仓库这套部署方式）的人看的。
 
 ```bash
 git clone https://github.com/tc-mb/llama.cpp-omni.git
