@@ -17,6 +17,48 @@ frontend) stays the same — only the inference backend swaps out.
 
 ---
 
+## TL;DR — Five Commands From Scratch
+
+If you already have the GGUF weights downloaded (see
+[llama.cpp-omni README](https://github.com/tc-mb/llama.cpp-omni/tree/feat/web-demo#prerequisites)),
+this is the whole flow:
+
+```bash
+# 1. Build the C++ engine
+git clone https://github.com/tc-mb/llama.cpp-omni.git
+cd llama.cpp-omni && git checkout feat/web-demo \
+    && cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --target llama-server -j
+cd ..
+
+# 2. Set up this demo (Python venv + mobile frontend build)
+git clone https://github.com/OpenBMB/MiniCPM-o-Demo.git
+cd MiniCPM-o-Demo && git checkout Comni
+bash install.sh
+( cd frontend/mobile && bun install && bun run --bun build:static )   # or `npm`
+
+# 3. Configure (use absolute paths)
+cp config.example.json config.json
+# Edit config.json:
+#   "backend": "cpp"
+#   "cpp_backend.llamacpp_root" = absolute path to ../llama.cpp-omni
+#   "cpp_backend.model_dir"     = absolute path to MiniCPM-o-4_5-gguf
+
+# 4. Launch
+CUDA_VISIBLE_DEVICES=0 bash start_all.sh
+
+# 5. Open in browser
+#    https://localhost:8040/         (desktop)
+#    https://localhost:8040/mobile/  (mobile React)
+```
+
+> First boot loads all GGUF modules and takes 10–60 s. Wait for the worker's
+> `/health` to return `worker_status: "idle"`.
+
+For step-by-step explanations, read on.
+
+---
+
 ## 1. Components You Need
 
 | Piece | Where it comes from | Notes |
@@ -53,11 +95,26 @@ it on demand.
 
 ## 3. Install Python Dependencies
 
-Same as the PyTorch path — see the standard
-[deployment guide](docs/en/deployment.md) for `install.sh` / venv setup.
+Same as the PyTorch path — run [`install.sh`](install.sh):
+
+```bash
+bash install.sh
+```
+
+This creates `.venv/base/` (Python 3.10), upgrades `pip`, installs
+`torch==2.8.0` + `torchaudio==2.8.0`, and finally installs everything in
+[`requirements.txt`](requirements.txt).
 
 The C++ backend does not require PyTorch CUDA at runtime, but the worker
-itself is still a Python process, so the venv is needed.
+itself is still a Python process, so the venv is needed. PyTorch is installed
+unconditionally for now; a `cpp-only` install mode that skips it is on the
+TODO list.
+
+If you prefer a different Python interpreter:
+
+```bash
+PYTHON=python3.11 bash install.sh
+```
 
 ---
 
