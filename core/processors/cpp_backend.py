@@ -244,7 +244,12 @@ class CppBackendWorker:
         logger.info(f"[GPU {self.gpu_id}] Starting C++ llama-server...")
 
         import httpx
-        self._http_client = httpx.Client(timeout=httpx.Timeout(600.0, connect=30.0))
+        # [BUG FIX 1] Windows 下 httpx 默认 trust_env=True 会读取 IE 系统代理（HKCU\...\ProxyEnable）
+        # 把 127.0.0.1:1908x 的本地请求扔给 Clash/V2Ray，回 502。强制 trust_env=False。
+        self._http_client = httpx.Client(
+            timeout=httpx.Timeout(600.0, connect=30.0),
+            trust_env=False,
+        )
 
         self._start_cpp_server()
         self._call_omni_init(media_type=2, duplex_mode=True)
@@ -979,9 +984,12 @@ class CppBackendWorker:
         threading.Thread(target=_log_reader, daemon=True).start()
 
         import requests
+        # [BUG FIX 1] Windows 下 requests 也会读 HTTP_PROXY/IE 代理。显式 proxies={...}=None
+        # 强制走直连，避免 Clash/V2Ray 拦截 127.0.0.1:1908x。
+        no_proxy = {"http": None, "https": None}
         for i in range(300):
             try:
-                r = requests.get(f"{self._cpp_server_url}/health", timeout=2)
+                r = requests.get(f"{self._cpp_server_url}/health", timeout=2, proxies=no_proxy)
                 if r.status_code == 200:
                     logger.info(f"C++ server ready after {i+1}s")
                     return
