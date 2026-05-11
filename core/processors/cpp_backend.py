@@ -244,7 +244,12 @@ class CppBackendWorker:
         logger.info(f"[GPU {self.gpu_id}] Starting C++ llama-server...")
 
         import httpx
-        self._http_client = httpx.Client(timeout=httpx.Timeout(600.0, connect=30.0))
+        # [BUG FIX 1] Windows 下 httpx 默认 trust_env=True 会读取 IE 系统代理（HKCU\...\ProxyEnable）
+        # 把 127.0.0.1:1908x 的本地请求扔给 Clash/V2Ray，回 502。强制 trust_env=False。
+        self._http_client = httpx.Client(
+            timeout=httpx.Timeout(600.0, connect=30.0),
+            trust_env=False,
+        )
 
         self._start_cpp_server()
         self._call_omni_init(media_type=2, duplex_mode=True)
@@ -289,17 +294,17 @@ class CppBackendWorker:
         self._round_number = 0
         self._sent_wav_files = set()
         self._duplex_length_penalty = float(length_penalty)
-        voice_audio = ref_audio_path or self.ref_audio_path or ""
-        # 前端未提供 system_content 时，回退到 system_prompt_text
-        effective_system_content = system_content if system_content else system_prompt_text
-        self._call_update_session_config(
-            media_type=media_type,
-            duplex_mode=True,
-            voice_audio=voice_audio,
-            lang=lang,
-            system_content=effective_system_content,
-            sampling=sampling,
-        )
+
+        # [BUG FIX 3] duplex_prepare 完全跳过 _call_update_session_config。
+        # 该调用会清空 LLM/TTS KV cache，把 omni_init 时已 prefill 的 system prompt 全部丢掉，
+        # 之后第一次 user audio prefill 会让 server 段错误。
+        # 直接复用 load_model() 时 omni_init 建立好的 duplex 状态。
+        # 代价：前端切语言/音色/system_prompt 在双工内不再生效（要重启 worker 才换）。
+        self._last_duplex_mode = True
+        self._last_media_type = media_type
+        if lang:
+            self._last_lang = lang
+
         os.makedirs(os.path.join(self._output_dir, "tts_wav"), exist_ok=True)
         os.makedirs(os.path.join(self._output_dir, "tts_txt"), exist_ok=True)
         os.makedirs(os.path.join(self._output_dir, "llm_debug"), exist_ok=True)
@@ -423,16 +428,16 @@ class CppBackendWorker:
         gc.collect()
 
     def is_cpp_healthy(self) -> bool:
-        """检查底层 C++ llama-server 是否活着（进程 + HTTP /health）"""
+        """检查底层 C++ llama-server 是否活着
+
+        [BUG FIX 4] 之前会同时调 HTTP /health，但流式 decode 进行中 watchdog 的 /health 探测
+        会和 prefill/decode 请求争抢资源，server 主动 reset，触发误判。
+        现在只看 proc.poll()——子进程只要还活着就算健康，避免 HTTP 干扰。
+        """
         proc = self._cpp_process
         if proc is None or proc.poll() is not None:
             return False
-        try:
-            import requests as _req
-            r = _req.get(f"{self._cpp_server_url}/health", timeout=3)
-            return r.status_code == 200
-        except Exception:
-            return False
+        return True
 
     def _stop_cpp_server(self) -> None:
         if self._cpp_process is not None:
@@ -979,9 +984,12 @@ class CppBackendWorker:
         threading.Thread(target=_log_reader, daemon=True).start()
 
         import requests
+        # [BUG FIX 1] Windows 下 requests 也会读 HTTP_PROXY/IE 代理。显式 proxies={...}=None
+        # 强制走直连，避免 Clash/V2Ray 拦截 127.0.0.1:1908x。
+        no_proxy = {"http": None, "https": None}
         for i in range(300):
             try:
-                r = requests.get(f"{self._cpp_server_url}/health", timeout=2)
+                r = requests.get(f"{self._cpp_server_url}/health", timeout=2, proxies=no_proxy)
                 if r.status_code == 200:
                     logger.info(f"C++ server ready after {i+1}s")
                     return
@@ -992,11 +1000,21 @@ class CppBackendWorker:
         raise RuntimeError("C++ server startup timeout (300s)")
 
     def _find_server_binary(self) -> str:
-        candidates = [
+        # [Windows fix] Visual Studio 多配置生成器把 EXE 放在 build/bin/Release/llama-server.exe
+        # 上游候选只列了无后缀的 POSIX 名，os.path.exists 会失败导致回退到第 0 个不存在的路径，
+        # 之后 _start_cpp_server 抛 "llama-server not found"。这里补全 Windows 路径。
+        is_win = platform.system() == "Windows"
+        candidates = []
+        if is_win:
+            candidates += [
+                os.path.join(self.llamacpp_root, "build", "bin", "Release", "llama-server.exe"),
+                os.path.join(self.llamacpp_root, "build", "bin", "llama-server.exe"),
+            ]
+        candidates += [
             os.path.join(self.llamacpp_root, "build/bin/llama-server"),
             os.path.join(self.llamacpp_root, "build/bin/Release/llama-server"),
         ]
-        if platform.system() != "Windows":
+        if not is_win:
             candidates.append(os.path.join(self.llamacpp_root, "build-x64-linux-cuda-release/bin/llama-server"))
         for c in candidates:
             if os.path.exists(c):
@@ -1123,8 +1141,11 @@ class CppBackendWorker:
             "voice_clone_prompt": prompts["voice_clone_prompt"],
             "assistant_prompt": prompts["assistant_prompt"],
         }
-        if voice_audio and os.path.exists(voice_audio):
-            req_body["voice_audio"] = voice_audio
+        # [BUG FIX 2] 不要传 voice_audio：C++ server 收到该字段后内部 media_type 会被
+        # uninitialized memory 覆盖（dump 中看到 "media_type changed from -541209456 to 2"），
+        # 约 10 秒后必崩。omni_init 时已经传过一次 voice_audio，TTS 状态保留，无需重复设置。
+        # 保留 voice_audio 形参签名以兼容上层调用，但不下推到 C++。
+        _ = voice_audio  # 显式忽略
         if lang:
             self._last_lang = lang
 
