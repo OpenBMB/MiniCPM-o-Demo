@@ -1131,8 +1131,11 @@ class CppBackendWorker:
             "voice_clone_prompt": prompts["voice_clone_prompt"],
             "assistant_prompt": prompts["assistant_prompt"],
         }
-        if voice_audio and os.path.exists(voice_audio):
-            req_body["voice_audio"] = voice_audio
+        # [BUG FIX 2] 不要传 voice_audio：C++ server 收到该字段后内部 media_type 会被
+        # uninitialized memory 覆盖（dump 中看到 "media_type changed from -541209456 to 2"），
+        # 约 10 秒后必崩。omni_init 时已经传过一次 voice_audio，TTS 状态保留，无需重复设置。
+        # 保留 voice_audio 形参签名以兼容上层调用，但不下推到 C++。
+        _ = voice_audio  # 显式忽略
         if lang:
             self._last_lang = lang
 
