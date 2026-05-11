@@ -428,16 +428,16 @@ class CppBackendWorker:
         gc.collect()
 
     def is_cpp_healthy(self) -> bool:
-        """检查底层 C++ llama-server 是否活着（进程 + HTTP /health）"""
+        """检查底层 C++ llama-server 是否活着
+
+        [BUG FIX 4] 之前会同时调 HTTP /health，但流式 decode 进行中 watchdog 的 /health 探测
+        会和 prefill/decode 请求争抢资源，server 主动 reset，触发误判。
+        现在只看 proc.poll()——子进程只要还活着就算健康，避免 HTTP 干扰。
+        """
         proc = self._cpp_process
         if proc is None or proc.poll() is not None:
             return False
-        try:
-            import requests as _req
-            r = _req.get(f"{self._cpp_server_url}/health", timeout=3)
-            return r.status_code == 200
-        except Exception:
-            return False
+        return True
 
     def _stop_cpp_server(self) -> None:
         if self._cpp_process is not None:
