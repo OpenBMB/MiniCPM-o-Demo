@@ -1000,11 +1000,21 @@ class CppBackendWorker:
         raise RuntimeError("C++ server startup timeout (300s)")
 
     def _find_server_binary(self) -> str:
-        candidates = [
+        # [Windows fix] Visual Studio 多配置生成器把 EXE 放在 build/bin/Release/llama-server.exe
+        # 上游候选只列了无后缀的 POSIX 名，os.path.exists 会失败导致回退到第 0 个不存在的路径，
+        # 之后 _start_cpp_server 抛 "llama-server not found"。这里补全 Windows 路径。
+        is_win = platform.system() == "Windows"
+        candidates = []
+        if is_win:
+            candidates += [
+                os.path.join(self.llamacpp_root, "build", "bin", "Release", "llama-server.exe"),
+                os.path.join(self.llamacpp_root, "build", "bin", "llama-server.exe"),
+            ]
+        candidates += [
             os.path.join(self.llamacpp_root, "build/bin/llama-server"),
             os.path.join(self.llamacpp_root, "build/bin/Release/llama-server"),
         ]
-        if platform.system() != "Windows":
+        if not is_win:
             candidates.append(os.path.join(self.llamacpp_root, "build-x64-linux-cuda-release/bin/llama-server"))
         for c in candidates:
             if os.path.exists(c):
