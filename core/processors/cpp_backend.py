@@ -294,17 +294,17 @@ class CppBackendWorker:
         self._round_number = 0
         self._sent_wav_files = set()
         self._duplex_length_penalty = float(length_penalty)
-        voice_audio = ref_audio_path or self.ref_audio_path or ""
-        # 前端未提供 system_content 时，回退到 system_prompt_text
-        effective_system_content = system_content if system_content else system_prompt_text
-        self._call_update_session_config(
-            media_type=media_type,
-            duplex_mode=True,
-            voice_audio=voice_audio,
-            lang=lang,
-            system_content=effective_system_content,
-            sampling=sampling,
-        )
+
+        # [BUG FIX 3] duplex_prepare 完全跳过 _call_update_session_config。
+        # 该调用会清空 LLM/TTS KV cache，把 omni_init 时已 prefill 的 system prompt 全部丢掉，
+        # 之后第一次 user audio prefill 会让 server 段错误。
+        # 直接复用 load_model() 时 omni_init 建立好的 duplex 状态。
+        # 代价：前端切语言/音色/system_prompt 在双工内不再生效（要重启 worker 才换）。
+        self._last_duplex_mode = True
+        self._last_media_type = media_type
+        if lang:
+            self._last_lang = lang
+
         os.makedirs(os.path.join(self._output_dir, "tts_wav"), exist_ok=True)
         os.makedirs(os.path.join(self._output_dir, "tts_txt"), exist_ok=True)
         os.makedirs(os.path.join(self._output_dir, "llm_debug"), exist_ok=True)
