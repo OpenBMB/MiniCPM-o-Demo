@@ -489,35 +489,42 @@ class WorkerPool:
         Gateway 侧收到 Future 结果后会用 mark_busy() 设置正式状态。
         """
         while self._queue:
-            # 取队头
-            ticket_id, entry = next(iter(self._queue.items()))
+            selected_ticket_id = None
+            selected_entry = None
+            selected_worker = None
 
-            # Future 已完成（被取消或超时）→ 移除，继续下一个
-            if entry.future.done():
-                self._queue.pop(ticket_id, None)
-                continue
+            for ticket_id, entry in list(self._queue.items()):
+                # Future 已完成（被取消或超时）→ 移除，继续扫描
+                if entry.future.done():
+                    self._queue.pop(ticket_id, None)
+                    continue
 
-            worker = self._get_idle_worker(entry.ticket.request_type)
+                worker = self._get_idle_worker(entry.ticket.request_type)
+                if worker is not None:
+                    selected_ticket_id = ticket_id
+                    selected_entry = entry
+                    selected_worker = worker
+                    break
 
-            if worker is None:
+            if selected_entry is None or selected_worker is None or selected_ticket_id is None:
                 break
 
             # 分配成功：立即标记 Worker 为忙碌，防止重复分配
-            req_type = entry.ticket.request_type
-            worker.mark_busy(
+            req_type = selected_entry.ticket.request_type
+            selected_worker.mark_busy(
                 self._DISPATCH_STATUS_MAP.get(req_type, GatewayWorkerStatus.BUSY_CHAT),
                 req_type,
-                entry.ticket.session_id,
+                selected_entry.ticket.session_id,
             )
 
-            self._queue.pop(ticket_id)
-            entry.ticket.position = 0
-            entry.ticket.estimated_wait_s = 0.0
+            self._queue.pop(selected_ticket_id)
+            selected_entry.ticket.position = 0
+            selected_entry.ticket.estimated_wait_s = 0.0
 
-            if not entry.future.done():
-                entry.future.set_result(worker)
+            if not selected_entry.future.done():
+                selected_entry.future.set_result(selected_worker)
                 logger.info(
-                    f"[{ticket_id}] Dispatched → {worker.worker_id} "
+                    f"[{selected_ticket_id}] Dispatched → {selected_worker.worker_id} "
                     f"(type={req_type})"
                 )
 

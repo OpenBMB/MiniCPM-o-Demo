@@ -43,3 +43,25 @@ def test_unsupported_request_waits_even_when_other_worker_idle():
 
     asyncio.run(_run())
 
+
+def test_dispatch_skips_unsupported_head_of_line_request():
+    async def _run():
+        pool = _make_pool(1)
+        worker = list(pool.workers.values())[0]
+        worker.capabilities = ["chat"]
+        worker.mark_busy(GatewayWorkerStatus.BUSY_CHAT, "chat")
+
+        audio_ticket, audio_future = pool.enqueue("audio_duplex")
+        chat_ticket, chat_future = pool.enqueue("chat")
+
+        pool.release_worker(worker, "chat", 1.0)
+
+        assert not audio_future.done()
+        assert audio_ticket.position == 1
+        assert chat_future.done()
+        assert chat_future.result() == worker
+        assert chat_ticket.position == 0
+        assert pool.queue_length == 1
+
+    asyncio.run(_run())
+
