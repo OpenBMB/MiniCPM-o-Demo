@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
-from PIL import Image
 
 
 @dataclass
@@ -33,6 +32,8 @@ def decode_frame_base64_list(frame_b64_list: Optional[list[str]]) -> DecodedFram
 
     if not frame_b64_list:
         return DecodedFrames(frame_list=None)
+
+    from PIL import Image
 
     frame_list = []
     first_frame_bytes: Optional[bytes] = None
