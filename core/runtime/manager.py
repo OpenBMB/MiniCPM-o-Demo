@@ -33,6 +33,10 @@ class RuntimeManager:
     def get_duplex(self, session_id: str) -> DuplexSessionRuntime:
         return self._duplex[session_id]
 
+    def forget_duplex(self, session_id: str) -> None:
+        """Drop a runtime that has already been closed elsewhere."""
+        self._duplex.pop(session_id, None)
+
     async def close_duplex(self, session_id: str) -> None:
         runtime = self._duplex.pop(session_id, None)
         if runtime is not None:

@@ -32,3 +32,13 @@ def test_runtime_manager_rejects_duplicate_session_id():
     else:
         raise AssertionError("expected duplicate session id to fail")
 
+
+def test_runtime_manager_can_forget_already_closed_runtime():
+    manager = RuntimeManager()
+    worker = _FakeWorker()
+    manager.create_duplex("s1", WorkerDuplexBackendAdapter(worker))
+
+    manager.forget_duplex("s1")
+
+    assert worker.calls == []
+

@@ -1701,7 +1701,12 @@ async def duplex_ws(ws: WebSocket):
 
             elif msg_type == "stop":
                 logger.info("Duplex stopped by client")
-                await runtime_manager.close_duplex(runtime_session_id)
+                control = parse_control_message(msg)
+                if control is not None:
+                    await duplex_runtime.control(control)
+                    runtime_manager.forget_duplex(runtime_session_id)
+                else:
+                    await runtime_manager.close_duplex(runtime_session_id)
                 await ws.send_json({"type": "stopped"})
                 break
 
