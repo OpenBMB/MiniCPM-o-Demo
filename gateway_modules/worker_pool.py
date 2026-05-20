@@ -44,6 +44,17 @@ from .models import (
 logger = logging.getLogger("gateway.worker_pool")
 
 HEALTH_CHECK_INTERVAL = 10.0
+DEFAULT_WORKER_CAPABILITIES = ["chat", "streaming", "half_duplex_audio", "audio_duplex", "omni_duplex"]
+
+_REQUEST_CAPABILITY_MAP: Dict[str, str] = {
+    "chat": "chat",
+    "streaming": "streaming",
+    "chat_ws": "streaming",
+    "half_duplex_audio": "half_duplex_audio",
+    "audio_duplex": "audio_duplex",
+    "omni_duplex": "omni_duplex",
+    "duplex": "omni_duplex",
+}
 
 
 # ============ Worker 连接 ============
@@ -62,6 +73,7 @@ class WorkerConnection:
     last_heartbeat: Optional[datetime] = None
     current_request_type: Optional[str] = None
     task_started_at: Optional[datetime] = None
+    capabilities: Optional[List[str]] = None
     _gateway_dispatched: bool = False
 
     @property
@@ -81,6 +93,10 @@ class WorkerConnection:
             GatewayWorkerStatus.DUPLEX_PAUSED,
         )
 
+    def supports(self, request_type: str) -> bool:
+        required = _REQUEST_CAPABILITY_MAP.get(request_type, request_type)
+        return required in (self.capabilities or DEFAULT_WORKER_CAPABILITIES)
+
     def to_info(self) -> WorkerInfo:
         return WorkerInfo(
             worker_id=self.worker_id,
@@ -94,6 +110,7 @@ class WorkerConnection:
             last_heartbeat=self.last_heartbeat,
             current_request_type=self.current_request_type,
             task_started_at=self.task_started_at,
+            capabilities=list(self.capabilities or DEFAULT_WORKER_CAPABILITIES),
         )
 
     def mark_busy(self, status: GatewayWorkerStatus, request_type: str,
@@ -269,6 +286,7 @@ class WorkerPool:
                 host=host,
                 port=port,
                 gpu_id=gpu_id,
+                capabilities=list(DEFAULT_WORKER_CAPABILITIES),
             )
 
         logger.info(f"WorkerPool initialized with {len(self.workers)} workers, "
@@ -358,6 +376,7 @@ class WorkerPool:
                 worker.current_session_id = data.get("current_session_id")
                 worker.total_requests = data.get("total_requests", 0)
                 worker.avg_inference_time_ms = data.get("avg_inference_time_ms", 0.0)
+                worker.capabilities = data.get("capabilities") or list(DEFAULT_WORKER_CAPABILITIES)
                 worker.last_heartbeat = datetime.now()
             else:
                 worker.status = GatewayWorkerStatus.ERROR
@@ -375,10 +394,13 @@ class WorkerPool:
                 counts[w.gpu_id] = counts.get(w.gpu_id, 0) + 1
         return counts
 
-    def _get_idle_worker(self) -> Optional[WorkerConnection]:
-        """获取当前负载最低 GPU 上的空闲 Worker"""
+    def _get_idle_worker(self, request_type: Optional[str] = None) -> Optional[WorkerConnection]:
+        """获取当前负载最低 GPU 上支持该请求类型的空闲 Worker"""
         gpu_busy = self._gpu_busy_counts()
-        idle_workers = (w for w in self.workers.values() if w.is_idle)
+        idle_workers = (
+            w for w in self.workers.values()
+            if w.is_idle and (request_type is None or w.supports(request_type))
+        )
         return min(
             idle_workers,
             key=lambda w: (gpu_busy.get(w.gpu_id, 0), w.worker_id),
@@ -413,7 +435,7 @@ class WorkerPool:
         """
         loop = asyncio.get_running_loop()
 
-        worker = self._get_idle_worker()
+        worker = self._get_idle_worker(request_type)
 
         if worker is not None:
             dispatch_status = self._DISPATCH_STATUS_MAP.get(
@@ -485,7 +507,7 @@ class WorkerPool:
                 self._queue.pop(ticket_id, None)
                 continue
 
-            worker = self._get_idle_worker()
+            worker = self._get_idle_worker(entry.ticket.request_type)
 
             if worker is None:
                 break

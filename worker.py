@@ -55,6 +55,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("worker")
 
+WORKER_CAPABILITIES = ["chat", "streaming", "half_duplex_audio", "audio_duplex", "omni_duplex"]
+
 
 # ============ Worker 状态 ============
 
@@ -104,6 +106,7 @@ class WorkerHealthResponse(BaseModel):
     total_requests: int = 0
     avg_inference_time_ms: float = 0.0
     kv_cache_length: int = 0  # 当前 LLM KV cache token 总数
+    capabilities: List[str] = Field(default_factory=list)
 
 
 class StreamingWsMessage(BaseModel):
@@ -579,6 +582,7 @@ async def health():
             worker_status=WorkerStatus.LOADING,
             gpu_id=0,
             model_loaded=False,
+            capabilities=[],
         )
 
     avg_time = 0.0
@@ -595,6 +599,7 @@ async def health():
         total_requests=worker.state.total_requests,
         avg_inference_time_ms=avg_time,
         kv_cache_length=kv_len,
+        capabilities=WORKER_CAPABILITIES,
     )
 
 

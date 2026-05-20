@@ -22,6 +22,13 @@ worker.py WebSocket handler
   -> PyTorch model methods (or future C++/SGLang/vLLM adapters)
 ```
 
+Gateway worker scheduling now also has a small capability contract.  Worker
+health responses report capabilities such as `chat`, `streaming`,
+`audio_duplex`, and `omni_duplex`; `WorkerPool` keeps these on
+`WorkerConnection` and only assigns a request to an idle worker that advertises
+the required capability.  Existing workers default to all capabilities, so this
+is a compatibility-preserving boundary for future specialized runtimes.
+
 ## Responsibilities
 
 ### worker.py
