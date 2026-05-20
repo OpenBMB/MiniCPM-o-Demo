@@ -562,6 +562,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Worker shutting down")
+    await runtime_manager.close_all()
 
 
 app = FastAPI(title="MiniCPMO45 Worker", lifespan=lifespan)
