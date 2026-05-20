@@ -40,6 +40,14 @@ from core.schemas.common import (
 from session_recorder import TurnBasedSessionRecorder, generate_session_id
 
 
+def _is_worker_ready(worker: Any, *, required_method: str) -> bool:
+    if worker is None:
+        return False
+    if getattr(worker, "processor", None) is not None:
+        return True
+    return hasattr(worker, required_method)
+
+
 def _parse_raw_messages(raw_messages: List[dict]) -> List[Message]:
     """Parse frontend raw messages into schema messages."""
 
@@ -181,7 +189,7 @@ async def handle_worker_chat_runtime_ws(
 ) -> None:
     """Serve one worker-internal turn-based chat runtime WebSocket."""
 
-    if worker is None or worker.processor is None:
+    if not _is_worker_ready(worker, required_method="chat_prefill"):
         await ws.close(code=1013, reason="Worker not ready")
         return
 
@@ -353,7 +361,8 @@ async def _stream_chat_response(
                 )
             chunk_count += 1
         elif tag == "done":
-            gen_ids = getattr(worker.processor.model, "_streaming_generated_token_ids", None)
+            model = getattr(getattr(worker, "processor", None), "model", None)
+            gen_ids = getattr(model, "_streaming_generated_token_ids", None)
             generated_tokens = len(gen_ids) if gen_ids else chunk_count
             elapsed = round((time.perf_counter() - gen_start) * 1000, 1)
             if chat_recorder:
@@ -414,7 +423,8 @@ async def _send_non_streaming_chat_response(
             output_audio_np = waveform.astype(np.float32)
             audio_base64 = base64.b64encode(output_audio_np.tobytes()).decode("utf-8")
 
-    stats = getattr(worker.processor.model, "_last_chat_token_stats", {})
+    model = getattr(getattr(worker, "processor", None), "model", None)
+    stats = getattr(model, "_last_chat_token_stats", {})
     elapsed = round((time.perf_counter() - gen_start) * 1000, 1)
 
     if chat_recorder:
@@ -455,7 +465,7 @@ async def handle_worker_duplex_runtime_ws(
 ) -> None:
     """Serve one worker-internal duplex runtime WebSocket."""
 
-    if worker is None or worker.processor is None:
+    if not _is_worker_ready(worker, required_method="duplex_prepare"):
         await ws.close(code=1013, reason="Worker not ready")
         return
 
@@ -494,6 +504,7 @@ async def handle_worker_duplex_runtime_ws(
                         "session_id": session_id,
                         "prompt_length": len(prompt),
                     })
+                    await runtime.start(_emit_event)
                 finally:
                     if voice_refs is not None:
                         voice_refs.cleanup()
@@ -504,7 +515,7 @@ async def handle_worker_duplex_runtime_ws(
                     default_max_slice_nums=session_max_slice_nums,
                     chunk_start=time.perf_counter(),
                 )
-                await runtime.process_frame(frame=frame, emit=_emit_event)
+                await runtime.push_frame(frame)
 
             elif msg_type in {
                 "duplex.control.pause",
@@ -513,9 +524,7 @@ async def handle_worker_duplex_runtime_ws(
                 "duplex.control.close",
             }:
                 control = parse_worker_control_message(msg)
-                event = await runtime.control(control)
-                for out_msg in runtime_event_to_worker_messages(event):
-                    await ws.send_json(out_msg)
+                await runtime.push_control(control)
                 if control.type == "session.close":
                     runtime_manager.forget_duplex(session_id)
                     break

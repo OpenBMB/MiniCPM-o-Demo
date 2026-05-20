@@ -370,16 +370,26 @@ async def lifespan(app: FastAPI):
     global worker
     config = WORKER_CONFIG
 
-    worker = MiniCPMOWorker(
-        model_path=config["model_path"],
-        gpu_id=config["gpu_id"],
-        pt_path=config.get("pt_path"),
-        ref_audio_path=config.get("ref_audio_path"),
-        duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
-        compile=config.get("compile", False),
-        chat_vocoder=config.get("chat_vocoder", "token2wav"),
-        attn_implementation=config.get("attn_implementation", "auto"),
-    )
+    if config.get("backend") == "cpp":
+        from core.processors.cpp_backend import CppBackendWorker
+
+        worker = CppBackendWorker(
+            gpu_id=config["gpu_id"],
+            ref_audio_path=config.get("ref_audio_path"),
+            duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
+            **config.get("cpp_backend", {}),
+        )
+    else:
+        worker = MiniCPMOWorker(
+            model_path=config["model_path"],
+            gpu_id=config["gpu_id"],
+            pt_path=config.get("pt_path"),
+            ref_audio_path=config.get("ref_audio_path"),
+            duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
+            compile=config.get("compile", False),
+            chat_vocoder=config.get("chat_vocoder", "token2wav"),
+            attn_implementation=config.get("attn_implementation", "auto"),
+        )
 
     # 模型加载是同步操作（~15s），在线程中执行避免阻塞
     await asyncio.to_thread(worker.load_model)
@@ -411,12 +421,13 @@ async def health():
     if worker.state.total_requests > 0:
         avg_time = worker.state.total_inference_time_ms / worker.state.total_requests
 
-    kv_len = worker.processor.kv_cache_length if worker.processor else 0
+    kv_len = worker.processor.kv_cache_length if worker.processor else int(getattr(worker, "kv_cache_length", 0) or 0)
+    model_loaded = worker.processor is not None or bool(getattr(worker.state, "is_idle", False))
     return WorkerHealthResponse(
-        status="healthy" if worker.processor is not None else "error",
+        status="healthy" if model_loaded else "error",
         worker_status=worker.state.status,
         gpu_id=worker.gpu_id,
-        model_loaded=worker.processor is not None,
+        model_loaded=model_loaded,
         current_session_id=worker.state.current_session_id,
         total_requests=worker.state.total_requests,
         avg_inference_time_ms=avg_time,
@@ -430,7 +441,7 @@ async def health():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Chat 推理（无状态）"""
-    if worker is None or worker.processor is None:
+    if worker is None or (worker.processor is None and not hasattr(worker, "chat")):
         raise HTTPException(status_code=503, detail="Worker not ready")
 
     if not worker.state.is_idle:
@@ -605,7 +616,7 @@ async def half_duplex_ws(ws: WebSocket):
     6. Server → {"type": "turn_done", ...}
     7. Client → {"type": "stop"} / Server → {"type": "timeout"}
     """
-    if worker is None or worker.processor is None:
+    if worker is None or (worker.processor is None and not hasattr(worker, "half_duplex_prefill")):
         await ws.close(code=1013, reason="Worker not ready")
         return
 
@@ -960,12 +971,15 @@ def main():
     parser.add_argument("--gpu-id", type=int, default=None, help="GPU ID (inferred from port if not set)")
     parser.add_argument("--worker-index", type=int, default=0, help="Worker index (0, 1, 2, ...)")
     parser.add_argument("--duplex-pause-timeout", type=float, default=None, help="Duplex pause timeout (s)")
+    parser.add_argument("--backend", choices=("pytorch", "cpp"), default=None, help="Override inference backend")
     args = parser.parse_args()
 
     port = args.port or cfg.worker_port(args.worker_index)
     gpu_id = args.gpu_id if args.gpu_id is not None else args.worker_index
+    backend = args.backend or cfg.backend
 
     WORKER_CONFIG.update({
+        "backend": backend,
         "model_path": args.model_path or cfg.model.model_path,
         "gpu_id": gpu_id,
         "pt_path": args.pt_path or cfg.model.pt_path,
@@ -974,6 +988,14 @@ def main():
         "compile": cfg.compile,
         "chat_vocoder": cfg.chat_vocoder,
         "attn_implementation": cfg.attn_implementation,
+        "cpp_backend": {
+            **cfg.cpp_backend.model_dump(),
+            "cpp_server_port": (
+                (cfg.cpp_backend.cpp_server_port + args.worker_index)
+                if cfg.cpp_backend.cpp_server_port is not None
+                else None
+            ),
+        },
     })
 
     logger.info(f"Starting Worker on port {port}, GPU {gpu_id}")

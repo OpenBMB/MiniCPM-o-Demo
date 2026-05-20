@@ -1548,9 +1548,7 @@ async def realtime_ws(ws: WebSocket):
                     else:
                         translated = worker_runtime_to_realtime(msg, session_id=session_id)
                         await ws.send_json(translated)
-                        if translated.get("type") == "response.listen":
-                            kv_len = translated.get("kv_cache_length", 0)
-                        elif translated.get("type") == "response.output_audio.delta":
+                        if translated.get("type") == "response.metrics":
                             kv_len = translated.get("kv_cache_length", 0)
                         else:
                             kv_len = 0

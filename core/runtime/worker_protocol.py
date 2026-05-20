@@ -165,15 +165,9 @@ def runtime_event_to_worker_messages(event: RuntimeEvent) -> list[Dict[str, Any]
     if event.channel == "output.duplex_result":
         frame = event.payload.get("frame")
         result = event.payload.get("result_dict", {})
-        metrics = {
-            "prefill_ms": event.payload.get("prefill_ms"),
-            "kv_cache_len": event.payload.get("kv_cache_len"),
-            "wall_clock_ms": event.payload.get("wall_clock_ms"),
-            "vision_slices": event.payload.get("n_vision_images"),
-            "vision_tokens": event.payload.get("vision_tokens"),
-        }
+        metrics = dict(event.payload.get("metrics") or {})
         if frame is not None:
-            metrics["prefill_ms"] = getattr(frame, "prefill_ms", metrics["prefill_ms"])
+            metrics["prefill_ms"] = getattr(frame, "prefill_ms", metrics.get("prefill_ms"))
 
         messages: list[Dict[str, Any]] = [{
             "type": "duplex.metrics.frame",
@@ -183,10 +177,7 @@ def runtime_event_to_worker_messages(event: RuntimeEvent) -> list[Dict[str, Any]
         if result.get("is_listen"):
             messages.append({
                 "type": "duplex.output.listen",
-                "payload": {
-                    "kv_cache_length": result.get("kv_cache_length", metrics.get("kv_cache_len", 0)),
-                    "metrics": metrics,
-                },
+                "payload": {},
             })
             return messages
 
@@ -196,7 +187,6 @@ def runtime_event_to_worker_messages(event: RuntimeEvent) -> list[Dict[str, Any]
                 "type": "duplex.output.text.delta",
                 "payload": {
                     "text": text,
-                    "kv_cache_length": result.get("kv_cache_length", metrics.get("kv_cache_len", 0)),
                 },
             })
 
@@ -208,16 +198,12 @@ def runtime_event_to_worker_messages(event: RuntimeEvent) -> list[Dict[str, Any]
                 # one speak event for text and audio display.
                 "text": text,
                 "end_of_turn": result.get("end_of_turn", False),
-                "kv_cache_length": result.get("kv_cache_length", metrics.get("kv_cache_len", 0)),
-                "metrics": metrics,
             },
         })
         if result.get("end_of_turn", False):
             messages.append({
                 "type": "duplex.output.turn.done",
-                "payload": {
-                    "kv_cache_length": result.get("kv_cache_length", metrics.get("kv_cache_len", 0)),
-                },
+                "payload": {},
             })
         return messages
 

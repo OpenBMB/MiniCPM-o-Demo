@@ -77,7 +77,7 @@ def test_runtime_event_to_worker_message():
         payload={
             "result_dict": {"text": "hi"},
             "prefill_ms": 1,
-            "kv_cache_len": 2,
+            "metrics": {"kv_cache_length": 2, "prefill_ms": 1},
             "wall_clock_ms": 3,
             "n_vision_images": 4,
             "vision_tokens": 256,
@@ -86,7 +86,7 @@ def test_runtime_event_to_worker_message():
 
     assert msg["type"] == "duplex.output.result"
     assert msg["payload"]["result"] == {"text": "hi"}
-    assert msg["payload"]["metrics"]["kv_cache_len"] == 2
+    assert msg["payload"]["metrics"]["kv_cache_length"] == 2
 
 
 def test_runtime_event_to_worker_messages_splits_duplex_output():
@@ -98,10 +98,9 @@ def test_runtime_event_to_worker_messages_splits_duplex_output():
                 "text": "hi",
                 "audio_data": "pcm",
                 "end_of_turn": True,
-                "kv_cache_length": 9,
             },
             "prefill_ms": 1,
-            "kv_cache_len": 2,
+            "metrics": {"kv_cache_length": 2, "prefill_ms": 1},
         },
     ))
 
@@ -111,5 +110,7 @@ def test_runtime_event_to_worker_messages_splits_duplex_output():
         "duplex.output.audio.delta",
         "duplex.output.turn.done",
     ]
+    assert messages[0]["payload"]["kv_cache_length"] == 2
+    assert "kv_cache_length" not in messages[1]["payload"]
     assert messages[2]["payload"]["audio_base64"] == "pcm"
 

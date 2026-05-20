@@ -14,6 +14,19 @@ import numpy as np
 import torch
 
 from core.schemas.streaming import StreamingChunk
+from core.runtime.metrics import BackendMetrics
+
+
+def _coerce_backend_metrics(data: Any, *, backend: Optional[str] = None) -> Dict[str, Any]:
+    if isinstance(data, BackendMetrics):
+        metrics = data.to_dict()
+    elif isinstance(data, dict):
+        metrics = BackendMetrics.from_mapping(data).to_dict()
+    else:
+        metrics = BackendMetrics().to_dict()
+    if backend and not metrics.get("backend"):
+        metrics["backend"] = backend
+    return metrics
 
 
 class DuplexBackendAdapter(Protocol):
@@ -52,7 +65,7 @@ class DuplexBackendAdapter(Protocol):
     def cleanup(self) -> None:
         ...
 
-    def kv_cache_length(self) -> int:
+    def metrics(self) -> Dict[str, Any]:
         ...
 
 
@@ -61,8 +74,10 @@ class WorkerDuplexBackendAdapter:
 
     def __init__(self, worker: Any):
         self.worker = worker
+        self._config: Optional[Dict[str, Any]] = None
 
     def configure(self, config: Optional[Dict[str, Any]]) -> None:
+        self._config = config
         if not config:
             return
 
@@ -85,6 +100,15 @@ class WorkerDuplexBackendAdapter:
         ref_audio_path: Optional[str],
         prompt_wav_path: Optional[str],
     ) -> str:
+        if hasattr(self.worker, "duplex_prepare"):
+            cfg = self._config or {}
+            return self.worker.duplex_prepare(
+                system_prompt_text=system_prompt_text,
+                ref_audio_path=ref_audio_path,
+                prompt_wav_path=prompt_wav_path,
+                length_penalty=cfg.get("length_penalty", 1.1),
+                sampling=cfg,
+            )
         duplex_view = self.worker.processor.set_duplex_mode()
         return duplex_view.prepare(
             system_prompt_text=system_prompt_text,
@@ -99,6 +123,12 @@ class WorkerDuplexBackendAdapter:
         frame_list: Optional[list],
         max_slice_nums: int,
     ) -> Dict[str, Any]:
+        if hasattr(self.worker, "duplex_prefill"):
+            return self.worker.duplex_prefill(
+                audio_waveform=audio_waveform,
+                frame_list=frame_list,
+                max_slice_nums=max_slice_nums,
+            )
         duplex_view = self.worker.processor.set_duplex_mode()
         return duplex_view.prefill(
             audio_waveform=audio_waveform,
@@ -107,18 +137,29 @@ class WorkerDuplexBackendAdapter:
         )
 
     def generate(self, *, force_listen: bool) -> Any:
+        if hasattr(self.worker, "duplex_generate"):
+            return self.worker.duplex_generate(force_listen=force_listen)
         duplex_view = self.worker.processor.set_duplex_mode()
         return duplex_view.generate(force_listen=force_listen)
 
     def finalize(self) -> None:
+        if hasattr(self.worker, "duplex_finalize"):
+            self.worker.duplex_finalize()
+            return
         duplex_view = self.worker.processor.set_duplex_mode()
         duplex_view.finalize()
 
     def stop(self) -> None:
+        if hasattr(self.worker, "duplex_stop"):
+            self.worker.duplex_stop()
+            return
         duplex_view = self.worker.processor.set_duplex_mode()
         duplex_view.stop()
 
     def cleanup(self) -> None:
+        if hasattr(self.worker, "duplex_cleanup"):
+            self.worker.duplex_cleanup()
+            return
         if self.worker.processor is None:
             return
         duplex_view = self.worker.processor.set_duplex_mode()
@@ -126,11 +167,18 @@ class WorkerDuplexBackendAdapter:
         gc.collect()
         torch.cuda.empty_cache()
 
-    def kv_cache_length(self) -> int:
+    def metrics(self) -> Dict[str, Any]:
+        if hasattr(self.worker, "metrics"):
+            return _coerce_backend_metrics(self.worker.metrics())
         processor = getattr(self.worker, "processor", None)
         if processor is not None:
-            return int(getattr(processor, "kv_cache_length", 0) or 0)
-        return int(getattr(self.worker, "kv_cache_length", 0) or 0)
+            return BackendMetrics(
+                backend="pytorch",
+                kv_cache_length=int(getattr(processor, "kv_cache_length", 0) or 0),
+            ).to_dict()
+        return BackendMetrics(
+            kv_cache_length=int(getattr(self.worker, "kv_cache_length", 0) or 0),
+        ).to_dict()
 
 
 class ChatBackendAdapter(Protocol):
@@ -148,7 +196,7 @@ class ChatBackendAdapter(Protocol):
     ) -> str:
         ...
 
-    def kv_cache_length(self) -> int:
+    def metrics(self) -> Dict[str, Any]:
         ...
 
     def init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
@@ -194,6 +242,15 @@ class WorkerChatBackendAdapter:
         use_tts_template: bool,
         enable_thinking: bool,
     ) -> str:
+        if hasattr(self.worker, "chat_prefill"):
+            return self.worker.chat_prefill(
+                session_id=session_id,
+                msgs=msgs,
+                omni_mode=omni_mode,
+                max_slice_nums=max_slice_nums,
+                use_tts_template=use_tts_template,
+                enable_thinking=enable_thinking,
+            )
         chat_view = self.worker.processor.set_chat_mode()
         return chat_view.prefill(
             session_id=session_id,
@@ -204,13 +261,21 @@ class WorkerChatBackendAdapter:
             enable_thinking=enable_thinking,
         )
 
-    def kv_cache_length(self) -> int:
+    def metrics(self) -> Dict[str, Any]:
+        if hasattr(self.worker, "metrics"):
+            return _coerce_backend_metrics(self.worker.metrics())
         processor = getattr(self.worker, "processor", None)
         if processor is not None:
-            return int(getattr(processor, "kv_cache_length", 0) or 0)
-        return 0
+            return BackendMetrics(
+                backend="pytorch",
+                kv_cache_length=int(getattr(processor, "kv_cache_length", 0) or 0),
+            ).to_dict()
+        return BackendMetrics().to_dict()
 
     def init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
+        if getattr(self.worker, "processor", None) is None:
+            # C++ backend initializes TTS in omni_init/update_session_config.
+            return
         if ref_audio is not None:
             self.worker.processor.model.init_token2wav_cache(prompt_speech_16k=ref_audio)
             return
@@ -230,6 +295,14 @@ class WorkerChatBackendAdapter:
         max_new_tokens: int,
         length_penalty: float,
     ) -> Iterator[StreamingChunk]:
+        if hasattr(self.worker, "chat_streaming_generate"):
+            yield from self.worker.chat_streaming_generate(
+                session_id=session_id,
+                generate_audio=generate_audio,
+                max_new_tokens=max_new_tokens,
+                length_penalty=length_penalty,
+            )
+            return
         chat_view = self.worker.processor.set_chat_mode()
         yield from chat_view.streaming_generate(
             session_id=session_id,
@@ -249,6 +322,16 @@ class WorkerChatBackendAdapter:
         tts_ref_audio: Optional[np.ndarray],
         length_penalty: float,
     ) -> Any:
+        if hasattr(self.worker, "chat_non_streaming_generate"):
+            return self.worker.chat_non_streaming_generate(
+                session_id=session_id,
+                max_new_tokens=max_new_tokens,
+                generate_audio=generate_audio,
+                use_tts_template=use_tts_template,
+                enable_thinking=enable_thinking,
+                tts_ref_audio=tts_ref_audio,
+                length_penalty=length_penalty,
+            )
         chat_view = self.worker.processor.set_chat_mode()
         return chat_view.generate(
             session_id=session_id,

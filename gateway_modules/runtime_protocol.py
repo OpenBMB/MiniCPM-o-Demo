@@ -110,16 +110,12 @@ def worker_runtime_to_realtime(msg: Dict[str, Any], *, session_id: str) -> Dict[
 
     payload = msg.get("payload") or {}
     if msg_type == "duplex.output.listen":
-        return {
-            "type": "response.listen",
-            "kv_cache_length": payload.get("kv_cache_length", 0),
-        }
+        return {"type": "response.listen"}
 
     if msg_type == "duplex.output.text.delta":
         return {
             "type": "response.output_text.delta",
             "text": payload.get("text", ""),
-            "kv_cache_length": payload.get("kv_cache_length", 0),
         }
 
     if msg_type == "duplex.output.audio.delta":
@@ -128,14 +124,10 @@ def worker_runtime_to_realtime(msg: Dict[str, Any], *, session_id: str) -> Dict[
             "text": payload.get("text", ""),
             "audio": payload.get("audio_base64"),
             "end_of_turn": payload.get("end_of_turn", False),
-            "kv_cache_length": payload.get("kv_cache_length", 0),
         }
 
     if msg_type == "duplex.output.turn.done":
-        return {
-            "type": "response.done",
-            "kv_cache_length": payload.get("kv_cache_length", 0),
-        }
+        return {"type": "response.done"}
 
     if msg_type == "duplex.session.closed":
         return {"type": "session.closed", "reason": payload.get("reason", "stopped")}

@@ -100,9 +100,10 @@ def test_deferred_finalize_is_runtime_managed():
         ]
         event = emitted[0]
         assert event.channel == "output.duplex_result"
-        assert event.payload["result_dict"]["vision_slices"] == 1
-        assert event.payload["frame"].result_dict["vision_slices"] == 1
-        assert event.payload["kv_cache_len"] == 10
+        assert "vision_slices" not in event.payload["result_dict"]
+        assert event.payload["metrics"]["vision_slices"] == 1
+        assert event.payload["frame"].metrics["vision_slices"] == 1
+        assert event.payload["metrics"]["kv_cache_length"] == 10
 
     asyncio.run(_run())
 
@@ -160,6 +161,65 @@ def test_pause_blocks_processing_until_resume():
             ),
             emit=lambda _event: asyncio.sleep(0),
         )
+
+    asyncio.run(_run())
+
+
+def test_runtime_machine_owns_frame_processing_loop():
+    async def _run():
+        worker = _FakeWorker()
+        runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+        emitted = []
+        emitted_event = asyncio.Event()
+
+        async def _emit(event):
+            emitted.append(event)
+            emitted_event.set()
+
+        await runtime.start(_emit)
+        await runtime.push_frame(DuplexInputFrame(
+            audio_waveform=np.zeros(16000, dtype=np.float32),
+            frame_list=[],
+        ))
+        await asyncio.wait_for(emitted_event.wait(), timeout=1.0)
+        await runtime.wait_for_finalize()
+        await runtime.close()
+
+        assert emitted[0].channel == "output.duplex_result"
+        assert [c for c in worker.calls if c in ("prefill", "generate", "finalize")] == [
+            "prefill",
+            "generate",
+            "finalize",
+        ]
+
+    asyncio.run(_run())
+
+
+def test_runtime_machine_ignores_frames_while_paused():
+    async def _run():
+        worker = _FakeWorker()
+        runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+        emitted = []
+        emitted_event = asyncio.Event()
+
+        async def _emit(event):
+            emitted.append(event)
+            emitted_event.set()
+
+        await runtime.start(_emit)
+        paused = await runtime.push_control(RuntimeControl(type="session.pause", payload={}))
+        assert paused.payload["state"] == "paused"
+
+        emitted_event.clear()
+        await runtime.push_frame(DuplexInputFrame(
+            audio_waveform=np.zeros(16000, dtype=np.float32),
+            frame_list=[],
+        ))
+        await asyncio.wait_for(emitted_event.wait(), timeout=1.0)
+        await runtime.close()
+
+        assert emitted[-1].payload["state"] == "input_ignored"
+        assert "prefill" not in worker.calls
 
     asyncio.run(_run())
 

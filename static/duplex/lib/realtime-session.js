@@ -49,6 +49,7 @@ export class RealtimeSession {
         this._resultCount = 0;
         this._lastDriftMs = null;
         this._lastKvCacheLength = 0;
+        this._lastFrameMetrics = {};
 
         // Protocol event log for the data flow panel
         this._eventLog = [];
@@ -343,6 +344,7 @@ export class RealtimeSession {
         this._resultCount = 0;
         this._lastDriftMs = null;
         this._lastKvCacheLength = 0;
+        this._lastFrameMetrics = {};
         this.chunksSent = 0;
         this.currentSpeakText = '';
         this._speakHandle = null;
@@ -357,9 +359,15 @@ export class RealtimeSession {
         const type = msg.type || '';
 
         switch (type) {
+            case 'response.metrics':
+                this._logProtoEvent('server', 'response.metrics',
+                    `kv=${msg.kv_cache_length}`, msg);
+                this._handleMetrics(msg);
+                break;
+
             case 'response.listen':
                 this._logProtoEvent('server', 'response.listen',
-                    `kv=${msg.kv_cache_length}`, msg);
+                    'listen', msg);
                 this._handleListen(msg);
                 break;
 
@@ -422,7 +430,7 @@ export class RealtimeSession {
 
         const result = {
             is_listen: true,
-            kv_cache_length: msg.kv_cache_length,
+            kv_cache_length: this._lastFrameMetrics.kv_cache_length,
         };
 
         this._checkKvCache(result);
@@ -460,7 +468,7 @@ export class RealtimeSession {
             text: msg.text || '',
             audio_data: msg.audio,
             end_of_turn: msg.end_of_turn || false,
-            kv_cache_length: msg.kv_cache_length,
+            kv_cache_length: this._lastFrameMetrics.kv_cache_length,
         };
 
         this._checkKvCache(result);
@@ -497,17 +505,40 @@ export class RealtimeSession {
 
     _emitMetrics(result, recvTime) {
         const maxKv = this.config.getMaxKvTokens();
+        const metrics = this._lastFrameMetrics || {};
         requestAnimationFrame(() => {
             this.onMetrics({
                 type: 'result',
+                latencyMs: metrics.wall_clock_ms || metrics.generate_ms,
+                costAllMs: metrics.generate_ms,
                 driftMs: this._lastDriftMs,
                 kvCacheLength: result.kv_cache_length,
                 maxKvTokens: maxKv,
                 ttfsMs: (!result.is_listen && this._lastTTFS) ? this._lastTTFS : null,
                 modelState: result.is_listen ? 'listening' : (result.end_of_turn ? 'end_of_turn' : 'speaking'),
                 chunksSent: this.chunksSent,
+                visionSlices: metrics.vision_slices,
+                visionTokens: metrics.vision_tokens,
             });
             if (!result.is_listen && this._lastTTFS) this._lastTTFS = 0;
+        });
+    }
+
+    _handleMetrics(metrics) {
+        this._lastFrameMetrics = metrics || {};
+        const maxKv = this.config.getMaxKvTokens();
+        const kvCacheLength = this._lastFrameMetrics.kv_cache_length;
+        this._checkKvCache({ kv_cache_length: kvCacheLength });
+        this.onMetrics({
+            type: 'result',
+            latencyMs: this._lastFrameMetrics.wall_clock_ms || this._lastFrameMetrics.generate_ms,
+            costAllMs: this._lastFrameMetrics.generate_ms,
+            driftMs: this._lastDriftMs,
+            kvCacheLength,
+            maxKvTokens: maxKv,
+            chunksSent: this.chunksSent,
+            visionSlices: this._lastFrameMetrics.vision_slices,
+            visionTokens: this._lastFrameMetrics.vision_tokens,
         });
     }
 

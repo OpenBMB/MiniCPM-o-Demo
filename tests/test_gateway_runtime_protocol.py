@@ -96,7 +96,7 @@ def test_realtime_input_to_worker_input_append():
 def test_worker_runtime_output_to_realtime_events():
     listen = worker_runtime_to_realtime({
         "type": "duplex.output.listen",
-        "payload": {"kv_cache_length": 3},
+        "payload": {},
     }, session_id="rt_1")
     speak = worker_runtime_to_realtime({
         "type": "duplex.output.audio.delta",
@@ -104,21 +104,24 @@ def test_worker_runtime_output_to_realtime_events():
             "text": "hi",
             "audio_base64": "pcm",
             "end_of_turn": False,
-            "kv_cache_length": 4,
         },
     }, session_id="rt_1")
     text = worker_runtime_to_realtime({
         "type": "duplex.output.text.delta",
-        "payload": {"text": "hi", "kv_cache_length": 4},
+        "payload": {"text": "hi"},
+    }, session_id="rt_1")
+    metrics = worker_runtime_to_realtime({
+        "type": "duplex.metrics.frame",
+        "payload": {"kv_cache_length": 4, "prefill_ms": 1.0},
     }, session_id="rt_1")
 
-    assert listen == {"type": "response.listen", "kv_cache_length": 3}
+    assert listen == {"type": "response.listen"}
     assert speak == {
         "type": "response.output_audio.delta",
         "text": "hi",
         "audio": "pcm",
         "end_of_turn": False,
-        "kv_cache_length": 4,
     }
-    assert text == {"type": "response.output_text.delta", "text": "hi", "kv_cache_length": 4}
+    assert text == {"type": "response.output_text.delta", "text": "hi"}
+    assert metrics == {"type": "response.metrics", "kv_cache_length": 4, "prefill_ms": 1.0}
 

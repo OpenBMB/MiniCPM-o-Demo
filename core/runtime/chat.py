@@ -49,7 +49,7 @@ class ChatSessionRuntime:
             use_tts_template=params.use_tts_template,
             enable_thinking=params.enable_thinking,
         )
-        return self.backend.kv_cache_length()
+        return int(self.backend.metrics().get("kv_cache_length", 0) or 0)
 
     async def init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
         await asyncio.to_thread(self.backend.init_tts, ref_audio)
