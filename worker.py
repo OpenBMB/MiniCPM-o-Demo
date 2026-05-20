@@ -47,6 +47,7 @@ from core.runtime.duplex import (
 )
 from core.runtime.backends import WorkerDuplexBackendAdapter
 from core.runtime.manager import RuntimeManager
+from core.runtime.voice import resolve_duplex_voice_refs
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
 logging.basicConfig(
@@ -1530,47 +1531,21 @@ async def duplex_ws(ws: WebSocket):
                 # LLM ref audio → ref_audio_path（嵌入 system prompt）
                 # TTS ref audio → prompt_wav_path（初始化 vocoder）
                 # 两者可以不同，也可以相同（向后兼容：不提供 tts_ref_audio_base64 时复用 ref_audio_base64）
-                import tempfile
-                import soundfile as sf
-                actual_ref_audio_path = ref_audio_path
-                actual_tts_audio_path = None
-                temp_files: list = []
-
-                # LLM ref audio: base64 → 临时文件
-                if ref_audio_b64 and not ref_audio_path:
-                    ref_bytes = base64.b64decode(ref_audio_b64)
-                    ref_ndarray = np.frombuffer(ref_bytes, dtype=np.float32)
-                    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False, prefix="duplex_llm_ref_")
-                    sf.write(tmp.name, ref_ndarray, 16000)
-                    actual_ref_audio_path = tmp.name
-                    temp_files.append(tmp.name)
-                    logger.info(f"Duplex LLM ref_audio: {len(ref_ndarray)} samples → {tmp.name}")
-
-                # TTS ref audio: 与 LLM 相同则复用，不同则另存
-                if tts_ref_audio_b64 and tts_ref_audio_b64 != ref_audio_b64:
-                    tts_bytes = base64.b64decode(tts_ref_audio_b64)
-                    tts_ndarray = np.frombuffer(tts_bytes, dtype=np.float32)
-                    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False, prefix="duplex_tts_ref_")
-                    sf.write(tmp.name, tts_ndarray, 16000)
-                    actual_tts_audio_path = tmp.name
-                    temp_files.append(tmp.name)
-                    logger.info(f"Duplex TTS ref_audio (independent): {len(tts_ndarray)} samples → {tmp.name}")
-                elif actual_ref_audio_path:
-                    # TTS 和 LLM 使用同一个文件
-                    actual_tts_audio_path = actual_ref_audio_path
-
-                _has_tts_field_d = bool(msg.get("tts_ref_audio_base64"))
-                _tts_same_as_llm = (tts_ref_audio_b64 == ref_audio_b64) if tts_ref_audio_b64 else True
+                voice_refs = resolve_duplex_voice_refs(
+                    ref_audio_path=ref_audio_path,
+                    ref_audio_base64=ref_audio_b64,
+                    tts_ref_audio_base64=tts_ref_audio_b64,
+                )
                 logger.info(
-                    f"[Duplex RefAudio] LLM={actual_ref_audio_path}, TTS={actual_tts_audio_path}, "
-                    f"tts_field_present={_has_tts_field_d}, tts_same_as_llm={_tts_same_as_llm}"
+                    f"[Duplex RefAudio] LLM={voice_refs.llm_ref_audio_path}, TTS={voice_refs.tts_ref_audio_path}, "
+                    f"tts_field_present={voice_refs.tts_field_present}, tts_same_as_llm={voice_refs.tts_same_as_llm}"
                 )
 
                 try:
                     prompt = await duplex_runtime.prepare(DuplexPrepareParams(
                         system_prompt_text=system_prompt,
-                        ref_audio_path=actual_ref_audio_path,
-                        prompt_wav_path=actual_tts_audio_path,
+                        ref_audio_path=voice_refs.llm_ref_audio_path,
+                        prompt_wav_path=voice_refs.tts_ref_audio_path,
                         config=config_dict,
                     ))
                     logger.info(f"Duplex prepared (deferred_finalize={use_deferred_finalize})")
@@ -1581,7 +1556,7 @@ async def duplex_ws(ws: WebSocket):
                     if cfg.recording.enabled:
                         config_snap = {
                             "system_prompt": system_prompt,
-                            "ref_audio": actual_ref_audio_path or cfg.ref_audio_path,
+                            "ref_audio": voice_refs.llm_ref_audio_path or cfg.ref_audio_path,
                             "deferred_finalize": use_deferred_finalize,
                             "max_slice_nums": session_max_slice_nums,
                         }
@@ -1613,13 +1588,7 @@ async def duplex_ws(ws: WebSocket):
                     logger.error(f"Duplex prepare failed: {e}", exc_info=True)
                     await ws.send_json({"type": "error", "error": str(e)})
                 finally:
-                    # 清理临时文件
-                    import os
-                    for tmp_path in temp_files:
-                        try:
-                            os.unlink(tmp_path)
-                        except OSError:
-                            pass
+                    voice_refs.cleanup()
 
             elif msg_type == "audio_chunk":
                 if worker.state.status == WorkerStatus.DUPLEX_PAUSED:
