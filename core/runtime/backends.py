@@ -7,9 +7,11 @@ semantics.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Dict, Iterator, Optional, Protocol
 
 import numpy as np
+
+from core.schemas.streaming import StreamingChunk
 
 
 class DuplexBackendAdapter(Protocol):
@@ -121,4 +123,129 @@ class WorkerDuplexBackendAdapter:
         if processor is not None:
             return int(getattr(processor, "kv_cache_length", 0) or 0)
         return int(getattr(self.worker, "kv_cache_length", 0) or 0)
+
+
+class ChatBackendAdapter(Protocol):
+    """Minimal backend contract required by ChatSessionRuntime."""
+
+    def prefill(
+        self,
+        *,
+        session_id: str,
+        msgs: list,
+        omni_mode: bool,
+        max_slice_nums: Optional[int],
+        use_tts_template: bool,
+        enable_thinking: bool,
+    ) -> str:
+        ...
+
+    def kv_cache_length(self) -> int:
+        ...
+
+    def init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
+        ...
+
+    def streaming_generate(
+        self,
+        *,
+        session_id: str,
+        generate_audio: bool,
+        max_new_tokens: int,
+        length_penalty: float,
+    ) -> Iterator[StreamingChunk]:
+        ...
+
+    def non_streaming_generate(
+        self,
+        *,
+        session_id: str,
+        max_new_tokens: int,
+        generate_audio: bool,
+        use_tts_template: bool,
+        enable_thinking: bool,
+        tts_ref_audio: Optional[np.ndarray],
+        length_penalty: float,
+    ) -> Any:
+        ...
+
+
+class WorkerChatBackendAdapter:
+    """Adapter over the current MiniCPMOWorker chat methods."""
+
+    def __init__(self, worker: Any):
+        self.worker = worker
+
+    def prefill(
+        self,
+        *,
+        session_id: str,
+        msgs: list,
+        omni_mode: bool,
+        max_slice_nums: Optional[int],
+        use_tts_template: bool,
+        enable_thinking: bool,
+    ) -> str:
+        return self.worker.chat_prefill(
+            session_id=session_id,
+            msgs=msgs,
+            omni_mode=omni_mode,
+            max_slice_nums=max_slice_nums,
+            use_tts_template=use_tts_template,
+            enable_thinking=enable_thinking,
+        )
+
+    def kv_cache_length(self) -> int:
+        processor = getattr(self.worker, "processor", None)
+        if processor is not None:
+            return int(getattr(processor, "kv_cache_length", 0) or 0)
+        return 0
+
+    def init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
+        if ref_audio is not None:
+            self.worker.processor.model.init_token2wav_cache(prompt_speech_16k=ref_audio)
+            return
+
+        ref_audio_path = getattr(self.worker, "ref_audio_path", None)
+        if ref_audio_path:
+            import librosa
+
+            loaded_ref, _ = librosa.load(ref_audio_path, sr=16000, mono=True)
+            self.worker.processor.model.init_token2wav_cache(prompt_speech_16k=loaded_ref)
+
+    def streaming_generate(
+        self,
+        *,
+        session_id: str,
+        generate_audio: bool,
+        max_new_tokens: int,
+        length_penalty: float,
+    ) -> Iterator[StreamingChunk]:
+        yield from self.worker.chat_streaming_generate(
+            session_id=session_id,
+            generate_audio=generate_audio,
+            max_new_tokens=max_new_tokens,
+            length_penalty=length_penalty,
+        )
+
+    def non_streaming_generate(
+        self,
+        *,
+        session_id: str,
+        max_new_tokens: int,
+        generate_audio: bool,
+        use_tts_template: bool,
+        enable_thinking: bool,
+        tts_ref_audio: Optional[np.ndarray],
+        length_penalty: float,
+    ) -> Any:
+        return self.worker.chat_non_streaming_generate(
+            session_id=session_id,
+            max_new_tokens=max_new_tokens,
+            generate_audio=generate_audio,
+            use_tts_template=use_tts_template,
+            enable_thinking=enable_thinking,
+            tts_ref_audio=tts_ref_audio,
+            length_penalty=length_penalty,
+        )
 

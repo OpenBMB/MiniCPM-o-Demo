@@ -40,8 +40,9 @@ from core.schemas.streaming import (
     StreamingRequest, StreamingChunk, StreamingResponse, StreamingConfig,
 )
 from core.schemas.duplex import DuplexGenerateResult
+from core.runtime.chat import ChatGenerateParams, ChatPrefillParams, ChatSessionRuntime
 from core.runtime.events import RuntimeEvent
-from core.runtime.backends import WorkerDuplexBackendAdapter
+from core.runtime.backends import WorkerChatBackendAdapter, WorkerDuplexBackendAdapter
 from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_control_message, parse_prepare_message
 from core.runtime.manager import RuntimeManager
 from core.runtime.metrics import log_duplex_frame
@@ -785,6 +786,7 @@ async def chat_ws(ws: WebSocket):
         session_id = "chat_ws_" + uuid.uuid4().hex[:8]
         worker.state.status = WorkerStatus.BUSY_HALF_DUPLEX
         worker.state.current_session_id = session_id
+        chat_runtime = ChatSessionRuntime(WorkerChatBackendAdapter(worker))
 
         chat_ws_recorder: Optional[TurnBasedSessionRecorder] = None
         chat_ws_session_id: Optional[str] = None
@@ -845,30 +847,19 @@ async def chat_ws(ws: WebSocket):
                 )
 
             # 2. Prefill
-            def _do_prefill():
-                return worker.chat_prefill(
-                    session_id=session_id,
-                    msgs=model_msgs,
-                    omni_mode=omni_mode,
-                    max_slice_nums=max_slice_nums,
-                    use_tts_template=use_tts_template,
-                    enable_thinking=enable_thinking,
-                )
-
-            await asyncio.to_thread(_do_prefill)
-            pre_kv = worker.processor.kv_cache_length
+            pre_kv = await chat_runtime.prefill(ChatPrefillParams(
+                session_id=session_id,
+                msgs=model_msgs,
+                omni_mode=omni_mode,
+                max_slice_nums=max_slice_nums,
+                use_tts_template=use_tts_template,
+                enable_thinking=enable_thinking,
+            ))
             await ws.send_json({"type": "prefill_done", "input_tokens": pre_kv})
 
             # 3. TTS init
             if generate_audio:
-                def _init_tts():
-                    if tts_ref_audio_ndarray is not None:
-                        worker.processor.model.init_token2wav_cache(prompt_speech_16k=tts_ref_audio_ndarray)
-                    elif worker.ref_audio_path:
-                        import librosa
-                        ref_audio, _ = librosa.load(worker.ref_audio_path, sr=16000, mono=True)
-                        worker.processor.model.init_token2wav_cache(prompt_speech_16k=ref_audio)
-                await asyncio.to_thread(_init_tts)
+                await chat_runtime.init_tts(tts_ref_audio_ndarray)
 
             # Build input summary for recording — save all content types
             _chat_input_summary: Dict[str, Any] = {}
@@ -930,12 +921,12 @@ async def chat_ws(ws: WebSocket):
 
                 def _run_generate():
                     try:
-                        for chunk in worker.chat_streaming_generate(
+                        for chunk in chat_runtime.streaming_generate(ChatGenerateParams(
                             session_id=session_id,
                             generate_audio=generate_audio,
                             max_new_tokens=max_new_tokens,
                             length_penalty=length_penalty,
-                        ):
+                        )):
                             loop.call_soon_threadsafe(chunk_queue.put_nowait, ("chunk", chunk))
                         loop.call_soon_threadsafe(chunk_queue.put_nowait, ("done", None))
                     except Exception as e:
@@ -990,18 +981,15 @@ async def chat_ws(ws: WebSocket):
                     pass
 
             else:
-                def _run_non_streaming():
-                    return worker.chat_non_streaming_generate(
-                        session_id=session_id,
-                        max_new_tokens=max_new_tokens,
-                        generate_audio=generate_audio,
-                        use_tts_template=use_tts_template,
-                        enable_thinking=enable_thinking,
-                        tts_ref_audio=tts_ref_audio_ndarray,
-                        length_penalty=length_penalty,
-                    )
-
-                result = await asyncio.to_thread(_run_non_streaming)
+                result = await chat_runtime.non_streaming_generate(ChatGenerateParams(
+                    session_id=session_id,
+                    max_new_tokens=max_new_tokens,
+                    generate_audio=generate_audio,
+                    use_tts_template=use_tts_template,
+                    enable_thinking=enable_thinking,
+                    tts_ref_audio=tts_ref_audio_ndarray,
+                    length_penalty=length_penalty,
+                ))
 
                 text = result
                 audio_data = None
