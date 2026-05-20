@@ -42,13 +42,10 @@ from core.schemas.streaming import (
 from core.schemas.duplex import DuplexGenerateResult
 from core.runtime.duplex import (
     DuplexFrameResult,
-    DuplexInputFrame,
-    DuplexPrepareParams,
 )
 from core.runtime.backends import WorkerDuplexBackendAdapter
+from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_prepare_message
 from core.runtime.manager import RuntimeManager
-from core.runtime.media import decode_audio_base64, decode_frame_base64_list
-from core.runtime.voice import resolve_duplex_voice_refs
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
 logging.basicConfig(
@@ -1511,44 +1508,16 @@ async def duplex_ws(ws: WebSocket):
             msg_type = msg.get("type", "")
 
             if msg_type == "prepare":
-                system_prompt = msg.get("system_prompt", "You are a helpful assistant.")
-                ref_audio_path = msg.get("ref_audio_path")
-                ref_audio_b64 = msg.get("ref_audio_base64")
-                # TTS ref audio: 独立字段，fallback 到 ref_audio_base64（向后兼容）
-                tts_ref_audio_b64 = msg.get("tts_ref_audio_base64") or ref_audio_b64
-                config_dict = msg.get("config")
-                # Deferred Finalize 策略（默认开启，性能更优）：
-                #   True  (模式 A): generate → 返回结果 → 异步 finalize
-                #     finalize（feed 终止符 + 滑窗维护，~37ms）与网络传输重叠，
-                #     LISTEN 省 ~37ms wall_clock，SPEAK 省 ~37ms wall_clock。
-                #     通过 asyncio.Event 栅栏保证 finalize 在下一轮 prefill 前完成。
-                #   False (模式 B): generate → 同步 finalize → 返回结果
-                #     仍享受合并 feed 优化（终止符 + </unit> 一次 forward），
-                #     但 finalize 耗时计入 wall_clock。
-                # 实测：模式 A 比 B LISTEN wall_clock 低 ~30ms，SPEAK 低 ~50ms。
-                use_deferred_finalize = msg.get("deferred_finalize", True)
-                session_max_slice_nums = msg.get("max_slice_nums") or (config_dict.get("max_slice_nums") if config_dict else None) or 1
-
-                # LLM ref audio → ref_audio_path（嵌入 system prompt）
-                # TTS ref audio → prompt_wav_path（初始化 vocoder）
-                # 两者可以不同，也可以相同（向后兼容：不提供 tts_ref_audio_base64 时复用 ref_audio_base64）
-                voice_refs = resolve_duplex_voice_refs(
-                    ref_audio_path=ref_audio_path,
-                    ref_audio_base64=ref_audio_b64,
-                    tts_ref_audio_base64=tts_ref_audio_b64,
-                )
+                prepare_msg = parse_prepare_message(msg)
+                use_deferred_finalize = prepare_msg.use_deferred_finalize
+                session_max_slice_nums = prepare_msg.session_max_slice_nums
                 logger.info(
-                    f"[Duplex RefAudio] LLM={voice_refs.llm_ref_audio_path}, TTS={voice_refs.tts_ref_audio_path}, "
-                    f"tts_field_present={voice_refs.tts_field_present}, tts_same_as_llm={voice_refs.tts_same_as_llm}"
+                    f"[Duplex RefAudio] LLM={prepare_msg.voice_refs.llm_ref_audio_path}, TTS={prepare_msg.voice_refs.tts_ref_audio_path}, "
+                    f"tts_field_present={prepare_msg.voice_refs.tts_field_present}, tts_same_as_llm={prepare_msg.voice_refs.tts_same_as_llm}"
                 )
 
                 try:
-                    prompt = await duplex_runtime.prepare(DuplexPrepareParams(
-                        system_prompt_text=system_prompt,
-                        ref_audio_path=voice_refs.llm_ref_audio_path,
-                        prompt_wav_path=voice_refs.tts_ref_audio_path,
-                        config=config_dict,
-                    ))
+                    prompt = await duplex_runtime.prepare(prepare_msg.params)
                     logger.info(f"Duplex prepared (deferred_finalize={use_deferred_finalize})")
 
                     duplex_type = "omni_duplex" if client_session_id.startswith("omni") else "audio_duplex"
@@ -1556,13 +1525,13 @@ async def duplex_ws(ws: WebSocket):
                     cfg = get_config()
                     if cfg.recording.enabled:
                         config_snap = {
-                            "system_prompt": system_prompt,
-                            "ref_audio": voice_refs.llm_ref_audio_path or cfg.ref_audio_path,
+                            "system_prompt": prepare_msg.system_prompt,
+                            "ref_audio": prepare_msg.recording_ref_audio_path or cfg.ref_audio_path,
                             "deferred_finalize": use_deferred_finalize,
                             "max_slice_nums": session_max_slice_nums,
                         }
-                        if config_dict:
-                            config_snap.update({k: v for k, v in config_dict.items() if k != "max_slice_nums"})
+                        if prepare_msg.config:
+                            config_snap.update({k: v for k, v in prepare_msg.config.items() if k != "max_slice_nums"})
                         session_recorder = DuplexSessionRecorder(
                             session_id=worker.state.current_session_id or client_session_id,
                             app_type=duplex_type,
@@ -1589,45 +1558,36 @@ async def duplex_ws(ws: WebSocket):
                     logger.error(f"Duplex prepare failed: {e}", exc_info=True)
                     await ws.send_json({"type": "error", "error": str(e)})
                 finally:
-                    voice_refs.cleanup()
+                    prepare_msg.cleanup()
 
             elif msg_type == "audio_chunk":
                 if worker.state.status == WorkerStatus.DUPLEX_PAUSED:
                     await ws.send_json({"type": "error", "error": "Worker is paused"})
                     continue
 
-                audio_b64 = msg.get("audio_base64")
-                if not audio_b64:
+                t_chunk_start = time.perf_counter()
+                try:
+                    legacy_input = parse_audio_chunk_message(
+                        msg,
+                        session_max_slice_nums=session_max_slice_nums,
+                        chunk_start=t_chunk_start,
+                    )
+                except ValueError:
                     await ws.send_json({"type": "error", "error": "Missing audio_base64"})
                     continue
-
-                t_chunk_start = time.perf_counter()
-
-                # 解码音频
-                audio_waveform = decode_audio_base64(audio_b64)
 
                 # 录制：保存用户音频 chunk
                 user_audio_rel: Optional[str] = None
                 if session_recorder:
-                    user_audio_rel = session_recorder.save_user_audio(chunk_idx, audio_waveform)
+                    user_audio_rel = session_recorder.save_user_audio(chunk_idx, legacy_input.frame.audio_waveform)
 
-                # 解码图像帧（可选）
-                frame_list = None
                 user_frame_rel: Optional[str] = None
-                frame_b64_list = msg.get("frame_base64_list")
-                decoded_frames = decode_frame_base64_list(frame_b64_list)
-                frame_list = decoded_frames.frame_list
                 # 录制：保存原始 JPEG 帧（在 PIL 解码之前）
-                if session_recorder and decoded_frames.first_frame_bytes is not None:
+                if session_recorder and legacy_input.first_frame_bytes is not None:
                     user_frame_rel = session_recorder.save_user_frame(
                         chunk_idx,
-                        decoded_frames.first_frame_bytes,
+                        legacy_input.first_frame_bytes,
                     )
-
-                # per-chunk Force Listen 标记
-                chunk_force_listen = bool(msg.get("force_listen", False))
-                # per-chunk HD vision override（fallback 到 session 默认值）
-                chunk_max_slice_nums: int = msg.get("max_slice_nums", session_max_slice_nums)
 
                 try:
                     async def _emit_frame(frame: DuplexFrameResult) -> None:
@@ -1692,13 +1652,7 @@ async def duplex_ws(ws: WebSocket):
                         await ws.send_json({"type": "result", **result_dict})
 
                     await duplex_runtime.process_frame(
-                        frame=DuplexInputFrame(
-                            audio_waveform=audio_waveform,
-                            frame_list=frame_list,
-                            max_slice_nums=chunk_max_slice_nums,
-                            force_listen=chunk_force_listen,
-                            chunk_start=t_chunk_start,
-                        ),
+                        frame=legacy_input.frame,
                         emit=_emit_frame,
                         use_deferred_finalize=use_deferred_finalize,
                     )
