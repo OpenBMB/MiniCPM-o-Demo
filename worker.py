@@ -45,8 +45,8 @@ from core.runtime.duplex import (
     DuplexInputFrame,
     DuplexPrepareParams,
     DuplexSessionRuntime,
-    WorkerDuplexBackendAdapter,
 )
+from core.runtime.backends import WorkerDuplexBackendAdapter
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
 logging.basicConfig(

@@ -2,7 +2,8 @@ import asyncio
 
 import numpy as np
 
-from core.runtime.duplex import DuplexInputFrame, DuplexSessionRuntime, WorkerDuplexBackendAdapter
+from core.runtime.backends import WorkerDuplexBackendAdapter
+from core.runtime.duplex import DuplexInputFrame, DuplexSessionRuntime
 
 
 class _FakeResult:
