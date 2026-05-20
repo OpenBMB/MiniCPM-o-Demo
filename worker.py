@@ -46,6 +46,7 @@ from core.runtime.backends import WorkerChatBackendAdapter, WorkerDuplexBackendA
 from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_control_message, parse_prepare_message
 from core.runtime.manager import RuntimeManager
 from core.runtime.metrics import log_duplex_frame
+from core.runtime.protocol import DEFAULT_WORKER_CAPABILITIES
 from core.runtime.sinks import DuplexRecordingSink, LegacyDuplexWebSocketSink
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
@@ -54,9 +55,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("worker")
-
-WORKER_CAPABILITIES = ["chat", "streaming", "half_duplex_audio", "audio_duplex", "omni_duplex"]
-
 
 # ============ Worker 状态 ============
 
@@ -599,7 +597,7 @@ async def health():
         total_requests=worker.state.total_requests,
         avg_inference_time_ms=avg_time,
         kv_cache_length=kv_len,
-        capabilities=WORKER_CAPABILITIES,
+        capabilities=DEFAULT_WORKER_CAPABILITIES,
     )
 
 

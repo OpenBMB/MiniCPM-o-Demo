@@ -40,21 +40,11 @@ from .models import (
     EtaConfig,
     EtaStatus,
 )
+from core.runtime.protocol import DEFAULT_WORKER_CAPABILITIES, capability_for_request
 
 logger = logging.getLogger("gateway.worker_pool")
 
 HEALTH_CHECK_INTERVAL = 10.0
-DEFAULT_WORKER_CAPABILITIES = ["chat", "streaming", "half_duplex_audio", "audio_duplex", "omni_duplex"]
-
-_REQUEST_CAPABILITY_MAP: Dict[str, str] = {
-    "chat": "chat",
-    "streaming": "streaming",
-    "chat_ws": "streaming",
-    "half_duplex_audio": "half_duplex_audio",
-    "audio_duplex": "audio_duplex",
-    "omni_duplex": "omni_duplex",
-    "duplex": "omni_duplex",
-}
 
 
 # ============ Worker 连接 ============
@@ -94,7 +84,7 @@ class WorkerConnection:
         )
 
     def supports(self, request_type: str) -> bool:
-        required = _REQUEST_CAPABILITY_MAP.get(request_type, request_type)
+        required = capability_for_request(request_type)
         return required in (self.capabilities or DEFAULT_WORKER_CAPABILITIES)
 
     def to_info(self) -> WorkerInfo:
