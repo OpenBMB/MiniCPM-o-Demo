@@ -44,9 +44,9 @@ from core.runtime.duplex import (
     DuplexFrameResult,
     DuplexInputFrame,
     DuplexPrepareParams,
-    DuplexSessionRuntime,
 )
 from core.runtime.backends import WorkerDuplexBackendAdapter
+from core.runtime.manager import RuntimeManager
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
 logging.basicConfig(
@@ -533,6 +533,7 @@ class MiniCPMOWorker:
 # ============ FastAPI 应用 ============
 
 worker: Optional[MiniCPMOWorker] = None
+runtime_manager = RuntimeManager()
 
 # 启动参数（通过 main() 传入）
 WORKER_CONFIG: Dict[str, Any] = {}
@@ -1470,12 +1471,16 @@ async def duplex_ws(ws: WebSocket):
     worker.state.status = WorkerStatus.DUPLEX_ACTIVE
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     worker.state.current_session_id = f"{ts}_{client_session_id}" if client_session_id else f"{ts}_duplex"
+    runtime_session_id = worker.state.current_session_id
     # Duplex 会重置模型状态（prepare 会调用），Gateway 侧已清除 cached_hash
 
     pause_timeout_task: Optional[asyncio.Task] = None
 
     # Session runtime owns model-side lifecycle details such as deferred finalize.
-    duplex_runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+    duplex_runtime = runtime_manager.create_duplex(
+        runtime_session_id,
+        WorkerDuplexBackendAdapter(worker),
+    )
 
     session_max_slice_nums: int = 1
 
@@ -1765,7 +1770,7 @@ async def duplex_ws(ws: WebSocket):
 
             elif msg_type == "stop":
                 logger.info("Duplex stopped by client")
-                await duplex_runtime.close()
+                await runtime_manager.close_duplex(runtime_session_id)
                 await ws.send_json({"type": "stopped"})
                 break
 
@@ -1789,7 +1794,7 @@ async def duplex_ws(ws: WebSocket):
             pause_timeout_task.cancel()
 
         try:
-            await duplex_runtime.close()
+            await runtime_manager.close_duplex(runtime_session_id)
         except Exception as e:
             logger.error(f"Duplex cleanup failed: {e}", exc_info=True)
 
