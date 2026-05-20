@@ -57,7 +57,9 @@ from gateway_modules.app_registry import (
     AppsAdminResponse,
 )
 from gateway_modules.runtime_protocol import (
+    chat_client_to_worker_runtime,
     realtime_client_to_worker_runtime,
+    worker_runtime_to_legacy_chat,
     worker_runtime_to_realtime,
 )
 
@@ -386,7 +388,7 @@ async def chat(request: Request):
 
 @app.websocket("/ws/chat")
 async def chat_ws_proxy(ws: WebSocket):
-    """Chat WebSocket 代理 — 排队后透传到 Worker /ws/chat"""
+    """Chat WebSocket 代理 — 排队后转到 Worker runtime chat endpoint"""
     if not app_registry.is_enabled("turnbased"):
         await ws.close(code=1008, reason="Turn-based Chat is currently disabled")
         return
@@ -431,26 +433,27 @@ async def chat_ws_proxy(ws: WebSocket):
         assigned_worker.mark_busy(GatewayWorkerStatus.BUSY_CHAT, "chat_ws")
         task_start = datetime.now()
 
-        # 连接 Worker WebSocket
+        # 连接 Worker runtime WebSocket
         import websockets
+        worker_session_id = f"chatgw_{int(datetime.now().timestamp()*1000)}"
         identity_qs = _worker_identity_query(
             ws,
-            session_id=f"chatgw_{int(datetime.now().timestamp()*1000)}",
+            session_id=worker_session_id,
             source_channel="demo_turnbased",
             source_mode="chat",
         )
-        ws_url = f"ws://{assigned_worker.host}:{assigned_worker.port}/ws/chat?{identity_qs}"
+        ws_url = f"ws://{assigned_worker.host}:{assigned_worker.port}/v1/worker/sessions/{worker_session_id}/chat?{identity_qs}"
         # max_size on the client side caps how large an *incoming* frame can
         # be from the worker; chat chunks are small but we bump it for
         # symmetry with the gateway uvicorn config.
         worker_ws = await websockets.connect(ws_url, max_size=128 * 1024 * 1024)
 
         # 转发请求
-        await worker_ws.send(raw)
+        await worker_ws.send(json.dumps(chat_client_to_worker_runtime(json.loads(raw))))
 
-        # 透传 Worker 的所有响应到前端
+        # 将 Worker runtime 响应翻译回页面现有协议
         async for msg_data in worker_ws:
-            await ws.send_text(msg_data)
+            await ws.send_json(worker_runtime_to_legacy_chat(json.loads(msg_data)))
 
     except WebSocketDisconnect:
         logger.info("Chat WS proxy: client disconnected")
@@ -468,7 +471,7 @@ async def chat_ws_proxy(ws: WebSocket):
                 pass
         if assigned_worker and task_start:
             duration = (datetime.now() - task_start).total_seconds()
-            worker_pool.release_worker(assigned_worker, request_type="chat_ws", duration_s=duration)
+            worker_pool.release_worker(assigned_worker, request_type="chat", duration_s=duration)
         try:
             await ws.close()
         except Exception:

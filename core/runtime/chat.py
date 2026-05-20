@@ -34,7 +34,7 @@ class ChatGenerateParams:
 
 
 class ChatSessionRuntime:
-    """Runtime wrapper for the legacy /ws/chat worker flow."""
+    """Runtime wrapper for a single turn-based chat request."""
 
     def __init__(self, backend: ChatBackendAdapter):
         self.backend = backend

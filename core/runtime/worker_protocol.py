@@ -7,8 +7,12 @@ eventually talk to workers without inheriting page/demo message shapes.
 
 from __future__ import annotations
 
+import base64
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
+
+import numpy as np
 
 from core.runtime.duplex import DuplexInputFrame, DuplexPrepareParams
 from core.runtime.events import RuntimeControl, RuntimeEvent
@@ -22,6 +26,66 @@ class WorkerProtocolError(ValueError):
 
 def _coalesce_int(value: Any, default: int) -> int:
     return int(default if value is None else value)
+
+
+@dataclass
+class WorkerChatRequest:
+    messages: list
+    streaming: bool
+    max_new_tokens: int
+    length_penalty: float
+    max_slice_nums: Optional[int]
+    generate_audio: bool
+    tts_ref_audio: Optional[np.ndarray]
+    use_tts_template: bool
+    omni_mode: bool
+    enable_thinking: bool
+
+
+def parse_worker_chat_request_message(msg: Dict[str, Any]) -> WorkerChatRequest:
+    """Parse a `chat.request` worker protocol message."""
+
+    if msg.get("type") != "chat.request":
+        raise WorkerProtocolError("expected chat.request message")
+
+    payload = msg.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise WorkerProtocolError("chat.request payload must be an object")
+
+    generation = payload.get("generation") or {}
+    if not isinstance(generation, dict):
+        raise WorkerProtocolError("chat.request generation must be an object")
+
+    image = payload.get("image") or {}
+    if not isinstance(image, dict):
+        raise WorkerProtocolError("chat.request image must be an object")
+
+    tts = payload.get("tts") or {}
+    if not isinstance(tts, dict):
+        raise WorkerProtocolError("chat.request tts must be an object")
+
+    max_slice_nums = None
+    if image.get("max_slice_nums") is not None:
+        max_slice_nums = int(image["max_slice_nums"])
+
+    generate_audio = bool(tts.get("enabled", False))
+    tts_ref_audio = None
+    ref_b64 = tts.get("ref_audio_data")
+    if generate_audio and ref_b64:
+        tts_ref_audio = np.frombuffer(base64.b64decode(ref_b64), dtype=np.float32)
+
+    return WorkerChatRequest(
+        messages=payload.get("messages", []),
+        streaming=bool(payload.get("streaming", True)),
+        max_new_tokens=int(generation.get("max_new_tokens", 256)),
+        length_penalty=float(generation.get("length_penalty", 1.1)),
+        max_slice_nums=max_slice_nums,
+        generate_audio=generate_audio,
+        tts_ref_audio=tts_ref_audio,
+        use_tts_template=bool(payload.get("use_tts_template", False) or generate_audio),
+        omni_mode=bool(payload.get("omni_mode", False)),
+        enable_thinking=bool(payload.get("enable_thinking", False)),
+    )
 
 
 def parse_worker_prepare_message(msg: Dict[str, Any]) -> tuple[DuplexPrepareParams, DuplexVoiceRefs]:

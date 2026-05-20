@@ -5,6 +5,50 @@ from __future__ import annotations
 from typing import Any, Dict
 
 
+def chat_client_to_worker_runtime(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """Wrap a public turn-based chat request for the worker runtime protocol."""
+
+    return {
+        "type": "chat.request",
+        "payload": msg,
+    }
+
+
+def worker_runtime_to_legacy_chat(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate worker chat runtime messages back to the existing page protocol."""
+
+    msg_type = msg.get("type")
+    payload = msg.get("payload") or {}
+
+    if msg_type == "chat.prefill_done":
+        return {
+            "type": "prefill_done",
+            "input_tokens": payload.get("input_tokens", 0),
+        }
+
+    if msg_type == "chat.chunk":
+        out = {"type": "chunk"}
+        if payload.get("text_delta"):
+            out["text_delta"] = payload["text_delta"]
+        if payload.get("audio_base64"):
+            out["audio_data"] = payload["audio_base64"]
+        return out
+
+    if msg_type == "chat.done":
+        out = {
+            "type": "done",
+            "text": payload.get("text", ""),
+            "audio_data": payload.get("audio_base64"),
+            "generated_tokens": payload.get("generated_tokens", 0),
+            "input_tokens": payload.get("input_tokens", 0),
+        }
+        if payload.get("recording_session_id"):
+            out["recording_session_id"] = payload["recording_session_id"]
+        return out
+
+    return msg
+
+
 def legacy_duplex_client_to_worker_runtime(msg: Dict[str, Any]) -> Dict[str, Any]:
     """Translate legacy /ws/duplex client messages to worker runtime protocol."""
 

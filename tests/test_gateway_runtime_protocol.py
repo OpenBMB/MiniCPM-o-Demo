@@ -1,7 +1,52 @@
 from gateway_modules.runtime_protocol import (
+    chat_client_to_worker_runtime,
     realtime_client_to_worker_runtime,
+    worker_runtime_to_legacy_chat,
     worker_runtime_to_realtime,
 )
+
+
+def test_chat_client_request_wraps_for_worker_runtime():
+    request = {"messages": [{"role": "user", "content": "hi"}], "streaming": True}
+
+    msg = chat_client_to_worker_runtime(request)
+
+    assert msg == {
+        "type": "chat.request",
+        "payload": request,
+    }
+
+
+def test_worker_chat_runtime_messages_to_legacy_chat():
+    prefill = worker_runtime_to_legacy_chat({
+        "type": "chat.prefill_done",
+        "payload": {"input_tokens": 3},
+    })
+    chunk = worker_runtime_to_legacy_chat({
+        "type": "chat.chunk",
+        "payload": {"text_delta": "hi", "audio_base64": "pcm"},
+    })
+    done = worker_runtime_to_legacy_chat({
+        "type": "chat.done",
+        "payload": {
+            "text": "hello",
+            "audio_base64": "wav",
+            "generated_tokens": 2,
+            "input_tokens": 3,
+            "recording_session_id": "rec1",
+        },
+    })
+
+    assert prefill == {"type": "prefill_done", "input_tokens": 3}
+    assert chunk == {"type": "chunk", "text_delta": "hi", "audio_data": "pcm"}
+    assert done == {
+        "type": "done",
+        "text": "hello",
+        "audio_data": "wav",
+        "generated_tokens": 2,
+        "input_tokens": 3,
+        "recording_session_id": "rec1",
+    }
 
 
 def test_realtime_session_update_to_worker_prepare():
