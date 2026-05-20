@@ -48,6 +48,13 @@ from core.runtime.manager import RuntimeManager
 from core.runtime.metrics import log_duplex_frame
 from core.runtime.protocol import DEFAULT_WORKER_CAPABILITIES
 from core.runtime.sinks import DuplexRecordingSink, LegacyDuplexWebSocketSink
+from core.runtime.worker_protocol import (
+    WorkerProtocolError,
+    parse_worker_control_message,
+    parse_worker_input_message,
+    parse_worker_prepare_message,
+    runtime_event_to_worker_message,
+)
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
 logging.basicConfig(
@@ -1424,6 +1431,97 @@ async def half_duplex_ws(ws: WebSocket):
 
 
 # ========== Duplex WebSocket ==========
+
+@app.websocket("/v1/worker/sessions/{session_id}/duplex")
+async def worker_duplex_runtime_ws(ws: WebSocket, session_id: str):
+    """Worker-internal duplex runtime protocol.
+
+    This endpoint is meant for gateway-worker communication.  It coexists with
+    the legacy `/ws/duplex` endpoint and uses runtime event payloads instead of
+    page/demo-shaped result messages.
+    """
+
+    if worker is None or worker.processor is None:
+        await ws.close(code=1013, reason="Worker not ready")
+        return
+
+    if not worker.state.is_idle:
+        await ws.close(code=1013, reason=f"Worker busy: {worker.state.status.value}")
+        return
+
+    safe_session_id = _sanitize_session_id(session_id)
+    await ws.accept()
+    worker.state.status = WorkerStatus.DUPLEX_ACTIVE
+    worker.state.current_session_id = safe_session_id
+
+    runtime = runtime_manager.create_duplex(
+        safe_session_id,
+        WorkerDuplexBackendAdapter(worker),
+    )
+    session_max_slice_nums = 1
+
+    async def _emit_event(event: RuntimeEvent) -> None:
+        log_duplex_frame(logger, event.payload["frame"], gpu_id=worker.gpu_id)
+        await ws.send_json(runtime_event_to_worker_message(event))
+
+    try:
+        while True:
+            msg = json.loads(await ws.receive_text())
+            msg_type = msg.get("type")
+
+            if msg_type == "session.prepare":
+                voice_refs = None
+                try:
+                    params, voice_refs = parse_worker_prepare_message(msg)
+                    prompt = await runtime.prepare(params)
+                    session_max_slice_nums = int((params.config or {}).get("max_slice_nums", session_max_slice_nums))
+                    await ws.send_json({
+                        "type": "session.ready",
+                        "session_id": safe_session_id,
+                        "prompt_length": len(prompt),
+                    })
+                finally:
+                    if voice_refs is not None:
+                        voice_refs.cleanup()
+
+            elif msg_type == "input.append":
+                frame = parse_worker_input_message(
+                    msg,
+                    default_max_slice_nums=session_max_slice_nums,
+                    chunk_start=time.perf_counter(),
+                )
+                await runtime.process_frame(frame=frame, emit=_emit_event)
+
+            elif msg_type == "control":
+                control = parse_worker_control_message(msg)
+                event = await runtime.control(control)
+                await ws.send_json(runtime_event_to_worker_message(event))
+                if control.type == "session.close":
+                    runtime_manager.forget_duplex(safe_session_id)
+                    break
+
+            else:
+                raise WorkerProtocolError(f"unknown worker runtime message type: {msg_type}")
+
+    except WebSocketDisconnect:
+        logger.info("Worker runtime duplex WebSocket disconnected")
+    except WorkerProtocolError as exc:
+        await ws.send_json({"type": "error", "error": str(exc)})
+    except Exception as exc:
+        logger.error("Worker runtime duplex WebSocket error: %s", exc, exc_info=True)
+        try:
+            await ws.send_json({"type": "error", "error": str(exc)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await runtime_manager.close_duplex(safe_session_id)
+        except Exception as exc:
+            logger.error("Worker runtime duplex cleanup failed: %s", exc, exc_info=True)
+        worker.state.status = WorkerStatus.IDLE
+        worker.state.current_session_id = None
+        worker.state.duplex_pause_time = None
+
 
 @app.websocket("/ws/duplex")
 async def duplex_ws(ws: WebSocket):
