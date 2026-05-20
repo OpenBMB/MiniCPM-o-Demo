@@ -1453,7 +1453,7 @@ async function startSession() {
         if (dlBtn) { dlBtn.style.display = 'none'; dlBtn.disabled = true; }
     }
 
-    // Create DuplexSession + wire hooks
+    // Create RealtimeSession + wire hooks
     session = new RealtimeSession('omni', {
         getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,

@@ -1,10 +1,10 @@
 /**
  * lib/realtime-session.js — OpenAI Realtime-style session manager
  *
- * Drop-in replacement for DuplexSession that speaks the new protocol:
+ * Realtime session client that speaks the new protocol:
  *   session.update / input_audio_buffer.append / response.listen / response.output_audio.delta
  *
- * Same callback interface as DuplexSession so UI code can swap with zero changes.
+ * Keeps the established callback interface so UI code remains thin.
  */
 
 import { AudioPlayer } from './audio-player.js';
