@@ -45,6 +45,7 @@ class DuplexFrameResult:
         return RuntimeEvent(
             channel="output.duplex_result",
             payload={
+                "frame": self,
                 "result": self.result,
                 "result_dict": self.result_dict,
                 "prefill_ms": self.prefill_ms,
@@ -78,7 +79,7 @@ class DuplexInputFrame:
     chunk_start: Optional[float] = None
 
 
-EmitDuplexFrame = Callable[[DuplexFrameResult], Awaitable[None]]
+EmitRuntimeEvent = Callable[[RuntimeEvent], Awaitable[None]]
 
 
 class DuplexSessionRuntime:
@@ -119,7 +120,7 @@ class DuplexSessionRuntime:
         self,
         *,
         frame: DuplexInputFrame,
-        emit: EmitDuplexFrame,
+        emit: EmitRuntimeEvent,
         use_deferred_finalize: bool = True,
     ) -> DuplexFrameResult:
         """Run one duplex frame and emit the transport-facing result.
@@ -179,14 +180,16 @@ class DuplexSessionRuntime:
             vision_tokens=vision_tokens,
         )
 
+        event = frame_result.to_runtime_event()
+
         if use_deferred_finalize:
             try:
-                await emit(frame_result)
+                await emit(event)
             finally:
                 self._schedule_finalize()
         else:
             await self._run_finalize_sync()
-            await emit(frame_result)
+            await emit(event)
 
         return frame_result
 

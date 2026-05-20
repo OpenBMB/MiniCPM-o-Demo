@@ -73,7 +73,7 @@ def test_deferred_finalize_is_runtime_managed():
                 max_slice_nums=1,
                 force_listen=False,
             ),
-            emit=lambda frame: emitted.append(frame) or asyncio.sleep(0),
+            emit=lambda event: emitted.append(event) or asyncio.sleep(0),
             use_deferred_finalize=True,
         )
         await runtime.wait_for_finalize()
@@ -83,9 +83,10 @@ def test_deferred_finalize_is_runtime_managed():
             "generate",
             "finalize",
         ]
-        assert emitted[0].result_dict["vision_slices"] == 1
-        event = emitted[0].to_runtime_event()
+        event = emitted[0]
         assert event.channel == "output.duplex_result"
+        assert event.payload["result_dict"]["vision_slices"] == 1
+        assert event.payload["frame"].result_dict["vision_slices"] == 1
         assert event.payload["kv_cache_len"] == 10
 
     asyncio.run(_run())
@@ -103,7 +104,7 @@ def test_close_drains_finalize_before_cleanup():
                 max_slice_nums=1,
                 force_listen=False,
             ),
-            emit=lambda _frame: asyncio.sleep(0),
+            emit=lambda _event: asyncio.sleep(0),
             use_deferred_finalize=True,
         )
         await runtime.close()
@@ -127,7 +128,7 @@ def test_pause_blocks_processing_until_resume():
                     audio_waveform=np.zeros(16000, dtype=np.float32),
                     frame_list=[],
                 ),
-                emit=lambda _frame: asyncio.sleep(0),
+                emit=lambda _event: asyncio.sleep(0),
             )
         except RuntimeError as exc:
             assert "paused" in str(exc)
@@ -142,7 +143,7 @@ def test_pause_blocks_processing_until_resume():
                 audio_waveform=np.zeros(16000, dtype=np.float32),
                 frame_list=[],
             ),
-            emit=lambda _frame: asyncio.sleep(0),
+            emit=lambda _event: asyncio.sleep(0),
         )
 
     asyncio.run(_run())

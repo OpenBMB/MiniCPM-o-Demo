@@ -40,9 +40,7 @@ from core.schemas.streaming import (
     StreamingRequest, StreamingChunk, StreamingResponse, StreamingConfig,
 )
 from core.schemas.duplex import DuplexGenerateResult
-from core.runtime.duplex import (
-    DuplexFrameResult,
-)
+from core.runtime.events import RuntimeEvent
 from core.runtime.backends import WorkerDuplexBackendAdapter
 from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_control_message, parse_prepare_message
 from core.runtime.manager import RuntimeManager
@@ -1590,8 +1588,9 @@ async def duplex_ws(ws: WebSocket):
                     )
 
                 try:
-                    async def _emit_frame(frame: DuplexFrameResult) -> None:
+                    async def _emit_frame(event: RuntimeEvent) -> None:
                         nonlocal chunk_idx
+                        frame = event.payload["frame"]
                         result = frame.result
                         result_dict = frame.result_dict
 
