@@ -47,6 +47,7 @@ from core.runtime.duplex import (
 )
 from core.runtime.backends import WorkerDuplexBackendAdapter
 from core.runtime.manager import RuntimeManager
+from core.runtime.media import decode_audio_base64, decode_frame_base64_list
 from core.runtime.voice import resolve_duplex_voice_refs
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
@@ -1603,8 +1604,7 @@ async def duplex_ws(ws: WebSocket):
                 t_chunk_start = time.perf_counter()
 
                 # 解码音频
-                audio_bytes = base64.b64decode(audio_b64)
-                audio_waveform = np.frombuffer(audio_bytes, dtype=np.float32)
+                audio_waveform = decode_audio_base64(audio_b64)
 
                 # 录制：保存用户音频 chunk
                 user_audio_rel: Optional[str] = None
@@ -1615,16 +1615,14 @@ async def duplex_ws(ws: WebSocket):
                 frame_list = None
                 user_frame_rel: Optional[str] = None
                 frame_b64_list = msg.get("frame_base64_list")
-                if frame_b64_list:
-                    from PIL import Image
-                    import io
-                    frame_list = []
-                    for fb64 in frame_b64_list:
-                        frame_bytes = base64.b64decode(fb64)
-                        # 录制：保存原始 JPEG 帧（在 PIL 解码之前）
-                        if session_recorder and user_frame_rel is None:
-                            user_frame_rel = session_recorder.save_user_frame(chunk_idx, frame_bytes)
-                        frame_list.append(Image.open(io.BytesIO(frame_bytes)))
+                decoded_frames = decode_frame_base64_list(frame_b64_list)
+                frame_list = decoded_frames.frame_list
+                # 录制：保存原始 JPEG 帧（在 PIL 解码之前）
+                if session_recorder and decoded_frames.first_frame_bytes is not None:
+                    user_frame_rel = session_recorder.save_user_frame(
+                        chunk_idx,
+                        decoded_frames.first_frame_bytes,
+                    )
 
                 # per-chunk Force Listen 标记
                 chunk_force_listen = bool(msg.get("force_listen", False))
