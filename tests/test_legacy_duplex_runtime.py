@@ -5,10 +5,12 @@ import numpy as np
 from PIL import Image
 
 from core.runtime.legacy_duplex import (
+    legacy_result_payload_from_event,
     parse_audio_chunk_message,
     parse_control_message,
     parse_prepare_message,
 )
+from core.runtime.events import RuntimeEvent
 
 
 def _pcm_b64(samples: int = 1600) -> str:
@@ -91,4 +93,17 @@ def test_parse_control_message_maps_legacy_controls():
     assert interrupt.type == "legacy.interrupt"
 
     assert parse_control_message({"type": "audio_chunk"}) is None
+
+
+def test_legacy_result_payload_from_runtime_event():
+    event = RuntimeEvent(
+        channel="output.duplex_result",
+        payload={"result_dict": {"is_listen": True, "kv_cache_length": 12}},
+    )
+
+    assert legacy_result_payload_from_event(event) == {
+        "type": "result",
+        "is_listen": True,
+        "kv_cache_length": 12,
+    }
 

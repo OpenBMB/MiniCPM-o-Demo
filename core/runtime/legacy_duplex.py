@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from core.runtime.duplex import DuplexInputFrame, DuplexPrepareParams
-from core.runtime.events import RuntimeControl
+from core.runtime.events import RuntimeControl, RuntimeEvent
 from core.runtime.media import decode_audio_base64, decode_frame_base64_list
 from core.runtime.voice import DuplexVoiceRefs, resolve_duplex_voice_refs
 
@@ -120,4 +120,15 @@ def parse_control_message(msg: Dict[str, Any]) -> Optional[RuntimeControl]:
     if msg_type == "interrupt":
         return RuntimeControl(type="legacy.interrupt")
     return None
+
+
+def legacy_result_payload_from_event(event: RuntimeEvent) -> Dict[str, Any]:
+    """Translate a runtime duplex output event to the legacy WS result payload."""
+
+    if event.channel != "output.duplex_result":
+        raise ValueError(f"unsupported event channel for legacy duplex result: {event.channel}")
+    result_dict = event.payload.get("result_dict")
+    if not isinstance(result_dict, dict):
+        raise ValueError("runtime event missing result_dict payload")
+    return {"type": "result", **result_dict}
 

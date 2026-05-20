@@ -42,7 +42,12 @@ from core.schemas.streaming import (
 from core.schemas.duplex import DuplexGenerateResult
 from core.runtime.events import RuntimeEvent
 from core.runtime.backends import WorkerDuplexBackendAdapter
-from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_control_message, parse_prepare_message
+from core.runtime.legacy_duplex import (
+    legacy_result_payload_from_event,
+    parse_audio_chunk_message,
+    parse_control_message,
+    parse_prepare_message,
+)
 from core.runtime.manager import RuntimeManager
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
@@ -1648,7 +1653,7 @@ async def duplex_ws(ws: WebSocket):
                             )
                             chunk_idx += 1
 
-                        await ws.send_json({"type": "result", **result_dict})
+                        await ws.send_json(legacy_result_payload_from_event(event))
 
                     await duplex_runtime.process_frame(
                         frame=legacy_input.frame,
