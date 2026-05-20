@@ -44,6 +44,7 @@ from core.runtime.events import RuntimeEvent
 from core.runtime.backends import WorkerDuplexBackendAdapter
 from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_control_message, parse_prepare_message
 from core.runtime.manager import RuntimeManager
+from core.runtime.metrics import log_duplex_frame
 from core.runtime.sinks import LegacyDuplexWebSocketSink
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
@@ -1596,29 +1597,7 @@ async def duplex_ws(ws: WebSocket):
                         result = frame.result
                         result_dict = frame.result_dict
 
-                        if not result.is_listen:
-                            llm = result.cost_llm_ms or 0
-                            tts_prep = result.cost_tts_prep_ms or 0
-                            tts = result.cost_tts_ms or 0
-                            t2w = result.cost_token2wav_ms or 0
-                            total = result.cost_all_ms or 0
-                            n_tok = result.n_tokens or 0
-                            n_tts_tok = result.n_tts_tokens or 0
-                            logger.info(
-                                f"[GPU {worker.gpu_id}] SPEAK t={result.current_time} wall={frame.wall_clock_ms:.0f}ms | "
-                                f"prefill={frame.prefill_ms:.0f} llm={llm:.0f} tts_prep={tts_prep:.0f} "
-                                f"tts={tts:.0f} t2w={t2w:.0f} total={total:.0f}ms | "
-                                f"tokens={n_tok} tts_tokens={n_tts_tok} kv={frame.kv_cache_len} | "
-                                f"vimg={frame.n_vision_images} vtok={frame.vision_tokens} | "
-                                f"text='{(result.text or '')[:20]}'"
-                            )
-                        else:
-                            total = result.cost_all_ms or 0
-                            logger.info(
-                                f"[GPU {worker.gpu_id}] LISTEN t={result.current_time} wall={frame.wall_clock_ms:.0f}ms | "
-                                f"prefill={frame.prefill_ms:.0f} generate={total:.0f}ms kv={frame.kv_cache_len} | "
-                                f"vimg={frame.n_vision_images} vtok={frame.vision_tokens}"
-                            )
+                        log_duplex_frame(logger, frame, gpu_id=worker.gpu_id)
 
                         # 录制：保存 AI 音频并记录 chunk timeline
                         ai_audio_rel: Optional[str] = None
