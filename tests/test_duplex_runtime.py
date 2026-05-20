@@ -74,6 +74,30 @@ class _FakeWorker:
         self.calls = []
         self.processor = _FakeProcessor(self)
 
+    def set_duplex_config(self, _config):
+        return
+
+    def duplex_prepare(self, **kwargs):
+        return self.processor.set_duplex_mode().prepare(**kwargs)
+
+    def duplex_prefill(self, **kwargs):
+        return self.processor.set_duplex_mode().prefill(**kwargs)
+
+    def duplex_generate(self, **kwargs):
+        return self.processor.set_duplex_mode().generate(**kwargs)
+
+    def duplex_finalize(self):
+        self.processor.set_duplex_mode().finalize()
+
+    def duplex_stop(self):
+        self.processor.set_duplex_mode().stop()
+
+    def duplex_cleanup(self):
+        self.processor.set_duplex_mode().cleanup()
+
+    def metrics(self):
+        return {"backend": "fake", "kv_cache_length": self.processor.kv_cache_length}
+
 
 def test_deferred_finalize_is_runtime_managed():
     async def _run():

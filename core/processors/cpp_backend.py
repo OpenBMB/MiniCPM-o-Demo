@@ -253,6 +253,7 @@ class CppBackendWorker:
         self._last_media_type: int = 2
         self._last_lang: str = "zh"
         self._duplex_length_penalty: float = 1.1
+        self._duplex_config: Dict[str, Any] = {}
 
         self._duplex_chunk_counter: int = 0
         self._current_session_id: Optional[str] = None
@@ -289,6 +290,13 @@ class CppBackendWorker:
             kv_cache_length=int(self._last_kv_cache_length),
         ).to_dict()
 
+    def set_duplex_config(self, config: Optional[Dict[str, Any]]) -> None:
+        self._duplex_config = dict(config or {})
+
+    def chat_init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
+        """C++ backend initializes TTS in omni_init/update_session_config."""
+        return
+
     def _maybe_update_kv_cache_length(self, payload: Any) -> None:
         if isinstance(payload, dict) and "kv_cache_length" in payload:
             try:
@@ -320,6 +328,7 @@ class CppBackendWorker:
         self._duplex_chunk_counter = 0
         self._round_number = 0
         self._sent_wav_files = set()
+        sampling = sampling or self._duplex_config
         self._duplex_length_penalty = float(length_penalty)
         voice_audio = ref_audio_path or self.ref_audio_path or ""
         # 前端未提供 system_content 时，回退到 system_prompt_text

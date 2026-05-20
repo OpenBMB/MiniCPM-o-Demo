@@ -39,7 +39,9 @@ from core.schemas.chat import ChatRequest, ChatResponse
 from core.schemas.streaming import (
     StreamingRequest, StreamingChunk, StreamingResponse,
 )
+from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
 from core.runtime.manager import RuntimeManager
+from core.runtime.metrics import BackendMetrics
 from core.runtime.protocol import DEFAULT_WORKER_CAPABILITIES
 from core.runtime.worker_handlers import (
     handle_worker_chat_runtime_ws,
@@ -292,6 +294,146 @@ class MiniCPMOWorker:
             self.state.status = WorkerStatus.IDLE
             self.state.current_session_id = None
 
+    # ========== Runtime backend surface ==========
+
+    def metrics(self) -> Dict[str, Any]:
+        """Return a sampled PyTorch backend metric snapshot."""
+        if self.processor is None:
+            return BackendMetrics(backend="pytorch").to_dict()
+        return BackendMetrics(
+            backend="pytorch",
+            kv_cache_length=int(getattr(self.processor, "kv_cache_length", 0) or 0),
+        ).to_dict()
+
+    def chat_prefill(
+        self,
+        session_id: str,
+        msgs: list,
+        omni_mode: bool = False,
+        max_slice_nums: Optional[int] = None,
+        use_tts_template: bool = False,
+        enable_thinking: bool = False,
+    ) -> str:
+        chat_view = self.processor.set_chat_mode()
+        return chat_view.prefill(
+            session_id=session_id,
+            msgs=msgs,
+            omni_mode=omni_mode,
+            max_slice_nums=max_slice_nums,
+            use_tts_template=use_tts_template,
+            enable_thinking=enable_thinking,
+        )
+
+    def chat_init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
+        if ref_audio is not None:
+            self.processor.model.init_token2wav_cache(prompt_speech_16k=ref_audio)
+            return
+
+        if self.ref_audio_path:
+            import librosa
+
+            loaded_ref, _ = librosa.load(self.ref_audio_path, sr=16000, mono=True)
+            self.processor.model.init_token2wav_cache(prompt_speech_16k=loaded_ref)
+
+    def chat_streaming_generate(
+        self,
+        session_id: str,
+        generate_audio: bool = True,
+        max_new_tokens: int = 256,
+        length_penalty: float = 1.1,
+    ) -> Iterator[StreamingChunk]:
+        chat_view = self.processor.set_chat_mode()
+        yield from chat_view.streaming_generate(
+            session_id=session_id,
+            generate_audio=generate_audio,
+            max_new_tokens=max_new_tokens,
+            length_penalty=length_penalty,
+        )
+
+    def chat_non_streaming_generate(
+        self,
+        session_id: str,
+        max_new_tokens: int = 256,
+        generate_audio: bool = False,
+        use_tts_template: bool = True,
+        enable_thinking: bool = False,
+        tts_ref_audio: Optional[np.ndarray] = None,
+        length_penalty: float = 1.1,
+    ) -> Any:
+        chat_view = self.processor.set_chat_mode()
+        return chat_view.generate(
+            session_id=session_id,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            generate_audio=generate_audio,
+            use_tts_template=use_tts_template,
+            enable_thinking=enable_thinking,
+            tts_ref_audio=tts_ref_audio,
+            tts_sampling_params=None,
+            length_penalty=length_penalty,
+        )
+
+    def set_duplex_config(self, config: Optional[Dict[str, Any]]) -> None:
+        if self.processor is None or not config:
+            return
+        duplex_view = self.processor.set_duplex_mode()
+        duplex_view.config = DuplexConfig(**config)
+
+    def duplex_prepare(
+        self,
+        system_prompt_text: Optional[str] = None,
+        ref_audio_path: Optional[str] = None,
+        prompt_wav_path: Optional[str] = None,
+        length_penalty: float = 1.1,
+        sampling: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        if sampling:
+            self.set_duplex_config(sampling)
+        duplex_view = self.processor.set_duplex_mode()
+        return duplex_view.prepare(
+            system_prompt_text=system_prompt_text,
+            ref_audio_path=ref_audio_path or self.ref_audio_path,
+            prompt_wav_path=prompt_wav_path,
+        )
+
+    def duplex_prefill(
+        self,
+        audio_waveform: Optional[np.ndarray] = None,
+        frame_list: Optional[list] = None,
+        max_slice_nums: int = 1,
+    ) -> Dict[str, Any]:
+        duplex_view = self.processor.set_duplex_mode()
+        return duplex_view.prefill(
+            audio_waveform=audio_waveform,
+            frame_list=frame_list,
+            max_slice_nums=max_slice_nums,
+        )
+
+    def duplex_generate(self, force_listen: bool = False) -> DuplexGenerateResult:
+        duplex_view = self.processor.set_duplex_mode()
+        return duplex_view.generate(force_listen=force_listen)
+
+    def duplex_finalize(self) -> None:
+        duplex_view = self.processor.set_duplex_mode()
+        duplex_view.finalize()
+
+    def duplex_stop(self) -> None:
+        duplex_view = self.processor.set_duplex_mode()
+        duplex_view.stop()
+
+    def duplex_cleanup(self) -> None:
+        if self.processor is None:
+            return
+        duplex_view = self.processor.set_duplex_mode()
+        duplex_view.cleanup()
+        gc.collect()
+        torch.cuda.empty_cache()
+        logger.info(f"[GPU {self.gpu_id}] Duplex cleanup done, GPU memory released")
+
+    def shutdown(self) -> None:
+        """PyTorch backend currently has no external process to shut down."""
+        return
+
     # ========== Half-Duplex ==========
 
     def half_duplex_prefill(self, request: StreamingRequest) -> str:
@@ -421,7 +563,8 @@ async def health():
     if worker.state.total_requests > 0:
         avg_time = worker.state.total_inference_time_ms / worker.state.total_requests
 
-    kv_len = worker.processor.kv_cache_length if worker.processor else int(getattr(worker, "kv_cache_length", 0) or 0)
+    worker_metrics = worker.metrics()
+    kv_len = int(worker_metrics.get("kv_cache_length", 0) or 0)
     model_loaded = worker.processor is not None or bool(getattr(worker.state, "is_idle", False))
     return WorkerHealthResponse(
         status="healthy" if model_loaded else "error",

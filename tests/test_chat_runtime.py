@@ -42,6 +42,21 @@ class _FakeWorker:
         self.calls = []
         self.processor = _FakeProcessor(self)
 
+    def chat_prefill(self, **kwargs):
+        return self.processor.set_chat_mode().prefill(**kwargs)
+
+    def chat_init_tts(self, _ref_audio):
+        return
+
+    def chat_streaming_generate(self, **kwargs):
+        yield from self.processor.set_chat_mode().streaming_generate(**kwargs)
+
+    def chat_non_streaming_generate(self, **kwargs):
+        return self.processor.set_chat_mode().generate(**kwargs)
+
+    def metrics(self):
+        return {"backend": "fake", "kv_cache_length": self.processor.kv_cache_length}
+
 
 def test_chat_runtime_prefill_returns_kv_length():
     async def _run():
