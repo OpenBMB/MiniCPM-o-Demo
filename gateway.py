@@ -58,8 +58,10 @@ from gateway_modules.app_registry import (
 )
 from gateway_modules.runtime_protocol import (
     chat_client_to_worker_runtime,
+    legacy_duplex_client_to_worker_runtime,
     realtime_client_to_worker_runtime,
     worker_runtime_to_legacy_chat,
+    worker_runtime_to_legacy_duplex,
     worker_runtime_to_realtime,
 )
 
@@ -734,7 +736,7 @@ async def duplex_ws(ws: WebSocket, session_id: str):
             source_channel="demo_omni" if duplex_type == "omni_duplex" else "demo_audio_duplex",
             source_mode="video" if duplex_type == "omni_duplex" else "audio",
         )
-        ws_url = f"ws://{worker.host}:{worker.port}/ws/duplex?{identity_qs}"
+        ws_url = f"ws://{worker.host}:{worker.port}/v1/worker/sessions/{session_id}/duplex?{identity_qs}"
 
         # Worker 可能在清理上一个 Duplex session（GPU 显存释放等），
         # 短暂重试确保 Worker 准备就绪
@@ -772,7 +774,7 @@ async def duplex_ws(ws: WebSocket, session_id: str):
                     elif msg.get("type") == "stop":
                         pass
 
-                    await worker_ws.send(raw)
+                    await worker_ws.send(json.dumps(legacy_duplex_client_to_worker_runtime(msg)))
             except WebSocketDisconnect:
                 pass
 
@@ -780,7 +782,7 @@ async def duplex_ws(ws: WebSocket, session_id: str):
             """Worker → Client"""
             try:
                 async for raw in worker_ws:
-                    await ws.send_text(raw)
+                    await ws.send_json(worker_runtime_to_legacy_duplex(json.loads(raw)))
             except Exception:
                 pass
 
