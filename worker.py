@@ -30,7 +30,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from core.internal.worker_state import WorkerStatus
-from core.processors.pytorch_backend import MiniCPMOWorker
+from core.processors.worker_factory import create_worker
 from core.schemas.common import Message, Role, TextContent, AudioContent, ContentItem
 from core.schemas.chat import ChatRequest, ChatResponse
 from core.schemas.streaming import StreamingRequest
@@ -78,34 +78,18 @@ async def lifespan(app: FastAPI):
     global worker
     config = WORKER_CONFIG
 
-    if config.get("backend") == "cpp":
-        from core.processors.cpp_backend import CppBackendWorker
-
-        worker = CppBackendWorker(
-            gpu_id=config["gpu_id"],
-            ref_audio_path=config.get("ref_audio_path"),
-            duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
-            **config.get("cpp_backend", {}),
-        )
-    else:
-        worker = MiniCPMOWorker(
-            model_path=config["model_path"],
-            gpu_id=config["gpu_id"],
-            pt_path=config.get("pt_path"),
-            ref_audio_path=config.get("ref_audio_path"),
-            duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
-            compile=config.get("compile", False),
-            chat_vocoder=config.get("chat_vocoder", "token2wav"),
-            attn_implementation=config.get("attn_implementation", "auto"),
-        )
+    worker = create_worker(config)
 
     # 模型加载是同步操作（~15s），在线程中执行避免阻塞
     await asyncio.to_thread(worker.load_model)
 
-    yield
-
-    logger.info("Worker shutting down")
-    await runtime_manager.close_all()
+    try:
+        yield
+    finally:
+        logger.info("Worker shutting down")
+        await runtime_manager.close_all()
+        if worker is not None:
+            await asyncio.to_thread(worker.shutdown)
 
 
 app = FastAPI(title="MiniCPMO45 Worker", lifespan=lifespan)
