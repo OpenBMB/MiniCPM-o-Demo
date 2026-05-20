@@ -2490,7 +2490,7 @@ function _buildChatWSBody(maxTokens, streaming) {
     return { body, enableTts };
 }
 
-// ============ Chat 模式（非流式，走 /ws/chat） ============
+// ============ Chat 模式（非流式，走 /v1/responses） ============
 async function sendChatMessage(maxTokens) {
     setGenerating(true);
     state.generationPhase = 'generating';
@@ -2503,7 +2503,7 @@ async function sendChatMessage(maxTokens) {
         const { body, enableTts } = _buildChatWSBody(maxTokens, false);
 
         const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-        const chatWsUrl = `${wsProto}://${window.location.host}/ws/chat`;
+        const chatWsUrl = `${wsProto}://${window.location.host}/v1/responses`;
         const ws = new WebSocket(window.ClientIdentity ? window.ClientIdentity.appendToUrl(chatWsUrl) : chatWsUrl);
 
         ws.onopen = () => ws.send(JSON.stringify(body));
@@ -2511,9 +2511,9 @@ async function sendChatMessage(maxTokens) {
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
 
-            if (msg.type === 'prefill_done') {
+            if (msg.type === 'prefill_done' || msg.type === 'response.prefill.done') {
                 // prefill 完成，等待 generate 结果
-            } else if (msg.type === 'done') {
+            } else if (msg.type === 'done' || msg.type === 'response.completed') {
                 const elapsed = Date.now() - startTime;
                 state.messages.push({ role: 'assistant', content: msg.text, displayText: msg.text });
                 updateLastAssistantMessage(msg.text);
@@ -2523,7 +2523,7 @@ async function sendChatMessage(maxTokens) {
                     processMs: elapsed,
                     inputTokens: msg.input_tokens || 0,
                     generatedTokens: msg.generated_tokens || 0,
-                    hasAudio: !!msg.audio_data,
+                    hasAudio: !!(msg.audio_data || msg.audio),
                     requestId: reqId,
                 });
 
@@ -2531,7 +2531,8 @@ async function sendChatMessage(maxTokens) {
                 const last = lastMsg[lastMsg.length - 1];
                 if (last) last.dataset.msgIndex = state.messages.length - 1;
 
-                if (msg.audio_data) appendAudioPlayer(msg.audio_data);
+                const audioData = msg.audio_data || msg.audio;
+                if (audioData) appendAudioPlayer(audioData);
                 if (msg.recording_session_id && typeof _saveShareUI !== 'undefined') {
                     _saveShareUI.setSessionId(msg.recording_session_id);
                 }
@@ -3070,7 +3071,7 @@ function appendStreamingAudioControl(player) {
     body.appendChild(wrap);
 }
 
-// ============ Streaming 模式（走 /ws/chat） ============
+// ============ Streaming 模式（走 /v1/responses） ============
 async function sendStreamingMessage(maxTokens) {
     setGenerating(true);
     state.generationPhase = 'generating';
@@ -3092,7 +3093,7 @@ async function sendStreamingMessage(maxTokens) {
 
     try {
         const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-        const chatWsUrl = `${wsProto}://${window.location.host}/ws/chat`;
+        const chatWsUrl = `${wsProto}://${window.location.host}/v1/responses`;
         const ws = new WebSocket(window.ClientIdentity ? window.ClientIdentity.appendToUrl(chatWsUrl) : chatWsUrl);
 
         ws.onopen = () => ws.send(JSON.stringify(body));
@@ -3100,23 +3101,25 @@ async function sendStreamingMessage(maxTokens) {
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
 
-            if (msg.type === 'prefill_done') {
+            if (msg.type === 'prefill_done' || msg.type === 'response.prefill.done') {
                 // prefill 完成
-            } else if (msg.type === 'chunk') {
+            } else if (msg.type === 'chunk' || msg.type === 'response.output_text.delta' || msg.type === 'response.output_audio.delta') {
                 if (ttfsTime === null) ttfsTime = Date.now() - startTime;
-                if (msg.text_delta) {
-                    fullText += msg.text_delta;
+                const textDelta = msg.text_delta || msg.text || '';
+                if (textDelta) {
+                    fullText += textDelta;
                     updateLastAssistantMessage(fullText);
                 }
-                if (msg.audio_data && streamAudioPlayer) {
-                    streamAudioPlayer.pushChunk(msg.audio_data, null);
+                const audioData = msg.audio_data || msg.audio;
+                if (audioData && streamAudioPlayer) {
+                    streamAudioPlayer.pushChunk(audioData, null);
                     if (!controlCreated) {
                         appendStreamingAudioControl(streamAudioPlayer);
                         streamAudioPlayer.play(0);
                         controlCreated = true;
                     }
                 }
-            } else if (msg.type === 'done') {
+            } else if (msg.type === 'done' || msg.type === 'response.completed') {
                 const elapsed = Date.now() - startTime;
                 state.messages.push({ role: 'assistant', content: fullText || msg.text, displayText: fullText || msg.text });
                 if (fullText) {

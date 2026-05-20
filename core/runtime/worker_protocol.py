@@ -89,15 +89,15 @@ def parse_worker_chat_request_message(msg: Dict[str, Any]) -> WorkerChatRequest:
 
 
 def parse_worker_prepare_message(msg: Dict[str, Any]) -> tuple[DuplexPrepareParams, DuplexVoiceRefs]:
-    """Parse a `session.prepare` worker protocol message."""
+    """Parse a `duplex.session.prepare` worker protocol message."""
 
     payload = msg.get("payload") or {}
     if not isinstance(payload, dict):
-        raise WorkerProtocolError("session.prepare payload must be an object")
+        raise WorkerProtocolError("duplex.session.prepare payload must be an object")
 
     voice = payload.get("voice") or {}
     if not isinstance(voice, dict):
-        raise WorkerProtocolError("session.prepare voice must be an object")
+        raise WorkerProtocolError("duplex.session.prepare voice must be an object")
 
     voice_refs = resolve_duplex_voice_refs(
         ref_audio_path=voice.get("ref_audio_path"),
@@ -119,15 +119,15 @@ def parse_worker_input_message(
     default_max_slice_nums: int = 1,
     chunk_start: Optional[float] = None,
 ) -> DuplexInputFrame:
-    """Parse an `input.append` worker protocol message."""
+    """Parse a `duplex.input.audio.append` worker protocol message."""
 
     payload = msg.get("payload") or {}
     if not isinstance(payload, dict):
-        raise WorkerProtocolError("input.append payload must be an object")
+        raise WorkerProtocolError("duplex.input.audio.append payload must be an object")
 
     audio_b64 = payload.get("audio_base64")
     if not audio_b64:
-        raise WorkerProtocolError("input.append payload.audio_base64 is required")
+        raise WorkerProtocolError("duplex.input.audio.append payload.audio_base64 is required")
 
     decoded_frames = decode_frame_base64_list(payload.get("frame_base64_list"))
     return DuplexInputFrame(
@@ -140,43 +140,121 @@ def parse_worker_input_message(
 
 
 def parse_worker_control_message(msg: Dict[str, Any]) -> RuntimeControl:
-    """Parse a `control` worker protocol message."""
+    """Parse a `duplex.control.*` worker protocol message."""
 
+    msg_type = msg.get("type")
     payload = msg.get("payload") or {}
     if not isinstance(payload, dict):
-        raise WorkerProtocolError("control payload must be an object")
-    command = payload.get("command")
-    if not command:
-        raise WorkerProtocolError("control payload.command is required")
-    return RuntimeControl(type=command, payload={k: v for k, v in payload.items() if k != "command"})
+        raise WorkerProtocolError("duplex control payload must be an object")
+
+    command_by_type = {
+        "duplex.control.pause": "session.pause",
+        "duplex.control.resume": "session.resume",
+        "duplex.control.cancel": "response.cancel",
+        "duplex.control.close": "session.close",
+    }
+    command = command_by_type.get(msg_type)
+    if command is None:
+        raise WorkerProtocolError(f"unknown duplex control message type: {msg_type}")
+    return RuntimeControl(type=command, payload=payload)
 
 
-def runtime_event_to_worker_message(event: RuntimeEvent) -> Dict[str, Any]:
-    """Serialize a RuntimeEvent for the worker protocol."""
+def runtime_event_to_worker_messages(event: RuntimeEvent) -> list[Dict[str, Any]]:
+    """Serialize a RuntimeEvent into fine-grained worker protocol messages."""
 
     if event.channel == "output.duplex_result":
         frame = event.payload.get("frame")
-        payload = {
-            "result": event.payload.get("result_dict", {}),
-            "metrics": {
-                "prefill_ms": event.payload.get("prefill_ms"),
-                "kv_cache_len": event.payload.get("kv_cache_len"),
-                "wall_clock_ms": event.payload.get("wall_clock_ms"),
-                "vision_slices": event.payload.get("n_vision_images"),
-                "vision_tokens": event.payload.get("vision_tokens"),
-            },
+        result = event.payload.get("result_dict", {})
+        metrics = {
+            "prefill_ms": event.payload.get("prefill_ms"),
+            "kv_cache_len": event.payload.get("kv_cache_len"),
+            "wall_clock_ms": event.payload.get("wall_clock_ms"),
+            "vision_slices": event.payload.get("n_vision_images"),
+            "vision_tokens": event.payload.get("vision_tokens"),
         }
         if frame is not None:
-            payload["metrics"]["prefill_ms"] = getattr(frame, "prefill_ms", payload["metrics"]["prefill_ms"])
-        return {
-            "type": "runtime.event",
-            "channel": event.channel,
-            "payload": payload,
-        }
+            metrics["prefill_ms"] = getattr(frame, "prefill_ms", metrics["prefill_ms"])
 
-    return {
-        "type": "runtime.event",
+        messages: list[Dict[str, Any]] = [{
+            "type": "duplex.metrics.frame",
+            "payload": metrics,
+        }]
+
+        if result.get("is_listen"):
+            messages.append({
+                "type": "duplex.output.listen",
+                "payload": {
+                    "kv_cache_length": result.get("kv_cache_length", metrics.get("kv_cache_len", 0)),
+                    "metrics": metrics,
+                },
+            })
+            return messages
+
+        text = result.get("text", "") or ""
+        if text:
+            messages.append({
+                "type": "duplex.output.text.delta",
+                "payload": {
+                    "text": text,
+                    "kv_cache_length": result.get("kv_cache_length", metrics.get("kv_cache_len", 0)),
+                },
+            })
+
+        messages.append({
+            "type": "duplex.output.audio.delta",
+            "payload": {
+                "audio_base64": result.get("audio_data"),
+                # Keep text on the audio event while the public UI still uses
+                # one speak event for text and audio display.
+                "text": text,
+                "end_of_turn": result.get("end_of_turn", False),
+                "kv_cache_length": result.get("kv_cache_length", metrics.get("kv_cache_len", 0)),
+                "metrics": metrics,
+            },
+        })
+        if result.get("end_of_turn", False):
+            messages.append({
+                "type": "duplex.output.turn.done",
+                "payload": {
+                    "kv_cache_length": result.get("kv_cache_length", metrics.get("kv_cache_len", 0)),
+                },
+            })
+        return messages
+
+    if event.channel == "session":
+        state = event.payload.get("state")
+        if state == "closed":
+            return [{"type": "duplex.session.closed", "payload": event.payload}]
+        if state == "cancelled":
+            return [{"type": "duplex.output.cancelled", "payload": event.payload}]
+        if state == "paused":
+            return [{"type": "duplex.session.paused", "payload": event.payload}]
+        if state == "active":
+            return [{"type": "duplex.session.resumed", "payload": event.payload}]
+
+    return [{
+        "type": "duplex.event",
         "channel": event.channel,
         "payload": event.payload,
-    }
+    }]
+
+
+def runtime_event_to_worker_message(event: RuntimeEvent) -> Dict[str, Any]:
+    """Serialize a RuntimeEvent for callers that expect one message."""
+
+    messages = runtime_event_to_worker_messages(event)
+    if len(messages) == 1:
+        return messages[0]
+    if event.channel == "output.duplex_result":
+        result = event.payload.get("result_dict", {})
+        metrics = messages[0].get("payload", {})
+        payload = {
+            "result": result,
+            "metrics": metrics,
+        }
+        return {
+            "type": "duplex.output.result",
+            "payload": payload,
+        }
+    return messages[0]
 

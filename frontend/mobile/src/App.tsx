@@ -4997,7 +4997,7 @@ function App() {
 
     const wsProto =
       window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = appendClientIdentity(`${wsProto}//${window.location.host}/ws/chat`)
+    const wsUrl = appendClientIdentity(`${wsProto}//${window.location.host}/v1/responses`)
 
     // Auto-retry semantics: while no streaming data has been received yet,
     // a connection-level error / unexpected close is treated as a transient
@@ -5187,6 +5187,7 @@ function App() {
           text_delta?: string
           text?: string
           audio_data?: string
+          audio?: string
           audio_sample_rate?: number
           recording_session_id?: string | null
           error?: string
@@ -5198,7 +5199,7 @@ function App() {
           return
         }
 
-        if (msg.type === 'prefill_done') {
+        if (msg.type === 'prefill_done' || msg.type === 'response.prefill.done') {
           // prefill_done is a backend-side acknowledgement; treat it as
           // proof that the connection is alive, so subsequent failures
           // can no longer be silently retried (the model has started
@@ -5207,10 +5208,15 @@ function App() {
           return
         }
 
-        if (msg.type === 'chunk') {
+        if (
+          msg.type === 'chunk' ||
+          msg.type === 'response.output_text.delta' ||
+          msg.type === 'response.output_audio.delta'
+        ) {
           receivedAnyData = true
-          if (typeof msg.text_delta === 'string' && msg.text_delta) {
-            fullText += msg.text_delta
+          const textDelta = msg.text_delta || msg.text || ''
+          if (textDelta) {
+            fullText += textDelta
             if (isStillActive()) {
               setPendingReply({
                 id: pendingId,
@@ -5221,12 +5227,13 @@ function App() {
             }
           }
 
-          if (msg.audio_data && player) {
+          const audioData = msg.audio_data || msg.audio
+          if (audioData && player) {
             if (typeof msg.audio_sample_rate === 'number') {
               lastSampleRate = msg.audio_sample_rate
             }
             try {
-              player.pushBase64(msg.audio_data)
+              player.pushBase64(audioData)
             } catch {
               /* ignore */
             }
@@ -5234,7 +5241,7 @@ function App() {
           return
         }
 
-        if (msg.type === 'done') {
+        if (msg.type === 'done' || msg.type === 'response.completed') {
           receivedAnyData = true
           const finalText = (fullText || msg.text || '').trim() || i18n.emptyReply
           const recordingSessionId = msg.recording_session_id ?? null

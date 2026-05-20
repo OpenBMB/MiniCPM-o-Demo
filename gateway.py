@@ -59,7 +59,7 @@ from gateway_modules.app_registry import (
 from gateway_modules.runtime_protocol import (
     chat_client_to_worker_runtime,
     realtime_client_to_worker_runtime,
-    worker_runtime_to_legacy_chat,
+    worker_runtime_to_response_api,
     worker_runtime_to_realtime,
 )
 
@@ -386,9 +386,15 @@ async def chat(request: Request):
 
 # ============ Chat WebSocket 代理 ============
 
-@app.websocket("/ws/chat")
-async def chat_ws_proxy(ws: WebSocket):
-    """Chat WebSocket 代理 — 排队后转到 Worker runtime chat endpoint"""
+async def _chat_runtime_proxy_ws(
+    ws: WebSocket,
+    *,
+    worker_response_to_client,
+    source_channel: str,
+    source_mode: str,
+):
+    """Proxy one public turn-based WebSocket request to worker chat runtime."""
+
     if not app_registry.is_enabled("turnbased"):
         await ws.close(code=1008, reason="Turn-based Chat is currently disabled")
         return
@@ -439,8 +445,8 @@ async def chat_ws_proxy(ws: WebSocket):
         identity_qs = _worker_identity_query(
             ws,
             session_id=worker_session_id,
-            source_channel="demo_turnbased",
-            source_mode="chat",
+            source_channel=source_channel,
+            source_mode=source_mode,
         )
         ws_url = f"ws://{assigned_worker.host}:{assigned_worker.port}/v1/worker/sessions/{worker_session_id}/chat?{identity_qs}"
         # max_size on the client side caps how large an *incoming* frame can
@@ -453,7 +459,7 @@ async def chat_ws_proxy(ws: WebSocket):
 
         # 将 Worker runtime 响应翻译回页面现有协议
         async for msg_data in worker_ws:
-            await ws.send_json(worker_runtime_to_legacy_chat(json.loads(msg_data)))
+            await ws.send_json(worker_response_to_client(json.loads(msg_data)))
 
     except WebSocketDisconnect:
         logger.info("Chat WS proxy: client disconnected")
@@ -476,6 +482,18 @@ async def chat_ws_proxy(ws: WebSocket):
             await ws.close()
         except Exception:
             pass
+
+
+@app.websocket("/v1/responses")
+async def responses_ws_proxy(ws: WebSocket):
+    """Turn-based response API WebSocket proxy."""
+
+    await _chat_runtime_proxy_ws(
+        ws,
+        worker_response_to_client=worker_runtime_to_response_api,
+        source_channel="responses_api",
+        source_mode="turn",
+    )
 
 
 # ============ Half-Duplex WebSocket（独占 Worker，FIFO 排队 + 代理到 Worker） ============

@@ -8,6 +8,7 @@ from core.runtime.worker_protocol import (
     parse_worker_input_message,
     parse_worker_prepare_message,
     runtime_event_to_worker_message,
+    runtime_event_to_worker_messages,
 )
 
 
@@ -17,7 +18,7 @@ def _pcm_b64(samples: int = 1600) -> str:
 
 def test_parse_worker_prepare_message():
     params, voice_refs = parse_worker_prepare_message({
-        "type": "session.prepare",
+        "type": "duplex.session.prepare",
         "payload": {
             "system_prompt": "hello",
             "config": {"max_slice_nums": 2},
@@ -35,7 +36,7 @@ def test_parse_worker_prepare_message():
 
 def test_parse_worker_input_message():
     frame = parse_worker_input_message({
-        "type": "input.append",
+        "type": "duplex.input.audio.append",
         "payload": {
             "audio_base64": _pcm_b64(400),
             "force_listen": True,
@@ -50,7 +51,7 @@ def test_parse_worker_input_message():
 
 def test_parse_worker_input_message_uses_default_for_null_max_slice_nums():
     frame = parse_worker_input_message({
-        "type": "input.append",
+        "type": "duplex.input.audio.append",
         "payload": {
             "audio_base64": _pcm_b64(400),
             "max_slice_nums": None,
@@ -62,8 +63,8 @@ def test_parse_worker_input_message_uses_default_for_null_max_slice_nums():
 
 def test_parse_worker_control_message():
     control = parse_worker_control_message({
-        "type": "control",
-        "payload": {"command": "session.close", "reason": "test"},
+        "type": "duplex.control.close",
+        "payload": {"reason": "test"},
     })
 
     assert control.type == "session.close"
@@ -83,8 +84,32 @@ def test_runtime_event_to_worker_message():
         },
     ))
 
-    assert msg["type"] == "runtime.event"
-    assert msg["channel"] == "output.duplex_result"
+    assert msg["type"] == "duplex.output.result"
     assert msg["payload"]["result"] == {"text": "hi"}
     assert msg["payload"]["metrics"]["kv_cache_len"] == 2
+
+
+def test_runtime_event_to_worker_messages_splits_duplex_output():
+    messages = runtime_event_to_worker_messages(RuntimeEvent(
+        channel="output.duplex_result",
+        payload={
+            "result_dict": {
+                "is_listen": False,
+                "text": "hi",
+                "audio_data": "pcm",
+                "end_of_turn": True,
+                "kv_cache_length": 9,
+            },
+            "prefill_ms": 1,
+            "kv_cache_len": 2,
+        },
+    ))
+
+    assert [msg["type"] for msg in messages] == [
+        "duplex.metrics.frame",
+        "duplex.output.text.delta",
+        "duplex.output.audio.delta",
+        "duplex.output.turn.done",
+    ]
+    assert messages[2]["payload"]["audio_base64"] == "pcm"
 

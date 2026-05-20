@@ -14,31 +14,35 @@ def chat_client_to_worker_runtime(msg: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def worker_runtime_to_legacy_chat(msg: Dict[str, Any]) -> Dict[str, Any]:
-    """Translate worker chat runtime messages back to the existing page protocol."""
+def worker_runtime_to_response_api(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate worker chat runtime messages to public response API events."""
 
     msg_type = msg.get("type")
     payload = msg.get("payload") or {}
 
     if msg_type == "chat.prefill_done":
         return {
-            "type": "prefill_done",
+            "type": "response.prefill.done",
             "input_tokens": payload.get("input_tokens", 0),
         }
 
     if msg_type == "chat.chunk":
-        out = {"type": "chunk"}
-        if payload.get("text_delta"):
-            out["text_delta"] = payload["text_delta"]
         if payload.get("audio_base64"):
-            out["audio_data"] = payload["audio_base64"]
-        return out
+            return {
+                "type": "response.output_audio.delta",
+                "audio": payload.get("audio_base64"),
+                "text": payload.get("text_delta", ""),
+            }
+        return {
+            "type": "response.output_text.delta",
+            "text": payload.get("text_delta", ""),
+        }
 
     if msg_type == "chat.done":
         out = {
-            "type": "done",
+            "type": "response.completed",
             "text": payload.get("text", ""),
-            "audio_data": payload.get("audio_base64"),
+            "audio": payload.get("audio_base64"),
             "generated_tokens": payload.get("generated_tokens", 0),
             "input_tokens": payload.get("input_tokens", 0),
         }
@@ -59,7 +63,7 @@ def realtime_client_to_worker_runtime(msg: Dict[str, Any]) -> Dict[str, Any]:
         if session_cfg.get("max_slice_nums") is not None:
             config["max_slice_nums"] = session_cfg.get("max_slice_nums")
         return {
-            "type": "session.prepare",
+            "type": "duplex.session.prepare",
             "payload": {
                 "system_prompt": session_cfg.get("instructions", "You are a helpful assistant."),
                 "config": config or None,
@@ -72,7 +76,7 @@ def realtime_client_to_worker_runtime(msg: Dict[str, Any]) -> Dict[str, Any]:
 
     if msg_type == "input_audio_buffer.append":
         return {
-            "type": "input.append",
+            "type": "duplex.input.audio.append",
             "payload": {
                 "audio_base64": msg.get("audio", ""),
                 "frame_base64_list": msg.get("video_frames"),
@@ -83,12 +87,12 @@ def realtime_client_to_worker_runtime(msg: Dict[str, Any]) -> Dict[str, Any]:
 
     if msg_type == "session.close":
         return {
-            "type": "control",
-            "payload": {"command": "session.close", "reason": msg.get("reason", "client_closed")},
+            "type": "duplex.control.close",
+            "payload": {"reason": msg.get("reason", "client_closed")},
         }
 
     if msg_type == "response.cancel":
-        return {"type": "control", "payload": {"command": "response.cancel"}}
+        return {"type": "duplex.control.cancel", "payload": {}}
 
     return msg
 
@@ -97,43 +101,52 @@ def worker_runtime_to_realtime(msg: Dict[str, Any], *, session_id: str) -> Dict[
     """Translate worker runtime protocol events to public /v1/realtime events."""
 
     msg_type = msg.get("type")
-    if msg_type == "session.ready":
+    if msg_type == "duplex.session.ready":
         return {
             "type": "session.created",
             "session_id": session_id,
             "prompt_length": msg.get("prompt_length", 0),
         }
 
-    if msg_type == "runtime.event":
-        channel = msg.get("channel")
-        payload = msg.get("payload") or {}
+    payload = msg.get("payload") or {}
+    if msg_type == "duplex.output.listen":
+        return {
+            "type": "response.listen",
+            "kv_cache_length": payload.get("kv_cache_length", 0),
+        }
 
-        if channel == "output.duplex_result":
-            result = payload.get("result") or {}
-            kv_len = result.get("kv_cache_length", 0)
-            if result.get("is_listen"):
-                return {
-                    "type": "response.listen",
-                    "kv_cache_length": kv_len,
-                }
-            return {
-                "type": "response.output_audio.delta",
-                "text": result.get("text", ""),
-                "audio": result.get("audio_data"),
-                "end_of_turn": result.get("end_of_turn", False),
-                "kv_cache_length": kv_len,
-            }
+    if msg_type == "duplex.output.text.delta":
+        return {
+            "type": "response.output_text.delta",
+            "text": payload.get("text", ""),
+            "kv_cache_length": payload.get("kv_cache_length", 0),
+        }
 
-        if channel == "session":
-            state = payload.get("state")
-            if state == "closed":
-                return {"type": "session.closed", "reason": payload.get("reason", "stopped")}
-            if state == "cancelled":
-                return {"type": "response.cancelled"}
-            if state == "paused":
-                return {"type": "session.paused", "timeout": payload.get("timeout")}
-            if state == "active":
-                return {"type": "session.resumed"}
+    if msg_type == "duplex.output.audio.delta":
+        return {
+            "type": "response.output_audio.delta",
+            "text": payload.get("text", ""),
+            "audio": payload.get("audio_base64"),
+            "end_of_turn": payload.get("end_of_turn", False),
+            "kv_cache_length": payload.get("kv_cache_length", 0),
+        }
+
+    if msg_type == "duplex.output.turn.done":
+        return {
+            "type": "response.done",
+            "kv_cache_length": payload.get("kv_cache_length", 0),
+        }
+
+    if msg_type == "duplex.session.closed":
+        return {"type": "session.closed", "reason": payload.get("reason", "stopped")}
+    if msg_type == "duplex.output.cancelled":
+        return {"type": "response.cancelled"}
+    if msg_type == "duplex.session.paused":
+        return {"type": "session.paused", "timeout": payload.get("timeout")}
+    if msg_type == "duplex.session.resumed":
+        return {"type": "session.resumed"}
+    if msg_type == "duplex.metrics.frame":
+        return {"type": "response.metrics", **payload}
 
     return msg
 

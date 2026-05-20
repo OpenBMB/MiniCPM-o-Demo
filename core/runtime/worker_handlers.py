@@ -26,7 +26,7 @@ from core.runtime.worker_protocol import (
     parse_worker_control_message,
     parse_worker_input_message,
     parse_worker_prepare_message,
-    runtime_event_to_worker_message,
+    runtime_event_to_worker_messages,
 )
 from core.schemas.common import (
     AudioContent,
@@ -475,21 +475,22 @@ async def handle_worker_duplex_runtime_ws(
 
     async def _emit_event(event: RuntimeEvent) -> None:
         log_duplex_frame(logger, event.payload["frame"], gpu_id=worker.gpu_id)
-        await ws.send_json(runtime_event_to_worker_message(event))
+        for out_msg in runtime_event_to_worker_messages(event):
+            await ws.send_json(out_msg)
 
     try:
         while True:
             msg = json.loads(await ws.receive_text())
             msg_type = msg.get("type")
 
-            if msg_type == "session.prepare":
+            if msg_type == "duplex.session.prepare":
                 voice_refs = None
                 try:
                     params, voice_refs = parse_worker_prepare_message(msg)
                     prompt = await runtime.prepare(params)
                     session_max_slice_nums = int((params.config or {}).get("max_slice_nums", session_max_slice_nums))
                     await ws.send_json({
-                        "type": "session.ready",
+                        "type": "duplex.session.ready",
                         "session_id": session_id,
                         "prompt_length": len(prompt),
                     })
@@ -497,7 +498,7 @@ async def handle_worker_duplex_runtime_ws(
                     if voice_refs is not None:
                         voice_refs.cleanup()
 
-            elif msg_type == "input.append":
+            elif msg_type == "duplex.input.audio.append":
                 frame = parse_worker_input_message(
                     msg,
                     default_max_slice_nums=session_max_slice_nums,
@@ -505,10 +506,16 @@ async def handle_worker_duplex_runtime_ws(
                 )
                 await runtime.process_frame(frame=frame, emit=_emit_event)
 
-            elif msg_type == "control":
+            elif msg_type in {
+                "duplex.control.pause",
+                "duplex.control.resume",
+                "duplex.control.cancel",
+                "duplex.control.close",
+            }:
                 control = parse_worker_control_message(msg)
                 event = await runtime.control(control)
-                await ws.send_json(runtime_event_to_worker_message(event))
+                for out_msg in runtime_event_to_worker_messages(event):
+                    await ws.send_json(out_msg)
                 if control.type == "session.close":
                     runtime_manager.forget_duplex(session_id)
                     break

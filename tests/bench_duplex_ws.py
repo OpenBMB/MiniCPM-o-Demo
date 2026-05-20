@@ -83,7 +83,7 @@ async def run_duplex_session(
 
             t0 = time.perf_counter()
             await ws.send(json.dumps({
-                "type": "session.prepare",
+                "type": "duplex.session.prepare",
                 "payload": {
                     "system_prompt": SYSTEM_PROMPT,
                     "voice": {
@@ -95,7 +95,7 @@ async def run_duplex_session(
             resp = json.loads(await ws.recv())
             result.prepare_ms = (time.perf_counter() - t0) * 1000
 
-            if resp.get("type") != "session.ready":
+            if resp.get("type") != "duplex.session.ready":
                 result.error = f"prepare failed: {resp}"
                 return result
 
@@ -114,25 +114,41 @@ async def run_duplex_session(
 
                 t_send = time.perf_counter()
                 await ws.send(json.dumps({
-                    "type": "input.append",
+                    "type": "duplex.input.audio.append",
                     "payload": {
                         "audio_base64": audio_b64,
                     },
                 }))
 
-                raw_resp = await ws.recv()
-                wall_ms = (time.perf_counter() - t_send) * 1000
-                resp = json.loads(raw_resp)
-
-                if resp.get("type") == "error":
-                    continue
-                if resp.get("type") != "runtime.event" or resp.get("channel") != "output.duplex_result":
+                metrics = {}
+                result_payload = {}
+                while True:
+                    raw_resp = await ws.recv()
+                    resp = json.loads(raw_resp)
+                    if resp.get("type") == "error":
+                        continue
+                    payload = resp.get("payload") or {}
+                    if resp.get("type") == "duplex.metrics.frame":
+                        metrics = payload
+                        continue
+                    if resp.get("type") == "duplex.output.text.delta":
+                        result_payload["text"] = payload.get("text", "")
+                        continue
+                    if resp.get("type") == "duplex.output.listen":
+                        result_payload = {"is_listen": True, "kv_cache_length": payload.get("kv_cache_length")}
+                        break
+                    if resp.get("type") == "duplex.output.audio.delta":
+                        result_payload.update({
+                            "is_listen": False,
+                            "text": payload.get("text", result_payload.get("text", "")),
+                            "audio_data": payload.get("audio_base64"),
+                            "end_of_turn": payload.get("end_of_turn", False),
+                            "kv_cache_length": payload.get("kv_cache_length"),
+                        })
+                        break
                     result.error = f"unexpected runtime response: {resp}"
                     return result
-
-                payload = resp.get("payload") or {}
-                result_payload = payload.get("result") or {}
-                metrics = payload.get("metrics") or {}
+                wall_ms = (time.perf_counter() - t_send) * 1000
                 is_listen = result_payload.get("is_listen", True)
                 status = "LISTEN" if is_listen else "SPEAK"
 
@@ -155,8 +171,8 @@ async def run_duplex_session(
 
             # stop
             await ws.send(json.dumps({
-                "type": "control",
-                "payload": {"command": "session.close", "reason": "benchmark_done"},
+                "type": "duplex.control.close",
+                "payload": {"reason": "benchmark_done"},
             }))
             try:
                 await asyncio.wait_for(ws.recv(), timeout=2.0)
