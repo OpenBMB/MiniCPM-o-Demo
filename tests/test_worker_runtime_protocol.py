@@ -48,6 +48,18 @@ def test_parse_worker_input_message():
     assert frame.max_slice_nums == 3
 
 
+def test_parse_worker_input_message_uses_default_for_null_max_slice_nums():
+    frame = parse_worker_input_message({
+        "type": "input.append",
+        "payload": {
+            "audio_base64": _pcm_b64(400),
+            "max_slice_nums": None,
+        },
+    }, default_max_slice_nums=5)
+
+    assert frame.max_slice_nums == 5
+
+
 def test_parse_worker_control_message():
     control = parse_worker_control_message({
         "type": "control",

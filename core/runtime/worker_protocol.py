@@ -20,6 +20,10 @@ class WorkerProtocolError(ValueError):
     pass
 
 
+def _coalesce_int(value: Any, default: int) -> int:
+    return int(default if value is None else value)
+
+
 def parse_worker_prepare_message(msg: Dict[str, Any]) -> tuple[DuplexPrepareParams, DuplexVoiceRefs]:
     """Parse a `session.prepare` worker protocol message."""
 
@@ -65,7 +69,7 @@ def parse_worker_input_message(
     return DuplexInputFrame(
         audio_waveform=decode_audio_base64(audio_b64),
         frame_list=decoded_frames.frame_list,
-        max_slice_nums=int(payload.get("max_slice_nums", default_max_slice_nums)),
+        max_slice_nums=_coalesce_int(payload.get("max_slice_nums"), default_max_slice_nums),
         force_listen=bool(payload.get("force_listen", False)),
         chunk_start=chunk_start if chunk_start is not None else time.perf_counter(),
     )

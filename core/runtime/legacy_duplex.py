@@ -17,6 +17,10 @@ from core.runtime.media import decode_audio_base64, decode_frame_base64_list
 from core.runtime.voice import DuplexVoiceRefs, resolve_duplex_voice_refs
 
 
+def _coalesce_int(value: Any, default: int) -> int:
+    return int(default if value is None else value)
+
+
 @dataclass
 class LegacyDuplexPrepare:
     params: DuplexPrepareParams
@@ -94,7 +98,7 @@ def parse_audio_chunk_message(
     frame = DuplexInputFrame(
         audio_waveform=decode_audio_base64(audio_b64),
         frame_list=decoded_frames.frame_list,
-        max_slice_nums=int(msg.get("max_slice_nums", session_max_slice_nums)),
+        max_slice_nums=_coalesce_int(msg.get("max_slice_nums"), session_max_slice_nums),
         force_listen=bool(msg.get("force_listen", False)),
         chunk_start=chunk_start if chunk_start is not None else time.perf_counter(),
     )

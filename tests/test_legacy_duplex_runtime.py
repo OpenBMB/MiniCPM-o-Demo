@@ -65,6 +65,18 @@ def test_parse_audio_chunk_message_decodes_input_frame():
     assert parsed.first_frame_bytes is not None
 
 
+def test_parse_audio_chunk_message_uses_default_for_null_max_slice_nums():
+    msg = {
+        "type": "audio_chunk",
+        "audio_base64": _pcm_b64(400),
+        "max_slice_nums": None,
+    }
+
+    parsed = parse_audio_chunk_message(msg, session_max_slice_nums=6)
+
+    assert parsed.frame.max_slice_nums == 6
+
+
 def test_parse_audio_chunk_message_requires_audio():
     try:
         parse_audio_chunk_message({}, session_max_slice_nums=1)
