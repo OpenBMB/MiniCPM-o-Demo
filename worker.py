@@ -45,7 +45,7 @@ from core.runtime.backends import WorkerDuplexBackendAdapter
 from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_control_message, parse_prepare_message
 from core.runtime.manager import RuntimeManager
 from core.runtime.metrics import log_duplex_frame
-from core.runtime.sinks import LegacyDuplexWebSocketSink
+from core.runtime.sinks import DuplexRecordingSink, LegacyDuplexWebSocketSink
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
 logging.basicConfig(
@@ -1487,7 +1487,7 @@ async def duplex_ws(ws: WebSocket):
 
     # Session 录制器（prepare 时初始化）
     session_recorder: Optional[DuplexSessionRecorder] = None
-    chunk_idx: int = 0
+    recording_sink: Optional[DuplexRecordingSink] = None
     session_start_perf: float = time.perf_counter()
 
     async def pause_timeout_watchdog(timeout: float):
@@ -1546,8 +1546,8 @@ async def duplex_ws(ws: WebSocket):
                             ),
                             data_dir=cfg.data_dir,
                         )
+                        recording_sink = DuplexRecordingSink(session_recorder)
                     session_start_perf = time.perf_counter()
-                    chunk_idx = 0
 
                     rec_sid = session_recorder.session_id if session_recorder else None
                     await ws.send_json({
@@ -1577,58 +1577,19 @@ async def duplex_ws(ws: WebSocket):
                     await ws.send_json({"type": "error", "error": "Missing audio_base64"})
                     continue
 
-                # 录制：保存用户音频 chunk
-                user_audio_rel: Optional[str] = None
-                if session_recorder:
-                    user_audio_rel = session_recorder.save_user_audio(chunk_idx, legacy_input.frame.audio_waveform)
-
-                user_frame_rel: Optional[str] = None
-                # 录制：保存原始 JPEG 帧（在 PIL 解码之前）
-                if session_recorder and legacy_input.first_frame_bytes is not None:
-                    user_frame_rel = session_recorder.save_user_frame(
-                        chunk_idx,
-                        legacy_input.first_frame_bytes,
+                if recording_sink:
+                    recording_sink.capture_input(
+                        legacy_input,
+                        receive_ts_ms=(t_chunk_start - session_start_perf) * 1000,
                     )
 
                 try:
                     async def _emit_frame(event: RuntimeEvent) -> None:
-                        nonlocal chunk_idx
                         frame = event.payload["frame"]
-                        result = frame.result
-                        result_dict = frame.result_dict
 
                         log_duplex_frame(logger, frame, gpu_id=worker.gpu_id)
-
-                        # 录制：保存 AI 音频并记录 chunk timeline
-                        ai_audio_rel: Optional[str] = None
-                        ai_audio_n_samples: int = 0
-                        if session_recorder:
-                            if not result.is_listen and result.audio_data:
-                                try:
-                                    ai_bytes = base64.b64decode(result.audio_data)
-                                    ai_ndarray = np.frombuffer(ai_bytes, dtype=np.float32)
-                                    ai_audio_rel = session_recorder.save_ai_audio(
-                                        session_recorder.turn_index,
-                                        chunk_idx,
-                                        ai_ndarray,
-                                    )
-                                    ai_audio_n_samples = len(ai_ndarray)
-                                except Exception as e:
-                                    logger.warning(f"[SessionRecorder] failed to save AI audio: {e}")
-
-                            receive_ts_ms = (t_chunk_start - session_start_perf) * 1000
-                            session_recorder.record_chunk(
-                                index=chunk_idx,
-                                receive_ts_ms=receive_ts_ms,
-                                result_dict=result_dict,
-                                prefill_ms=frame.prefill_ms,
-                                user_audio_rel=user_audio_rel,
-                                user_frame_rel=user_frame_rel,
-                                ai_audio_rel=ai_audio_rel,
-                                ai_audio_samples=ai_audio_n_samples,
-                            )
-                            chunk_idx += 1
-
+                        if recording_sink:
+                            await recording_sink.emit(event)
                         await ws_sink.emit(event)
 
                     await duplex_runtime.process_frame(
