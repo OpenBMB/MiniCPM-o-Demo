@@ -23,6 +23,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 import numpy as np
 
 from core.runtime.backends import DuplexBackendAdapter
+from core.runtime.events import RuntimeEvent
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,21 @@ class DuplexFrameResult:
     wall_clock_ms: float
     n_vision_images: int
     vision_tokens: int
+
+    def to_runtime_event(self) -> RuntimeEvent:
+        return RuntimeEvent(
+            channel="output.duplex_result",
+            payload={
+                "result": self.result,
+                "result_dict": self.result_dict,
+                "prefill_ms": self.prefill_ms,
+                "prefill_result": self.prefill_result,
+                "kv_cache_len": self.kv_cache_len,
+                "wall_clock_ms": self.wall_clock_ms,
+                "n_vision_images": self.n_vision_images,
+                "vision_tokens": self.vision_tokens,
+            },
+        )
 
 
 @dataclass

@@ -83,6 +83,9 @@ def test_deferred_finalize_is_runtime_managed():
             "finalize",
         ]
         assert emitted[0].result_dict["vision_slices"] == 1
+        event = emitted[0].to_runtime_event()
+        assert event.channel == "output.duplex_result"
+        assert event.payload["kv_cache_len"] == 10
 
     asyncio.run(_run())
 
