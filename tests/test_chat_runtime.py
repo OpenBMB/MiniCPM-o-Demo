@@ -8,7 +8,31 @@ from core.schemas.streaming import StreamingChunk
 
 
 class _FakeProcessor:
-    kv_cache_length = 0
+    def __init__(self, worker):
+        self.worker = worker
+        self.kv_cache_length = 0
+        self.model = object()
+
+    def set_chat_mode(self):
+        return _FakeChatView(self.worker)
+
+
+class _FakeChatView:
+    def __init__(self, worker):
+        self.worker = worker
+
+    def prefill(self, **kwargs):
+        self.worker.calls.append(("prefill", kwargs))
+        self.worker.processor.kv_cache_length = 123
+        return "prompt"
+
+    def streaming_generate(self, **kwargs):
+        self.worker.calls.append(("streaming_generate", kwargs))
+        yield StreamingChunk(chunk_index=0, text_delta="hi", is_final=False)
+
+    def generate(self, **kwargs):
+        self.worker.calls.append(("non_streaming_generate", kwargs))
+        return "done"
 
 
 class _FakeWorker:
@@ -16,20 +40,7 @@ class _FakeWorker:
 
     def __init__(self):
         self.calls = []
-        self.processor = _FakeProcessor()
-
-    def chat_prefill(self, **kwargs):
-        self.calls.append(("prefill", kwargs))
-        self.processor.kv_cache_length = 123
-        return "prompt"
-
-    def chat_streaming_generate(self, **kwargs):
-        self.calls.append(("streaming_generate", kwargs))
-        yield StreamingChunk(chunk_index=0, text_delta="hi", is_final=False)
-
-    def chat_non_streaming_generate(self, **kwargs):
-        self.calls.append(("non_streaming_generate", kwargs))
-        return "done"
+        self.processor = _FakeProcessor(self)
 
 
 def test_chat_runtime_prefill_returns_kv_length():

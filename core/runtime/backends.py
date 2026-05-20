@@ -7,9 +7,11 @@ semantics.
 
 from __future__ import annotations
 
+import gc
 from typing import Any, Dict, Iterator, Optional, Protocol
 
 import numpy as np
+import torch
 
 from core.schemas.streaming import StreamingChunk
 
@@ -55,11 +57,7 @@ class DuplexBackendAdapter(Protocol):
 
 
 class WorkerDuplexBackendAdapter:
-    """Adapter over the current MiniCPMOWorker duplex methods.
-
-    This keeps existing worker methods as the compatibility surface while the
-    runtime layer becomes independent of worker.py implementation details.
-    """
+    """Adapter over the current PyTorch duplex processor view."""
 
     def __init__(self, worker: Any):
         self.worker = worker
@@ -87,9 +85,10 @@ class WorkerDuplexBackendAdapter:
         ref_audio_path: Optional[str],
         prompt_wav_path: Optional[str],
     ) -> str:
-        return self.worker.duplex_prepare(
+        duplex_view = self.worker.processor.set_duplex_mode()
+        return duplex_view.prepare(
             system_prompt_text=system_prompt_text,
-            ref_audio_path=ref_audio_path,
+            ref_audio_path=ref_audio_path or self.worker.ref_audio_path,
             prompt_wav_path=prompt_wav_path,
         )
 
@@ -100,23 +99,32 @@ class WorkerDuplexBackendAdapter:
         frame_list: Optional[list],
         max_slice_nums: int,
     ) -> Dict[str, Any]:
-        return self.worker.duplex_prefill(
+        duplex_view = self.worker.processor.set_duplex_mode()
+        return duplex_view.prefill(
             audio_waveform=audio_waveform,
             frame_list=frame_list,
             max_slice_nums=max_slice_nums,
         )
 
     def generate(self, *, force_listen: bool) -> Any:
-        return self.worker.duplex_generate(force_listen=force_listen)
+        duplex_view = self.worker.processor.set_duplex_mode()
+        return duplex_view.generate(force_listen=force_listen)
 
     def finalize(self) -> None:
-        self.worker.duplex_finalize()
+        duplex_view = self.worker.processor.set_duplex_mode()
+        duplex_view.finalize()
 
     def stop(self) -> None:
-        self.worker.duplex_stop()
+        duplex_view = self.worker.processor.set_duplex_mode()
+        duplex_view.stop()
 
     def cleanup(self) -> None:
-        self.worker.duplex_cleanup()
+        if self.worker.processor is None:
+            return
+        duplex_view = self.worker.processor.set_duplex_mode()
+        duplex_view.cleanup()
+        gc.collect()
+        torch.cuda.empty_cache()
 
     def kv_cache_length(self) -> int:
         processor = getattr(self.worker, "processor", None)
@@ -171,7 +179,7 @@ class ChatBackendAdapter(Protocol):
 
 
 class WorkerChatBackendAdapter:
-    """Adapter over the current MiniCPMOWorker chat methods."""
+    """Adapter over the current PyTorch chat processor view."""
 
     def __init__(self, worker: Any):
         self.worker = worker
@@ -186,7 +194,8 @@ class WorkerChatBackendAdapter:
         use_tts_template: bool,
         enable_thinking: bool,
     ) -> str:
-        return self.worker.chat_prefill(
+        chat_view = self.worker.processor.set_chat_mode()
+        return chat_view.prefill(
             session_id=session_id,
             msgs=msgs,
             omni_mode=omni_mode,
@@ -221,7 +230,8 @@ class WorkerChatBackendAdapter:
         max_new_tokens: int,
         length_penalty: float,
     ) -> Iterator[StreamingChunk]:
-        yield from self.worker.chat_streaming_generate(
+        chat_view = self.worker.processor.set_chat_mode()
+        yield from chat_view.streaming_generate(
             session_id=session_id,
             generate_audio=generate_audio,
             max_new_tokens=max_new_tokens,
@@ -239,13 +249,16 @@ class WorkerChatBackendAdapter:
         tts_ref_audio: Optional[np.ndarray],
         length_penalty: float,
     ) -> Any:
-        return self.worker.chat_non_streaming_generate(
+        chat_view = self.worker.processor.set_chat_mode()
+        return chat_view.generate(
             session_id=session_id,
             max_new_tokens=max_new_tokens,
+            do_sample=True,
             generate_audio=generate_audio,
             use_tts_template=use_tts_template,
             enable_thinking=enable_thinking,
             tts_ref_audio=tts_ref_audio,
+            tts_sampling_params=None,
             length_penalty=length_penalty,
         )
 

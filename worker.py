@@ -34,25 +34,16 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse as FastAPIStreamingResponse
 from pydantic import BaseModel, Field
 
-from core.schemas.common import Message, Role, TextContent, AudioContent, ImageContent, VideoContent, ContentItem
+from core.schemas.common import Message, Role, TextContent, AudioContent, ContentItem
 from core.schemas.chat import ChatRequest, ChatResponse
 from core.schemas.streaming import (
-    StreamingRequest, StreamingChunk, StreamingResponse, StreamingConfig,
+    StreamingRequest, StreamingChunk, StreamingResponse,
 )
-from core.schemas.duplex import DuplexGenerateResult
-from core.runtime.chat import ChatGenerateParams, ChatPrefillParams, ChatSessionRuntime
-from core.runtime.events import RuntimeEvent
-from core.runtime.backends import WorkerChatBackendAdapter, WorkerDuplexBackendAdapter
 from core.runtime.manager import RuntimeManager
-from core.runtime.metrics import log_duplex_frame
 from core.runtime.protocol import DEFAULT_WORKER_CAPABILITIES
-from core.runtime.worker_protocol import (
-    WorkerProtocolError,
-    parse_worker_chat_request_message,
-    parse_worker_control_message,
-    parse_worker_input_message,
-    parse_worker_prepare_message,
-    runtime_event_to_worker_message,
+from core.runtime.worker_handlers import (
+    handle_worker_chat_runtime_ws,
+    handle_worker_duplex_runtime_ws,
 )
 from session_recorder import TurnBasedSessionRecorder, generate_session_id
 
@@ -111,33 +102,6 @@ class WorkerHealthResponse(BaseModel):
     avg_inference_time_ms: float = 0.0
     kv_cache_length: int = 0  # 当前 LLM KV cache token 总数
     capabilities: List[str] = Field(default_factory=list)
-
-
-class StreamingWsMessage(BaseModel):
-    """Streaming WebSocket 消息（Client → Server）"""
-    type: str  # "prefill" | "generate" | "complete_turn" | "close"
-    # prefill 参数
-    messages: Optional[List[Dict[str, Any]]] = None
-    session_id: Optional[str] = None
-    is_last_chunk: bool = True
-    # generate 参数
-    generate_audio: bool = True
-    max_new_tokens: int = 256
-    # complete_turn 参数
-    output_audio_path: Optional[str] = None
-
-
-class DuplexWsMessage(BaseModel):
-    """Duplex WebSocket 消息（Client → Server）"""
-    type: str  # "prepare" | "audio_chunk" | "pause" | "resume" | "stop"
-    # prepare 参数
-    system_prompt: Optional[str] = None
-    ref_audio_path: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
-    # audio_chunk 参数
-    audio_base64: Optional[str] = None
-    frame_base64_list: Optional[List[str]] = None
-    force_listen: Optional[bool] = None  # Force Listen 开关（per-chunk）
 
 
 # ============ Worker 主类 ============
@@ -328,72 +292,6 @@ class MiniCPMOWorker:
             self.state.status = WorkerStatus.IDLE
             self.state.current_session_id = None
 
-    # ========== Chat prefill + generate（KV cache 模式） ==========
-
-    def chat_prefill(
-        self,
-        session_id: str,
-        msgs,
-        omni_mode: bool = False,
-        max_slice_nums=None,
-        use_tts_template: bool = False,
-        enable_thinking: bool = False,
-    ) -> str:
-        """Chat prefill：一次性 prefill 所有消息到 KV cache"""
-        chat_view = self.processor.set_chat_mode()
-        prompt = chat_view.prefill(
-            session_id=session_id,
-            msgs=msgs,
-            omni_mode=omni_mode,
-            max_slice_nums=max_slice_nums,
-            use_tts_template=use_tts_template,
-            enable_thinking=enable_thinking,
-        )
-        return prompt
-
-    def chat_non_streaming_generate(
-        self,
-        session_id: str,
-        max_new_tokens: int = 256,
-        do_sample: bool = True,
-        generate_audio: bool = False,
-        use_tts_template: bool = True,
-        enable_thinking: bool = False,
-        tts_ref_audio=None,
-        tts_sampling_params=None,
-        length_penalty: float = 1.1,
-    ):
-        """Chat 非流式 generate：基于 KV cache 做 HF generate + 可选 TTS"""
-        chat_view = self.processor.set_chat_mode()
-        result = chat_view.generate(
-            session_id=session_id,
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            generate_audio=generate_audio,
-            use_tts_template=use_tts_template,
-            enable_thinking=enable_thinking,
-            tts_ref_audio=tts_ref_audio,
-            tts_sampling_params=tts_sampling_params,
-            length_penalty=length_penalty,
-        )
-        return result
-
-    def chat_streaming_generate(
-        self,
-        session_id: str,
-        generate_audio: bool = True,
-        max_new_tokens: int = 256,
-        length_penalty: float = 1.1,
-    ) -> "Iterator[StreamingChunk]":
-        """Chat 流式 generate：基于 KV cache 做 streaming_generate"""
-        chat_view = self.processor.set_chat_mode()
-        yield from chat_view.streaming_generate(
-            session_id=session_id,
-            generate_audio=generate_audio,
-            max_new_tokens=max_new_tokens,
-            length_penalty=length_penalty,
-        )
-
     # ========== Half-Duplex ==========
 
     def half_duplex_prefill(self, request: StreamingRequest) -> str:
@@ -456,86 +354,6 @@ class MiniCPMOWorker:
         half_duplex_view = self.processor.set_half_duplex_mode()
         half_duplex_view._model.reset_session(reset_token2wav_cache=False)
         logger.info(f"[GPU {self.gpu_id}] Half-Duplex model session reset (KV cache cleared)")
-
-    # ========== Duplex ==========
-
-    def duplex_prepare(
-        self,
-        system_prompt_text: Optional[str] = None,
-        ref_audio_path: Optional[str] = None,
-        prompt_wav_path: Optional[str] = None,
-    ) -> str:
-        """Duplex 准备
-
-        Args:
-            system_prompt_text: 系统提示文本
-            ref_audio_path: LLM 参考音频路径（嵌入 system prompt）
-            prompt_wav_path: TTS 参考音频路径（初始化 vocoder）。
-                若不提供则 fallback 到 ref_audio_path。
-        """
-        duplex_view = self.processor.set_duplex_mode()
-        return duplex_view.prepare(
-            system_prompt_text=system_prompt_text,
-            ref_audio_path=ref_audio_path or self.ref_audio_path,
-            prompt_wav_path=prompt_wav_path,
-        )
-
-    def duplex_prefill(
-        self,
-        audio_waveform: Optional[np.ndarray] = None,
-        frame_list: Optional[list] = None,
-        max_slice_nums: int = 1,
-    ) -> Dict[str, Any]:
-        """Duplex 预填充"""
-        duplex_view = self.processor.set_duplex_mode()
-        return duplex_view.prefill(
-            audio_waveform=audio_waveform,
-            frame_list=frame_list,
-            max_slice_nums=max_slice_nums,
-        )
-
-    def duplex_generate(self, force_listen: bool = False) -> DuplexGenerateResult:
-        """Duplex 生成
-        
-        Args:
-            force_listen: 前端 Force Listen 开关，强制本次生成为 listen
-        """
-        duplex_view = self.processor.set_duplex_mode()
-        return duplex_view.generate(force_listen=force_listen)
-
-    def duplex_finalize(self) -> None:
-        """Duplex 延迟 finalize（feed 终止符 + 滑窗维护）
-        
-        必须在 duplex_generate 之后、下一次 duplex_prefill 之前调用。
-        """
-        duplex_view = self.processor.set_duplex_mode()
-        duplex_view.finalize()
-
-    def duplex_stop(self) -> None:
-        """Duplex 停止"""
-        duplex_view = self.processor.set_duplex_mode()
-        duplex_view.stop()
-
-    def duplex_cleanup(self) -> None:
-        """Duplex 会话结束后释放 GPU 资源，恢复到初始状态
-
-        调用 DuplexView.cleanup() 释放 KV cache、TTS caches 等，
-        然后触发 gc + empty_cache 确保显存真正归还。
-
-        诊断数据（40B 参数模型）：
-        - stop 后泄漏: ~1,591 MB
-        - cleanup 后残留: ~48 MB（忽略不计）
-        - 释放量: ~1,543 MB
-        """
-        if self.processor is None:
-            return
-
-        duplex_view = self.processor.set_duplex_mode()
-        duplex_view.cleanup()
-        gc.collect()
-        torch.cuda.empty_cache()
-        logger.info(f"[GPU {self.gpu_id}] Duplex cleanup done, GPU memory released")
-
 
 # ============ FastAPI 应用 ============
 
@@ -703,323 +521,17 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ========== Chat WebSocket（统一流式/非流式） ==========
-
-def _parse_raw_messages(raw_messages: List[dict]) -> List[Message]:
-    """将前端原始消息列表解析为 Schema Message 列表"""
-    messages: List[Message] = []
-    for m in raw_messages:
-        role = Role(m["role"])
-        content = m["content"]
-        if isinstance(content, list):
-            content_items: List[ContentItem] = []
-            for item in content:
-                if isinstance(item, dict):
-                    if item.get("type") == "text" and item.get("text"):
-                        content_items.append(TextContent(text=item["text"]))
-                    elif item.get("type") == "audio" and item.get("data"):
-                        content_items.append(AudioContent(data=item["data"]))
-                    elif item.get("type") == "image" and item.get("data"):
-                        content_items.append(ImageContent(data=item["data"]))
-                    elif item.get("type") == "video" and item.get("data"):
-                        content_items.append(VideoContent(
-                            data=item["data"],
-                            stack_frames=item.get("stack_frames", 1),
-                        ))
-            if content_items:
-                messages.append(Message(role=role, content=content_items))
-        else:
-            messages.append(Message(role=role, content=content))
-    return messages
-
-
-def _convert_to_model_msgs(schema_messages: List[Message]) -> list:
-    """将 Schema Message 列表转为模型格式 msgs"""
-    from core.processors.base import MiniCPMOProcessorMixin
-    _mixin = MiniCPMOProcessorMixin()
-    model_msgs = []
-    for m in schema_messages:
-        content = _mixin._convert_content_to_model_format(m.content)
-        if len(content) == 1 and isinstance(content[0], str):
-            content = content[0]
-        model_msgs.append({"role": m.role.value, "content": content})
-    return model_msgs
-
-
-def _record_chat_input_summary(
-    raw_messages: List[Dict[str, Any]],
-    recorder: Optional[TurnBasedSessionRecorder],
-) -> Dict[str, Any]:
-    """Build recording input summary and persist user media when recording is enabled."""
-
-    input_summary: Dict[str, Any] = {}
-    audio_idx = 0
-    video_idx = 0
-    for raw_message in raw_messages:
-        if raw_message.get("role") != "user":
-            continue
-        content = raw_message.get("content", "")
-        if isinstance(content, str):
-            input_summary["text"] = content
-            continue
-        if not isinstance(content, list):
-            continue
-
-        texts = [
-            item["text"]
-            for item in content
-            if isinstance(item, dict) and item.get("type") == "text" and item.get("text")
-        ]
-        if texts:
-            input_summary["text"] = " ".join(texts)
-        if recorder is None:
-            continue
-
-        saved_imgs = []
-        saved_videos = []
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") == "image" and item.get("data"):
-                try:
-                    img_data = base64.b64decode(item["data"])
-                    idx = recorder.next_image_index()
-                    saved_imgs.append(recorder.save_user_image(idx, img_data))
-                except Exception:
-                    pass
-            elif item.get("type") == "audio" and item.get("data"):
-                try:
-                    audio_bytes = base64.b64decode(item["data"])
-                    audio_np = np.frombuffer(audio_bytes, dtype=np.float32)
-                    input_summary["audio"] = recorder.save_user_audio(audio_idx, audio_np)
-                    audio_idx += 1
-                except Exception:
-                    pass
-            elif item.get("type") == "video" and item.get("data"):
-                try:
-                    video_bytes = base64.b64decode(item["data"])
-                    saved_videos.append(recorder.save_user_video(video_idx, video_bytes))
-                    video_idx += 1
-                except Exception:
-                    pass
-        if saved_imgs:
-            input_summary["images"] = saved_imgs
-        if saved_videos:
-            input_summary["videos"] = saved_videos
-
-    return input_summary
-
-
 @app.websocket("/v1/worker/sessions/{session_id}/chat")
 async def worker_chat_runtime_ws(ws: WebSocket, session_id: str):
     """Worker-internal turn-based chat runtime protocol."""
-
-    if worker is None or worker.processor is None:
-        await ws.close(code=1013, reason="Worker not ready")
-        return
-
-    if not worker.state.is_idle:
-        await ws.close(code=1013, reason=f"Worker busy: {worker.state.status.value}")
-        return
-
-    safe_session_id = _sanitize_session_id(session_id)
-    await ws.accept()
-    worker.state.status = WorkerStatus.BUSY_CHAT
-    worker.state.current_session_id = safe_session_id
-
-    chat_runtime = ChatSessionRuntime(WorkerChatBackendAdapter(worker))
-    chat_recorder: Optional[TurnBasedSessionRecorder] = None
-    recording_session_id: Optional[str] = None
-
-    try:
-        raw = await ws.receive_text()
-        msg = json.loads(raw)
-        request = parse_worker_chat_request_message(msg)
-
-        messages = _parse_raw_messages(request.messages)
-        model_msgs = _convert_to_model_msgs(messages)
-
-        from config import get_config
-        cfg = get_config()
-        if cfg.recording.enabled:
-            recording_session_id = generate_session_id("chat")
-            sys_prompt = ""
-            for raw_message in request.messages:
-                if raw_message.get("role") == "system":
-                    content = raw_message.get("content", "")
-                    sys_prompt = content if isinstance(content, str) else str(content)
-                    break
-            chat_recorder = TurnBasedSessionRecorder(
-                session_id=recording_session_id,
-                app_type="chat",
-                worker_id=worker.gpu_id,
-                config_snapshot={
-                    "system_prompt": sys_prompt,
-                    "streaming": request.streaming,
-                    "ref_audio": cfg.ref_audio_path,
-                },
-                client_info=_ws_client_info(ws),
-                source_info=_ws_source_info(ws, "demo_turnbased", "chat"),
-                data_dir=cfg.data_dir,
-            )
-
-        pre_kv = await chat_runtime.prefill(ChatPrefillParams(
-            session_id=safe_session_id,
-            msgs=model_msgs,
-            omni_mode=request.omni_mode,
-            max_slice_nums=request.max_slice_nums,
-            use_tts_template=request.use_tts_template,
-            enable_thinking=request.enable_thinking,
-        ))
-        await ws.send_json({
-            "type": "chat.prefill_done",
-            "payload": {"input_tokens": pre_kv},
-        })
-
-        if request.generate_audio:
-            await chat_runtime.init_tts(request.tts_ref_audio)
-
-        input_summary = _record_chat_input_summary(request.messages, chat_recorder)
-        gen_start = time.perf_counter()
-
-        if request.streaming:
-            if chat_recorder:
-                chat_recorder.start_turn(turn_index=0, request_ts_ms=0.0, input_summary=input_summary)
-            chunk_queue: asyncio.Queue = asyncio.Queue()
-            loop = asyncio.get_event_loop()
-
-            def _run_generate():
-                try:
-                    for chunk in chat_runtime.streaming_generate(ChatGenerateParams(
-                        session_id=safe_session_id,
-                        generate_audio=request.generate_audio,
-                        max_new_tokens=request.max_new_tokens,
-                        length_penalty=request.length_penalty,
-                    )):
-                        loop.call_soon_threadsafe(chunk_queue.put_nowait, ("chunk", chunk))
-                    loop.call_soon_threadsafe(chunk_queue.put_nowait, ("done", None))
-                except Exception as exc:
-                    loop.call_soon_threadsafe(chunk_queue.put_nowait, ("error", exc))
-
-            gen_task = loop.run_in_executor(None, _run_generate)
-            full_text = ""
-            chunk_count = 0
-
-            while True:
-                tag, payload = await chunk_queue.get()
-                if tag == "chunk":
-                    chunk_payload: Dict[str, Any] = {}
-                    if payload.text_delta:
-                        chunk_payload["text_delta"] = payload.text_delta
-                        full_text += payload.text_delta
-                    if payload.audio_data:
-                        chunk_payload["audio_base64"] = payload.audio_data
-                    if chunk_payload:
-                        await ws.send_json({"type": "chat.chunk", "payload": chunk_payload})
-                    if chat_recorder:
-                        chat_recorder.add_streaming_chunk(
-                            text_delta=payload.text_delta,
-                            audio_base64=payload.audio_data,
-                        )
-                    chunk_count += 1
-                elif tag == "done":
-                    gen_ids = getattr(worker.processor.model, '_streaming_generated_token_ids', None)
-                    generated_tokens = len(gen_ids) if gen_ids else chunk_count
-                    elapsed = round((time.perf_counter() - gen_start) * 1000, 1)
-                    if chat_recorder:
-                        chat_recorder.end_turn(timing={
-                            "elapsed_ms": elapsed,
-                            "tokens": generated_tokens,
-                            "input_tokens": pre_kv,
-                        })
-                    await ws.send_json({
-                        "type": "chat.done",
-                        "payload": {
-                            "text": full_text,
-                            "generated_tokens": generated_tokens,
-                            "input_tokens": pre_kv,
-                            **({"recording_session_id": recording_session_id} if recording_session_id else {}),
-                        },
-                    })
-                    break
-                elif tag == "error":
-                    await ws.send_json({"type": "error", "error": str(payload)})
-                    break
-
-            try:
-                await asyncio.wait_for(gen_task, timeout=5.0)
-            except asyncio.TimeoutError:
-                pass
-        else:
-            result = await chat_runtime.non_streaming_generate(ChatGenerateParams(
-                session_id=safe_session_id,
-                max_new_tokens=request.max_new_tokens,
-                generate_audio=request.generate_audio,
-                use_tts_template=request.use_tts_template,
-                enable_thinking=request.enable_thinking,
-                tts_ref_audio=request.tts_ref_audio,
-                length_penalty=request.length_penalty,
-            ))
-
-            text = result
-            audio_base64 = None
-            output_audio_np = None
-            if isinstance(result, tuple):
-                text, waveform = result
-                if waveform is not None:
-                    output_audio_np = waveform.astype(np.float32)
-                    audio_base64 = base64.b64encode(output_audio_np.tobytes()).decode("utf-8")
-
-            stats = getattr(worker.processor.model, '_last_chat_token_stats', {})
-            elapsed = round((time.perf_counter() - gen_start) * 1000, 1)
-
-            if chat_recorder:
-                chat_recorder.record_chat_turn(
-                    turn_index=0,
-                    request_ts_ms=0.0,
-                    input_summary=input_summary,
-                    output_text=text or "",
-                    output_audio=output_audio_np,
-                    timing={
-                        "elapsed_ms": elapsed,
-                        "tokens": stats.get("generated_tokens", 0),
-                        "input_tokens": pre_kv,
-                    },
-                )
-
-            await ws.send_json({
-                "type": "chat.done",
-                "payload": {
-                    "text": text or "",
-                    "audio_base64": audio_base64,
-                    "generated_tokens": stats.get("generated_tokens", 0),
-                    "input_tokens": pre_kv,
-                    **({"recording_session_id": recording_session_id} if recording_session_id else {}),
-                },
-            })
-
-    except WebSocketDisconnect:
-        logger.info("Worker runtime chat WebSocket disconnected")
-    except WorkerProtocolError as exc:
-        await ws.send_json({"type": "error", "error": str(exc)})
-    except Exception as exc:
-        logger.error("Worker runtime chat WebSocket error: %s", exc, exc_info=True)
-        try:
-            await ws.send_json({"type": "error", "error": str(exc)})
-        except Exception:
-            pass
-    finally:
-        if chat_recorder:
-            try:
-                chat_recorder.finalize()
-            except Exception as exc:
-                logger.error("[WorkerChat] recorder finalize failed: %s", exc, exc_info=True)
-        worker.state.status = WorkerStatus.IDLE
-        worker.state.current_session_id = None
-        try:
-            await ws.close()
-        except Exception:
-            pass
+    await handle_worker_chat_runtime_ws(
+        ws,
+        session_id=_sanitize_session_id(session_id),
+        worker=worker,
+        busy_status=WorkerStatus.BUSY_CHAT,
+        idle_status=WorkerStatus.IDLE,
+        logger=logger,
+    )
 
 
 # ========== Half-Duplex Stop 信号（每连接独立） ==========
@@ -1398,87 +910,15 @@ async def worker_duplex_runtime_ws(ws: WebSocket, session_id: str):
     This endpoint is meant for gateway-worker communication and uses runtime
     event payloads instead of page/demo-shaped result messages.
     """
-
-    if worker is None or worker.processor is None:
-        await ws.close(code=1013, reason="Worker not ready")
-        return
-
-    if not worker.state.is_idle:
-        await ws.close(code=1013, reason=f"Worker busy: {worker.state.status.value}")
-        return
-
-    safe_session_id = _sanitize_session_id(session_id)
-    await ws.accept()
-    worker.state.status = WorkerStatus.DUPLEX_ACTIVE
-    worker.state.current_session_id = safe_session_id
-
-    runtime = runtime_manager.create_duplex(
-        safe_session_id,
-        WorkerDuplexBackendAdapter(worker),
+    await handle_worker_duplex_runtime_ws(
+        ws,
+        session_id=_sanitize_session_id(session_id),
+        worker=worker,
+        runtime_manager=runtime_manager,
+        active_status=WorkerStatus.DUPLEX_ACTIVE,
+        idle_status=WorkerStatus.IDLE,
+        logger=logger,
     )
-    session_max_slice_nums = 1
-
-    async def _emit_event(event: RuntimeEvent) -> None:
-        log_duplex_frame(logger, event.payload["frame"], gpu_id=worker.gpu_id)
-        await ws.send_json(runtime_event_to_worker_message(event))
-
-    try:
-        while True:
-            msg = json.loads(await ws.receive_text())
-            msg_type = msg.get("type")
-
-            if msg_type == "session.prepare":
-                voice_refs = None
-                try:
-                    params, voice_refs = parse_worker_prepare_message(msg)
-                    prompt = await runtime.prepare(params)
-                    session_max_slice_nums = int((params.config or {}).get("max_slice_nums", session_max_slice_nums))
-                    await ws.send_json({
-                        "type": "session.ready",
-                        "session_id": safe_session_id,
-                        "prompt_length": len(prompt),
-                    })
-                finally:
-                    if voice_refs is not None:
-                        voice_refs.cleanup()
-
-            elif msg_type == "input.append":
-                frame = parse_worker_input_message(
-                    msg,
-                    default_max_slice_nums=session_max_slice_nums,
-                    chunk_start=time.perf_counter(),
-                )
-                await runtime.process_frame(frame=frame, emit=_emit_event)
-
-            elif msg_type == "control":
-                control = parse_worker_control_message(msg)
-                event = await runtime.control(control)
-                await ws.send_json(runtime_event_to_worker_message(event))
-                if control.type == "session.close":
-                    runtime_manager.forget_duplex(safe_session_id)
-                    break
-
-            else:
-                raise WorkerProtocolError(f"unknown worker runtime message type: {msg_type}")
-
-    except WebSocketDisconnect:
-        logger.info("Worker runtime duplex WebSocket disconnected")
-    except WorkerProtocolError as exc:
-        await ws.send_json({"type": "error", "error": str(exc)})
-    except Exception as exc:
-        logger.error("Worker runtime duplex WebSocket error: %s", exc, exc_info=True)
-        try:
-            await ws.send_json({"type": "error", "error": str(exc)})
-        except Exception:
-            pass
-    finally:
-        try:
-            await runtime_manager.close_duplex(safe_session_id)
-        except Exception as exc:
-            logger.error("Worker runtime duplex cleanup failed: %s", exc, exc_info=True)
-        worker.state.status = WorkerStatus.IDLE
-        worker.state.current_session_id = None
-        worker.state.duplex_pause_time = None
 
 
 # ============ 缓存状态查询 ==========

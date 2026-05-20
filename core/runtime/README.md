@@ -5,14 +5,18 @@ backends.
 
 ## Current Shape
 
-The public and legacy worker protocols are unchanged.  Pages and direct API
-clients can still use:
+The worker now exposes runtime-shaped internal endpoints for turn-based chat and
+duplex sessions:
 
-- `/ws/chat`
-- `/ws/half_duplex`
-- `/ws/duplex`
+- `/v1/worker/sessions/{session_id}/chat`
+- `/v1/worker/sessions/{session_id}/duplex`
 
-Inside the worker, duplex sessions now flow through:
+Public pages and external clients should enter through the gateway, primarily
+`/ws/chat` for turn-based chat and `/v1/realtime` for duplex sessions.  The
+gateway handles queueing and translates public events into the worker runtime
+protocol.
+
+Inside the worker, duplex sessions flow through:
 
 ```text
 worker.py WebSocket handler
@@ -33,10 +37,10 @@ is a compatibility-preserving boundary for future specialized runtimes.
 
 ### worker.py
 
-- Parse legacy WebSocket messages.
-- Decode or persist transport-facing artifacts when still required.
-- Send legacy WebSocket responses.
-- Keep existing `/ws/duplex` behavior stable.
+- Host worker-internal runtime WebSocket endpoints.
+- Parse worker runtime protocol messages.
+- Own worker process state and expose health/status endpoints.
+- Delegate inference lifecycle to runtime/backend boundaries.
 
 ### RuntimeManager
 

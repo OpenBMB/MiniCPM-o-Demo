@@ -30,34 +30,49 @@ class _FakeResult:
         }
 
 
+class _FakeDuplexView:
+    def __init__(self, worker):
+        self.worker = worker
+
+    def prepare(self, **_kwargs):
+        self.worker.calls.append("prepare")
+        return "prompt"
+
+    def prefill(self, **_kwargs):
+        self.worker.calls.append("prefill")
+        self.worker.processor.kv_cache_length += 10
+        return {"n_vision_images": 1}
+
+    def generate(self, **_kwargs):
+        self.worker.calls.append("generate")
+        return _FakeResult()
+
+    def finalize(self):
+        self.worker.calls.append("finalize")
+
+    def stop(self):
+        self.worker.calls.append("stop")
+
+    def cleanup(self):
+        self.worker.calls.append("cleanup")
+
+
+class _FakeProcessor:
+    def __init__(self, worker):
+        self.worker = worker
+        self.kv_cache_length = 0
+
+    def set_duplex_mode(self):
+        return _FakeDuplexView(self.worker)
+
+
 class _FakeWorker:
     gpu_id = 0
-    kv_cache_length = 0
+    ref_audio_path = None
 
     def __init__(self):
         self.calls = []
-
-    def duplex_prepare(self, **_kwargs):
-        self.calls.append("prepare")
-        return "prompt"
-
-    def duplex_prefill(self, **_kwargs):
-        self.calls.append("prefill")
-        self.kv_cache_length += 10
-        return {"n_vision_images": 1}
-
-    def duplex_generate(self, **_kwargs):
-        self.calls.append("generate")
-        return _FakeResult()
-
-    def duplex_finalize(self):
-        self.calls.append("finalize")
-
-    def duplex_stop(self):
-        self.calls.append("stop")
-
-    def duplex_cleanup(self):
-        self.calls.append("cleanup")
+        self.processor = _FakeProcessor(self)
 
 
 def test_deferred_finalize_is_runtime_managed():
