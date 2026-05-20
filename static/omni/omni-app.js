@@ -971,17 +971,13 @@ let _diagEvents = [];
 const _debug = new URLSearchParams(location.search).has('debug');
 
 function _sendDiagnostic(payload) {
-    if (session && session.ws && session.ws.readyState === WebSocket.OPEN) {
-        try {
-            session.ws.send(JSON.stringify({
-                type: 'client_diagnostic',
-                ts: performance.now(),
-                session_elapsed_s: session._sessionStartTime
-                    ? ((performance.now() - session._sessionStartTime) / 1000) : 0,
-                ...payload,
-            }));
-        } catch (_) {}
-    }
+    if (!_debug) return;
+    console.debug('[omni diagnostic]', {
+        ts: performance.now(),
+        session_elapsed_s: session && session._sessionStartTime
+            ? ((performance.now() - session._sessionStartTime) / 1000) : 0,
+        ...payload,
+    });
 }
 
 function _sendSessionSummary() {
