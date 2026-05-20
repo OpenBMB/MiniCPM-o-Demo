@@ -33,6 +33,7 @@ export class RealtimeSession {
         this.recordingSessionId = '';
         this.chunksSent = 0;
         this.paused = false;
+        this.pauseState = 'active';
         this.forceListenActive = false;
         this.currentSpeakText = '';
         this._speakHandle = null;
@@ -82,6 +83,7 @@ export class RealtimeSession {
     onMetrics(data) {}
     onRunningChange(running) {}
     onForceListenChange(active) {}
+    onPauseStateChange(state) {}
     /** New: protocol event logged (for data flow panel). */
     onProtocolEvent(entry) {}
 
@@ -277,6 +279,23 @@ export class RealtimeSession {
         }
     }
 
+    pauseToggle() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (this.pauseState === 'active') {
+            this.paused = true;
+            this.pauseState = 'paused';
+            this.onPauseStateChange('paused');
+            this.onMetrics({ type: 'state', sessionState: 'Paused' });
+            this.onSystemLog('Session paused');
+        } else if (this.pauseState === 'paused') {
+            this.paused = false;
+            this.pauseState = 'active';
+            this.onPauseStateChange('active');
+            this.onMetrics({ type: 'state', sessionState: 'Active' });
+            this.onSystemLog('Session resumed');
+        }
+    }
+
     stop() {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             const msg = { type: 'session.close', reason: 'user_stop' };
@@ -303,9 +322,11 @@ export class RealtimeSession {
         }
         this._started = false;
         this.paused = false;
+        this.pauseState = 'active';
         this.forceListenActive = false;
         this.onRunningChange(false);
         this.onForceListenChange(false);
+        this.onPauseStateChange('active');
         this.onMetrics({ type: 'state', sessionState: 'Stopped' });
     }
 
@@ -326,6 +347,7 @@ export class RealtimeSession {
         this.currentSpeakText = '';
         this._speakHandle = null;
         this.paused = false;
+        this.pauseState = 'active';
         this.forceListenActive = false;
         this._queueReject = null;
         this._eventLog = [];

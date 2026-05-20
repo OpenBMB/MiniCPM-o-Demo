@@ -8,7 +8,7 @@
 // Layer 0: Pure logic
 import { AudioDeviceSelector } from '../lib/audio-device-selector.js';
 import { resampleAudio, arrayBufferToBase64, escapeHtml } from '../duplex/lib/duplex-utils.js';
-import { DuplexSession } from '../duplex/lib/duplex-session.js';
+import { RealtimeSession } from '../duplex/lib/realtime-session.js';
 import { SessionRecorder } from '../duplex/lib/session-recorder.js';
 import { measureLUFS } from '../duplex/lib/lufs.js';
 import { MixerController } from '../duplex/lib/mixer-controller.js';
@@ -835,10 +835,15 @@ async function startSession() {
         });
     }
 
-    session = new DuplexSession('adx', {
+    session = new RealtimeSession('adx', {
         getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
+        getWsUrl: () => {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const url = `${proto}://${location.host}/v1/realtime?mode=audio`;
+            return window.ClientIdentity ? window.ClientIdentity.appendToUrl(url) : url;
+        },
     });
 
     setStatusLamp('preparing');

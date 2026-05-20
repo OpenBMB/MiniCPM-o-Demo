@@ -8,7 +8,7 @@
 // Layer 0: Pure logic
 import { AudioDeviceSelector } from '../lib/audio-device-selector.js';
 import { resampleAudio as downsample, arrayBufferToBase64, escapeHtml } from '../duplex/lib/duplex-utils.js';
-import { DuplexSession } from '../duplex/lib/duplex-session.js';
+import { RealtimeSession } from '../duplex/lib/realtime-session.js';
 import { SessionVideoRecorder } from '../duplex/lib/session-video-recorder.js';
 import { RecordingSettings } from '../duplex/lib/recording-settings.js';
 import { measureLUFS } from '../duplex/lib/lufs.js';
@@ -1458,10 +1458,15 @@ async function startSession() {
     }
 
     // Create DuplexSession + wire hooks
-    session = new DuplexSession('omni', {
+    session = new RealtimeSession('omni', {
         getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
+        getWsUrl: () => {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const url = `${proto}://${location.host}/v1/realtime?mode=video`;
+            return window.ClientIdentity ? window.ClientIdentity.appendToUrl(url) : url;
+        },
     });
     session.onMetrics = (data) => metricsPanel.update(data);
     session.onSystemLog = addSystemEntry;

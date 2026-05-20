@@ -56,12 +56,17 @@ from gateway_modules.app_registry import (
     AppsPublicResponse,
     AppsAdminResponse,
 )
+from gateway_modules.runtime_protocol import (
+    realtime_client_to_worker_runtime,
+    worker_runtime_to_realtime,
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("gateway")
+
 
 
 _SESSION_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
@@ -1657,7 +1662,7 @@ async def realtime_ws(ws: WebSocket):
             source_channel="realtime_api",
             source_mode=mode,
         )
-        ws_url = f"ws://{worker.host}:{worker.port}/ws/duplex?{identity_qs}"
+        ws_url = f"ws://{worker.host}:{worker.port}/v1/worker/sessions/{session_id}/duplex?{identity_qs}"
 
         max_retries = 5
         for attempt in range(max_retries):
@@ -1684,88 +1689,21 @@ async def realtime_ws(ws: WebSocket):
             session_closed.set()
 
         async def client_to_worker():
-            """Client (OpenAI Realtime) → Worker (old protocol): translate on the fly"""
+            """Client (OpenAI Realtime) → Worker runtime protocol."""
             try:
                 async for raw in ws.iter_text():
                     msg = json.loads(raw)
-                    msg_type = msg.get("type", "")
-
-                    if msg_type == "session.update":
-                        session_cfg = msg.get("session", {})
-                        worker_msg = {
-                            "type": "prepare",
-                            "system_prompt": session_cfg.get("instructions", "You are a helpful assistant."),
-                            "deferred_finalize": True,
-                            "max_slice_nums": session_cfg.get("max_slice_nums", 1),
-                        }
-                        if session_cfg.get("ref_audio"):
-                            worker_msg["ref_audio_base64"] = session_cfg["ref_audio"]
-                        if session_cfg.get("tts_ref_audio"):
-                            worker_msg["tts_ref_audio_base64"] = session_cfg["tts_ref_audio"]
-                        if session_cfg.get("voice_config"):
-                            worker_msg["config"] = session_cfg["voice_config"]
-                        await worker_ws.send(json.dumps(worker_msg))
-
-                    elif msg_type == "input_audio_buffer.append":
-                        worker_msg = {
-                            "type": "audio_chunk",
-                            "audio_base64": msg.get("audio", ""),
-                        }
-                        if msg.get("force_listen"):
-                            worker_msg["force_listen"] = True
-                        if msg.get("video_frames"):
-                            worker_msg["frame_base64_list"] = msg["video_frames"]
-                        if msg.get("max_slice_nums"):
-                            worker_msg["max_slice_nums"] = msg["max_slice_nums"]
-                        await worker_ws.send(json.dumps(worker_msg))
-
-                    elif msg_type == "session.close":
-                        await worker_ws.send(json.dumps({"type": "stop"}))
+                    await worker_ws.send(json.dumps(realtime_client_to_worker_runtime(msg)))
 
             except WebSocketDisconnect:
                 pass
 
         async def worker_to_client():
-            """Worker (old protocol) → Client (OpenAI Realtime): translate on the fly"""
+            """Worker runtime protocol → Client (OpenAI Realtime)."""
             try:
                 async for raw in worker_ws:
                     msg = json.loads(raw)
-                    msg_type = msg.get("type", "")
-
-                    if msg_type == "prepared":
-                        await ws.send_json({
-                            "type": "session.created",
-                            "session_id": session_id,
-                            "prompt_length": msg.get("prompt_length", 0),
-                            **({"recording_session_id": msg.get("recording_session_id")} if msg.get("recording_session_id") else {}),
-                        })
-
-                    elif msg_type == "result":
-                        kv_len = msg.get("kv_cache_length", 0)
-                        if msg.get("is_listen"):
-                            await ws.send_json({
-                                "type": "response.listen",
-                                "kv_cache_length": kv_len,
-                            })
-                        else:
-                            await ws.send_json({
-                                "type": "response.output_audio.delta",
-                                "text": msg.get("text", ""),
-                                "audio": msg.get("audio_data"),
-                                "end_of_turn": msg.get("end_of_turn", False),
-                                "kv_cache_length": kv_len,
-                            })
-                        if kv_len >= 8192 and not session_closed.is_set():
-                            logger.info(f"Realtime context full (kv={kv_len}): session={session_id}")
-                            await ws.send_json({"type": "session.closed", "reason": "context_full"})
-                            session_closed.set()
-                    elif msg_type == "stopped":
-                        await ws.send_json({"type": "session.closed", "reason": "stopped"})
-
-                    elif msg_type == "timeout":
-                        await ws.send_json({"type": "session.closed", "reason": "timeout"})
-
-                    elif msg_type == "error":
+                    if msg.get("type") == "error":
                         await ws.send_json({
                             "type": "error",
                             "error": {
@@ -1774,9 +1712,19 @@ async def realtime_ws(ws: WebSocket):
                                 "type": "server_error",
                             },
                         })
-
                     else:
-                        await ws.send_text(raw)
+                        translated = worker_runtime_to_realtime(msg, session_id=session_id)
+                        await ws.send_json(translated)
+                        if translated.get("type") == "response.listen":
+                            kv_len = translated.get("kv_cache_length", 0)
+                        elif translated.get("type") == "response.output_audio.delta":
+                            kv_len = translated.get("kv_cache_length", 0)
+                        else:
+                            kv_len = 0
+                        if kv_len >= 8192 and not session_closed.is_set():
+                            logger.info(f"Realtime context full (kv={kv_len}): session={session_id}")
+                            await ws.send_json({"type": "session.closed", "reason": "context_full"})
+                            session_closed.set()
 
             except Exception:
                 pass
