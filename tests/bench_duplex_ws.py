@@ -1,6 +1,6 @@
-"""Duplex WebSocket A/B 对比基准测试（多轮统计版）
+"""Duplex worker-runtime WebSocket A/B 对比基准测试（多轮统计版）
 
-直接连接 Worker 的 /ws/duplex 端点，发送真实音频，
+直接连接 Worker 的 /v1/worker/sessions/{session_id}/duplex 端点，发送真实音频，
 对 normal 和 compile 模式各跑 N_ROUNDS 轮，汇总 LISTEN/SPEAK 稳态统计。
 
 用法:
@@ -27,8 +27,8 @@ REF_AUDIO_PATH = str(TESTS_DIR / "cases" / "common" / "ref_audio" / "BH-Ref-HT-F
 USER_AUDIO_PATH = str(TESTS_DIR / "cases" / "common" / "user_audio" / "000_user_audio0.wav")
 
 WORKERS = {
-    "normal": "ws://localhost:22400/ws/duplex",
-    "compile": "ws://localhost:22401/ws/duplex",
+    "normal": "ws://localhost:22400",
+    "compile": "ws://localhost:22401",
 }
 
 SYSTEM_PROMPT = "You are a helpful assistant."
@@ -66,7 +66,7 @@ class SessionResult:
 
 async def run_duplex_session(
     worker_name: str,
-    ws_url: str,
+    worker_base_url: str,
     user_audio: np.ndarray,
     ref_audio: np.ndarray,
     round_idx: int,
@@ -76,19 +76,26 @@ async def run_duplex_session(
     result = SessionResult(worker_name=worker_name, round_idx=round_idx)
 
     try:
+        session_id = f"bench_{worker_name}_{round_idx}_{int(time.time() * 1000)}"
+        ws_url = f"{worker_base_url}/v1/worker/sessions/{session_id}/duplex"
         async with websockets.connect(ws_url, max_size=50 * 1024 * 1024) as ws:
             ref_audio_b64 = base64.b64encode(ref_audio.astype(np.float32).tobytes()).decode()
 
             t0 = time.perf_counter()
             await ws.send(json.dumps({
-                "type": "prepare",
-                "system_prompt": SYSTEM_PROMPT,
-                "ref_audio_base64": ref_audio_b64,
+                "type": "session.prepare",
+                "payload": {
+                    "system_prompt": SYSTEM_PROMPT,
+                    "voice": {
+                        "ref_audio_base64": ref_audio_b64,
+                        "tts_ref_audio_base64": ref_audio_b64,
+                    },
+                },
             }))
             resp = json.loads(await ws.recv())
             result.prepare_ms = (time.perf_counter() - t0) * 1000
 
-            if resp.get("type") != "prepared":
+            if resp.get("type") != "session.ready":
                 result.error = f"prepare failed: {resp}"
                 return result
 
@@ -107,8 +114,10 @@ async def run_duplex_session(
 
                 t_send = time.perf_counter()
                 await ws.send(json.dumps({
-                    "type": "audio_chunk",
-                    "audio_base64": audio_b64,
+                    "type": "input.append",
+                    "payload": {
+                        "audio_base64": audio_b64,
+                    },
                 }))
 
                 raw_resp = await ws.recv()
@@ -117,28 +126,38 @@ async def run_duplex_session(
 
                 if resp.get("type") == "error":
                     continue
+                if resp.get("type") != "runtime.event" or resp.get("channel") != "output.duplex_result":
+                    result.error = f"unexpected runtime response: {resp}"
+                    return result
 
-                is_listen = resp.get("is_listen", True)
+                payload = resp.get("payload") or {}
+                result_payload = payload.get("result") or {}
+                metrics = payload.get("metrics") or {}
+                is_listen = result_payload.get("is_listen", True)
                 status = "LISTEN" if is_listen else "SPEAK"
 
                 cr = ChunkResult(
-                    turn=resp.get("current_time", i + 1),
+                    turn=result_payload.get("current_time", i + 1),
                     status=status,
                     wall_ms=wall_ms,
+                    prefill_ms=metrics.get("prefill_ms", 0) or 0,
                 )
                 if not is_listen:
-                    cr.llm_ms = resp.get("cost_llm_ms", 0) or 0
-                    cr.tts_ms = resp.get("cost_tts_ms", 0) or 0
-                    cr.t2w_ms = resp.get("cost_token2wav_ms", 0) or 0
-                    cr.total_ms = resp.get("cost_all_ms", 0) or 0
-                    cr.n_tokens = resp.get("n_tokens", 0) or 0
-                    cr.n_tts_tokens = resp.get("n_tts_tokens", 0) or 0
-                    cr.text = resp.get("text", "") or ""
+                    cr.llm_ms = result_payload.get("cost_llm_ms", 0) or 0
+                    cr.tts_ms = result_payload.get("cost_tts_ms", 0) or 0
+                    cr.t2w_ms = result_payload.get("cost_token2wav_ms", 0) or 0
+                    cr.total_ms = result_payload.get("cost_all_ms", 0) or 0
+                    cr.n_tokens = result_payload.get("n_tokens", 0) or 0
+                    cr.n_tts_tokens = result_payload.get("n_tts_tokens", 0) or 0
+                    cr.text = result_payload.get("text", "") or ""
 
                 result.chunks.append(cr)
 
             # stop
-            await ws.send(json.dumps({"type": "stop"}))
+            await ws.send(json.dumps({
+                "type": "control",
+                "payload": {"command": "session.close", "reason": "benchmark_done"},
+            }))
             try:
                 await asyncio.wait_for(ws.recv(), timeout=2.0)
             except Exception:
