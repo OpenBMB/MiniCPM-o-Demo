@@ -85,14 +85,14 @@ let duplexRuntimePromise: Promise<DuplexRuntime> | null = null
 
 export async function loadDuplexRuntime(): Promise<DuplexRuntime> {
   if (!duplexRuntimePromise) {
-    const duplexSessionUrl = '/static/duplex/lib/duplex-session.js'
+    const realtimeSessionUrl = '/static/duplex/lib/realtime-session.js'
     const duplexUtilsUrl = '/static/duplex/lib/duplex-utils.js'
 
     duplexRuntimePromise = Promise.all([
-      import(/* @vite-ignore */ duplexSessionUrl),
+      import(/* @vite-ignore */ realtimeSessionUrl),
       import(/* @vite-ignore */ duplexUtilsUrl),
     ]).then(([sessionModule, utilsModule]) => ({
-      DuplexSession: sessionModule.DuplexSession as DuplexSessionConstructor,
+      DuplexSession: sessionModule.RealtimeSession as DuplexSessionConstructor,
       arrayBufferToBase64: utilsModule.arrayBufferToBase64 as (
         buffer: ArrayBufferLike,
       ) => string,
