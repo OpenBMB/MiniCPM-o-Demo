@@ -39,8 +39,13 @@ from core.schemas.chat import ChatRequest, ChatResponse
 from core.schemas.streaming import (
     StreamingRequest, StreamingChunk, StreamingResponse, StreamingConfig,
 )
-from core.schemas.duplex import (
-    DuplexConfig, DuplexGenerateResult, DuplexPrefillRequest,
+from core.schemas.duplex import DuplexGenerateResult
+from core.runtime.duplex import (
+    DuplexFrameResult,
+    DuplexInputFrame,
+    DuplexPrepareParams,
+    DuplexSessionRuntime,
+    WorkerDuplexBackendAdapter,
 )
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
@@ -1469,9 +1474,8 @@ async def duplex_ws(ws: WebSocket):
 
     pause_timeout_task: Optional[asyncio.Task] = None
 
-    # finalize 异步栅栏：保证 finalize 完成后才能进入下一轮 prefill
-    finalize_done = asyncio.Event()
-    finalize_done.set()  # 初始状态：无需等待
+    # Session runtime owns model-side lifecycle details such as deferred finalize.
+    duplex_runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
 
     session_max_slice_nums: int = 1
 
@@ -1517,10 +1521,6 @@ async def duplex_ws(ws: WebSocket):
                 use_deferred_finalize = msg.get("deferred_finalize", True)
                 session_max_slice_nums = msg.get("max_slice_nums") or (config_dict.get("max_slice_nums") if config_dict else None) or 1
 
-                if config_dict:
-                    duplex_view = worker.processor.set_duplex_mode()
-                    duplex_view.config = DuplexConfig(**config_dict)
-
                 # LLM ref audio → ref_audio_path（嵌入 system prompt）
                 # TTS ref audio → prompt_wav_path（初始化 vocoder）
                 # 两者可以不同，也可以相同（向后兼容：不提供 tts_ref_audio_base64 时复用 ref_audio_base64）
@@ -1561,12 +1561,12 @@ async def duplex_ws(ws: WebSocket):
                 )
 
                 try:
-                    prompt = await asyncio.to_thread(
-                        worker.duplex_prepare,
+                    prompt = await duplex_runtime.prepare(DuplexPrepareParams(
                         system_prompt_text=system_prompt,
                         ref_audio_path=actual_ref_audio_path,
                         prompt_wav_path=actual_tts_audio_path,
-                    )
+                        config=config_dict,
+                    ))
                     logger.info(f"Duplex prepared (deferred_finalize={use_deferred_finalize})")
 
                     duplex_type = "omni_duplex" if client_session_id.startswith("omni") else "audio_duplex"
@@ -1657,114 +1657,78 @@ async def duplex_ws(ws: WebSocket):
                 chunk_max_slice_nums: int = msg.get("max_slice_nums", session_max_slice_nums)
 
                 try:
-                    # 等待上一轮 finalize 完成（保证 KV cache 状态一致）
-                    await finalize_done.wait()
+                    async def _emit_frame(frame: DuplexFrameResult) -> None:
+                        nonlocal chunk_idx
+                        result = frame.result
+                        result_dict = frame.result_dict
 
-                    # prefill + generate（不含 finalize，延迟执行）
-                    def _duplex_step():
-                        t0 = time.perf_counter()
-                        prefill_result = worker.duplex_prefill(
+                        if not result.is_listen:
+                            llm = result.cost_llm_ms or 0
+                            tts_prep = result.cost_tts_prep_ms or 0
+                            tts = result.cost_tts_ms or 0
+                            t2w = result.cost_token2wav_ms or 0
+                            total = result.cost_all_ms or 0
+                            n_tok = result.n_tokens or 0
+                            n_tts_tok = result.n_tts_tokens or 0
+                            logger.info(
+                                f"[GPU {worker.gpu_id}] SPEAK t={result.current_time} wall={frame.wall_clock_ms:.0f}ms | "
+                                f"prefill={frame.prefill_ms:.0f} llm={llm:.0f} tts_prep={tts_prep:.0f} "
+                                f"tts={tts:.0f} t2w={t2w:.0f} total={total:.0f}ms | "
+                                f"tokens={n_tok} tts_tokens={n_tts_tok} kv={frame.kv_cache_len} | "
+                                f"vimg={frame.n_vision_images} vtok={frame.vision_tokens} | "
+                                f"text='{(result.text or '')[:20]}'"
+                            )
+                        else:
+                            total = result.cost_all_ms or 0
+                            logger.info(
+                                f"[GPU {worker.gpu_id}] LISTEN t={result.current_time} wall={frame.wall_clock_ms:.0f}ms | "
+                                f"prefill={frame.prefill_ms:.0f} generate={total:.0f}ms kv={frame.kv_cache_len} | "
+                                f"vimg={frame.n_vision_images} vtok={frame.vision_tokens}"
+                            )
+
+                        # 录制：保存 AI 音频并记录 chunk timeline
+                        ai_audio_rel: Optional[str] = None
+                        ai_audio_n_samples: int = 0
+                        if session_recorder:
+                            if not result.is_listen and result.audio_data:
+                                try:
+                                    ai_bytes = base64.b64decode(result.audio_data)
+                                    ai_ndarray = np.frombuffer(ai_bytes, dtype=np.float32)
+                                    ai_audio_rel = session_recorder.save_ai_audio(
+                                        session_recorder.turn_index,
+                                        chunk_idx,
+                                        ai_ndarray,
+                                    )
+                                    ai_audio_n_samples = len(ai_ndarray)
+                                except Exception as e:
+                                    logger.warning(f"[SessionRecorder] failed to save AI audio: {e}")
+
+                            receive_ts_ms = (t_chunk_start - session_start_perf) * 1000
+                            session_recorder.record_chunk(
+                                index=chunk_idx,
+                                receive_ts_ms=receive_ts_ms,
+                                result_dict=result_dict,
+                                prefill_ms=frame.prefill_ms,
+                                user_audio_rel=user_audio_rel,
+                                user_frame_rel=user_frame_rel,
+                                ai_audio_rel=ai_audio_rel,
+                                ai_audio_samples=ai_audio_n_samples,
+                            )
+                            chunk_idx += 1
+
+                        await ws.send_json({"type": "result", **result_dict})
+
+                    await duplex_runtime.process_frame(
+                        frame=DuplexInputFrame(
                             audio_waveform=audio_waveform,
                             frame_list=frame_list,
                             max_slice_nums=chunk_max_slice_nums,
-                        )
-                        t_prefill = time.perf_counter()
-                        gen_result = worker.duplex_generate(force_listen=chunk_force_listen)
-                        t_gen = time.perf_counter()
-
-                        prefill_ms = (t_prefill - t0) * 1000
-                        # 在同一线程捕获 KV cache 长度（generate 后、finalize 前）
-                        kv_len = worker.processor.kv_cache_length
-                        return gen_result, prefill_ms, prefill_result, kv_len
-
-                    result, prefill_ms, prefill_cost, kv_cache_len = await asyncio.to_thread(_duplex_step)
-                    result.server_send_ts = time.time()
-
-                    wall_clock_ms = (time.perf_counter() - t_chunk_start) * 1000
-                    status = "LISTEN" if result.is_listen else "SPEAK"
-
-                    # vision token 从 prefill 返回的实际 slice 数量计算（不再硬编码分辨率假设）
-                    n_vision_images = prefill_cost.get("n_vision_images", 0) if isinstance(prefill_cost, dict) else 0
-                    vision_tok = n_vision_images * 64
-                    if not result.is_listen:
-                        llm = result.cost_llm_ms or 0
-                        tts_prep = result.cost_tts_prep_ms or 0
-                        tts = result.cost_tts_ms or 0
-                        t2w = result.cost_token2wav_ms or 0
-                        total = result.cost_all_ms or 0
-                        n_tok = result.n_tokens or 0
-                        n_tts_tok = result.n_tts_tokens or 0
-                        logger.info(
-                            f"[GPU {worker.gpu_id}] SPEAK t={result.current_time} wall={wall_clock_ms:.0f}ms | "
-                            f"prefill={prefill_ms:.0f} llm={llm:.0f} tts_prep={tts_prep:.0f} "
-                            f"tts={tts:.0f} t2w={t2w:.0f} total={total:.0f}ms | "
-                            f"tokens={n_tok} tts_tokens={n_tts_tok} kv={kv_cache_len} | "
-                            f"vimg={n_vision_images} vtok={vision_tok} | "
-                            f"text='{(result.text or '')[:20]}'"
-                        )
-                    else:
-                        total = result.cost_all_ms or 0
-                        logger.info(
-                            f"[GPU {worker.gpu_id}] LISTEN t={result.current_time} wall={wall_clock_ms:.0f}ms | "
-                            f"prefill={prefill_ms:.0f} generate={total:.0f}ms kv={kv_cache_len} | "
-                            f"vimg={n_vision_images} vtok={vision_tok}"
-                        )
-
-                    result_dict = result.model_dump()
-                    result_dict["wall_clock_ms"] = round(wall_clock_ms, 1)
-                    result_dict["kv_cache_length"] = kv_cache_len
-                    result_dict["vision_slices"] = n_vision_images
-                    result_dict["vision_tokens"] = vision_tok
-
-                    # 录制：保存 AI 音频并记录 chunk timeline
-                    ai_audio_rel: Optional[str] = None
-                    ai_audio_n_samples: int = 0
-                    if session_recorder:
-                        if not result.is_listen and result.audio_data:
-                            try:
-                                ai_bytes = base64.b64decode(result.audio_data)
-                                ai_ndarray = np.frombuffer(ai_bytes, dtype=np.float32)
-                                ai_audio_rel = session_recorder.save_ai_audio(
-                                    session_recorder.turn_index,
-                                    chunk_idx,
-                                    ai_ndarray,
-                                )
-                                ai_audio_n_samples = len(ai_ndarray)
-                            except Exception as e:
-                                logger.warning(f"[SessionRecorder] failed to save AI audio: {e}")
-
-                        receive_ts_ms = (t_chunk_start - session_start_perf) * 1000
-                        session_recorder.record_chunk(
-                            index=chunk_idx,
-                            receive_ts_ms=receive_ts_ms,
-                            result_dict=result_dict,
-                            prefill_ms=prefill_ms,
-                            user_audio_rel=user_audio_rel,
-                            user_frame_rel=user_frame_rel,
-                            ai_audio_rel=ai_audio_rel,
-                            ai_audio_samples=ai_audio_n_samples,
-                        )
-                        chunk_idx += 1
-
-                    if use_deferred_finalize:
-                        # 模式 A：先发送结果，再异步 finalize（省 ~37ms wall_clock）
-                        await ws.send_json({"type": "result", **result_dict})
-
-                        finalize_done.clear()
-
-                        async def _do_finalize():
-                            try:
-                                await asyncio.to_thread(worker.duplex_finalize)
-                            except Exception as e:
-                                logger.error(f"Duplex finalize failed: {e}", exc_info=True)
-                            finally:
-                                finalize_done.set()
-
-                        asyncio.create_task(_do_finalize())
-                    else:
-                        # 模式 B：同步 finalize 后再发送（仍享受合并 feed 优化）
-                        await asyncio.to_thread(worker.duplex_finalize)
-                        await ws.send_json({"type": "result", **result_dict})
+                            force_listen=chunk_force_listen,
+                            chunk_start=t_chunk_start,
+                        ),
+                        emit=_emit_frame,
+                        use_deferred_finalize=use_deferred_finalize,
+                    )
                 except Exception as e:
                     logger.error(f"Duplex prefill/generate failed: {e}", exc_info=True)
                     await ws.send_json({"type": "error", "error": str(e)})
@@ -1801,7 +1765,7 @@ async def duplex_ws(ws: WebSocket):
 
             elif msg_type == "stop":
                 logger.info("Duplex stopped by client")
-                worker.duplex_stop()
+                await duplex_runtime.close()
                 await ws.send_json({"type": "stopped"})
                 break
 
@@ -1825,13 +1789,7 @@ async def duplex_ws(ws: WebSocket):
             pause_timeout_task.cancel()
 
         try:
-            worker.duplex_stop()
-        except Exception:
-            pass
-
-        # 释放 GPU 显存（KV cache、TTS caches 等，约 1.5 GB）
-        try:
-            await asyncio.to_thread(worker.duplex_cleanup)
+            await duplex_runtime.close()
         except Exception as e:
             logger.error(f"Duplex cleanup failed: {e}", exc_info=True)
 
