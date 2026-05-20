@@ -423,12 +423,13 @@ class CppBackendWorker:
                 #     end_of_turn = True
 
         text = "".join(texts)
+        audio_b64, _ = self._collect_wav_output_nowait(sse_text=text)
         cost_all_ms = (time.perf_counter() - t0) * 1000
 
         return DuplexGenerateResult(
             is_listen=is_listen,
             text=text,
-            audio_data=None,
+            audio_data=audio_b64,
             end_of_turn=end_of_turn,
             current_time=self._duplex_chunk_counter,
             cost_all_ms=round(cost_all_ms, 1),
