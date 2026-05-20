@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from core.runtime.duplex import DuplexInputFrame, DuplexPrepareParams
+from core.runtime.events import RuntimeControl
 from core.runtime.media import decode_audio_base64, decode_frame_base64_list
 from core.runtime.voice import DuplexVoiceRefs, resolve_duplex_voice_refs
 
@@ -101,4 +102,22 @@ def parse_audio_chunk_message(
         frame=frame,
         first_frame_bytes=decoded_frames.first_frame_bytes,
     )
+
+
+def parse_control_message(msg: Dict[str, Any]) -> Optional[RuntimeControl]:
+    """Translate legacy control messages into runtime control commands."""
+
+    msg_type = msg.get("type")
+    if msg_type == "pause":
+        return RuntimeControl(
+            type="session.pause",
+            payload={"timeout": msg.get("timeout")},
+        )
+    if msg_type == "resume":
+        return RuntimeControl(type="session.resume")
+    if msg_type == "stop":
+        return RuntimeControl(type="session.close", payload={"reason": "client_stop"})
+    if msg_type == "interrupt":
+        return RuntimeControl(type="legacy.interrupt")
+    return None
 

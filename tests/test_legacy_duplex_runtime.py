@@ -4,7 +4,11 @@ import io
 import numpy as np
 from PIL import Image
 
-from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_prepare_message
+from core.runtime.legacy_duplex import (
+    parse_audio_chunk_message,
+    parse_control_message,
+    parse_prepare_message,
+)
 
 
 def _pcm_b64(samples: int = 1600) -> str:
@@ -66,4 +70,25 @@ def test_parse_audio_chunk_message_requires_audio():
         assert "audio_base64" in str(exc)
     else:
         raise AssertionError("expected missing audio to fail")
+
+
+def test_parse_control_message_maps_legacy_controls():
+    pause = parse_control_message({"type": "pause", "timeout": 12})
+    assert pause is not None
+    assert pause.type == "session.pause"
+    assert pause.payload["timeout"] == 12
+
+    resume = parse_control_message({"type": "resume"})
+    assert resume is not None
+    assert resume.type == "session.resume"
+
+    stop = parse_control_message({"type": "stop"})
+    assert stop is not None
+    assert stop.type == "session.close"
+
+    interrupt = parse_control_message({"type": "interrupt"})
+    assert interrupt is not None
+    assert interrupt.type == "legacy.interrupt"
+
+    assert parse_control_message({"type": "audio_chunk"}) is None
 

@@ -23,10 +23,24 @@ RuntimeChannel = Literal[
     "error",
 ]
 
+RuntimeControlType = Literal[
+    "session.pause",
+    "session.resume",
+    "session.close",
+    "response.cancel",
+    "legacy.interrupt",
+]
+
 
 @dataclass
 class RuntimeEvent:
     channel: RuntimeChannel
+    payload: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RuntimeControl:
+    type: RuntimeControlType
     payload: Dict[str, Any] = field(default_factory=dict)
 
 

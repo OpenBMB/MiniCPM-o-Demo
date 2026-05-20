@@ -3,6 +3,7 @@ import asyncio
 import numpy as np
 
 from core.runtime.backends import WorkerDuplexBackendAdapter
+from core.runtime.events import RuntimeControl
 from core.runtime.duplex import DuplexInputFrame, DuplexSessionRuntime
 
 
@@ -108,6 +109,41 @@ def test_close_drains_finalize_before_cleanup():
         await runtime.close()
 
         assert worker.calls[-3:] == ["finalize", "stop", "cleanup"]
+
+    asyncio.run(_run())
+
+
+def test_pause_blocks_processing_until_resume():
+    async def _run():
+        worker = _FakeWorker()
+        runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+
+        paused = await runtime.control(RuntimeControl(type="session.pause", payload={"timeout": 60}))
+        assert paused.payload["state"] == "paused"
+
+        try:
+            await runtime.process_frame(
+                frame=DuplexInputFrame(
+                    audio_waveform=np.zeros(16000, dtype=np.float32),
+                    frame_list=[],
+                ),
+                emit=lambda _frame: asyncio.sleep(0),
+            )
+        except RuntimeError as exc:
+            assert "paused" in str(exc)
+        else:
+            raise AssertionError("expected paused runtime to reject frames")
+
+        resumed = await runtime.control(RuntimeControl(type="session.resume"))
+        assert resumed.payload["state"] == "active"
+
+        await runtime.process_frame(
+            frame=DuplexInputFrame(
+                audio_waveform=np.zeros(16000, dtype=np.float32),
+                frame_list=[],
+            ),
+            emit=lambda _frame: asyncio.sleep(0),
+        )
 
     asyncio.run(_run())
 

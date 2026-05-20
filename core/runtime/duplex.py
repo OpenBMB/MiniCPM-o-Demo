@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 import numpy as np
 
 from core.runtime.backends import DuplexBackendAdapter
-from core.runtime.events import RuntimeEvent
+from core.runtime.events import RuntimeControl, RuntimeEvent
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,7 @@ class DuplexSessionRuntime:
         self._finalize_done.set()
         self._finalize_task: Optional[asyncio.Task[None]] = None
         self._closed = False
+        self._paused = False
 
     async def configure(self, config: Optional[Dict[str, Any]]) -> None:
         await asyncio.to_thread(self.backend.configure, config)
@@ -130,6 +131,8 @@ class DuplexSessionRuntime:
 
         if self._closed:
             raise RuntimeError("duplex runtime is already closed")
+        if self._paused:
+            raise RuntimeError("duplex runtime is paused")
 
         await self.wait_for_finalize()
         chunk_t0 = frame.chunk_start if frame.chunk_start is not None else time.perf_counter()
@@ -186,6 +189,54 @@ class DuplexSessionRuntime:
             await emit(frame_result)
 
         return frame_result
+
+    async def control(self, command: RuntimeControl) -> RuntimeEvent:
+        """Apply a runtime control command and return a state event.
+
+        Control events share transport with input events, but are not model
+        observations.  They update runtime/session state.
+        """
+
+        if command.type == "session.pause":
+            await self.wait_for_finalize()
+            self._paused = True
+            return RuntimeEvent(
+                channel="session",
+                payload={"state": "paused", **command.payload},
+            )
+
+        if command.type == "session.resume":
+            self._paused = False
+            return RuntimeEvent(
+                channel="session",
+                payload={"state": "active"},
+            )
+
+        if command.type == "legacy.interrupt":
+            return RuntimeEvent(
+                channel="session",
+                payload={"state": "interrupted", "deprecated": True},
+            )
+
+        if command.type == "response.cancel":
+            await self.wait_for_finalize()
+            try:
+                await asyncio.to_thread(self.backend.stop)
+            except Exception:
+                logger.exception("Duplex response cancel failed")
+            return RuntimeEvent(
+                channel="session",
+                payload={"state": "cancelled"},
+            )
+
+        if command.type == "session.close":
+            await self.close()
+            return RuntimeEvent(
+                channel="session",
+                payload={"state": "closed", **command.payload},
+            )
+
+        raise ValueError(f"unsupported runtime control: {command.type}")
 
     async def wait_for_finalize(self) -> None:
         await self._finalize_done.wait()

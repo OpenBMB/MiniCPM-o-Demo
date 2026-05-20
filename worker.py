@@ -44,7 +44,7 @@ from core.runtime.duplex import (
     DuplexFrameResult,
 )
 from core.runtime.backends import WorkerDuplexBackendAdapter
-from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_prepare_message
+from core.runtime.legacy_duplex import parse_audio_chunk_message, parse_control_message, parse_prepare_message
 from core.runtime.manager import RuntimeManager
 from session_recorder import DuplexSessionRecorder, TurnBasedSessionRecorder, generate_session_id
 
@@ -1662,6 +1662,9 @@ async def duplex_ws(ws: WebSocket):
 
             elif msg_type == "pause":
                 logger.info("Duplex paused")
+                control = parse_control_message(msg)
+                if control is not None:
+                    await duplex_runtime.control(control)
                 worker.state.status = WorkerStatus.DUPLEX_PAUSED
                 worker.state.duplex_pause_time = time.time()
 
@@ -1675,6 +1678,9 @@ async def duplex_ws(ws: WebSocket):
 
             elif msg_type == "resume":
                 logger.info("Duplex resumed")
+                control = parse_control_message(msg)
+                if control is not None:
+                    await duplex_runtime.control(control)
                 worker.state.status = WorkerStatus.DUPLEX_ACTIVE
                 worker.state.duplex_pause_time = None
 
@@ -1688,6 +1694,9 @@ async def duplex_ws(ws: WebSocket):
             elif msg_type == "interrupt":
                 # 已弃用：interrupt 被 per-chunk force_listen 替代
                 logger.warning("Duplex interrupt message received (deprecated, use force_listen in audio_chunk)")
+                control = parse_control_message(msg)
+                if control is not None:
+                    await duplex_runtime.control(control)
                 await ws.send_json({"type": "interrupted"})
 
             elif msg_type == "stop":
