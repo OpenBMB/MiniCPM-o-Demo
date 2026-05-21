@@ -1,8 +1,9 @@
-"""Backend adapter interfaces for session runtimes.
+"""Runtime-facing backend contracts and views.
 
-SessionRuntime owns session semantics and lifecycle.  Backend adapters own how a
-particular inference implementation (PyTorch, C++, SGLang, etc.) executes those
-semantics.
+SessionRuntime owns session semantics and lifecycle. Backend implementations
+own how a concrete inference engine (PyTorch, C++, SGLang, etc.) executes those
+semantics. The view classes below expose only the narrow chat/duplex surfaces
+that each runtime needs from a full backend worker object.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ def _coerce_backend_metrics(data: Any, *, backend: Optional[str] = None) -> Dict
     return metrics
 
 
-class DuplexBackendAdapter(Protocol):
+class DuplexRuntimeBackend(Protocol):
     """Minimal backend contract required by DuplexSessionRuntime."""
 
     def configure(self, config: Optional[Dict[str, Any]]) -> None:
@@ -67,8 +68,8 @@ class DuplexBackendAdapter(Protocol):
         ...
 
 
-class WorkerDuplexBackendAdapter:
-    """Adapter over the current PyTorch duplex processor view."""
+class DuplexBackendView:
+    """Runtime duplex view over a full backend implementation."""
 
     def __init__(self, worker: Any):
         self.worker = worker
@@ -123,7 +124,7 @@ class WorkerDuplexBackendAdapter:
         return _coerce_backend_metrics(self.worker.metrics())
 
 
-class ChatBackendAdapter(Protocol):
+class ChatRuntimeBackend(Protocol):
     """Minimal backend contract required by ChatSessionRuntime."""
 
     def prefill(
@@ -168,8 +169,8 @@ class ChatBackendAdapter(Protocol):
         ...
 
 
-class WorkerChatBackendAdapter:
-    """Adapter over the current PyTorch chat processor view."""
+class ChatBackendView:
+    """Runtime chat view over a full backend implementation."""
 
     def __init__(self, worker: Any):
         self.worker = worker

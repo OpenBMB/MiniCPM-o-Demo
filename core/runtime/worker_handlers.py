@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 
-from core.runtime.backends import WorkerChatBackendAdapter, WorkerDuplexBackendAdapter
+from core.runtime.backends import ChatBackendView, DuplexBackendView
 from core.runtime.chat import ChatGenerateParams, ChatPrefillParams, ChatSessionRuntime
 from core.runtime.events import RuntimeEvent
 from core.runtime.manager import RuntimeManager
@@ -201,7 +201,7 @@ async def handle_worker_chat_runtime_ws(
     worker.state.status = busy_status
     worker.state.current_session_id = session_id
 
-    chat_runtime = ChatSessionRuntime(WorkerChatBackendAdapter(worker))
+    chat_runtime = ChatSessionRuntime(ChatBackendView(worker))
     chat_recorder: Optional[TurnBasedSessionRecorder] = None
     recording_session_id: Optional[str] = None
 
@@ -479,7 +479,7 @@ async def handle_worker_duplex_runtime_ws(
 
     runtime = runtime_manager.create_duplex(
         session_id,
-        WorkerDuplexBackendAdapter(worker),
+        DuplexBackendView(worker),
     )
     session_max_slice_nums = 1
 

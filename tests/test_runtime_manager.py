@@ -2,14 +2,14 @@ import asyncio
 
 from core.runtime.manager import RuntimeManager
 from tests.test_duplex_runtime import _FakeWorker
-from core.runtime.backends import WorkerDuplexBackendAdapter
+from core.runtime.backends import DuplexBackendView
 
 
 def test_runtime_manager_creates_and_closes_duplex_runtime():
     async def _run():
         manager = RuntimeManager()
         worker = _FakeWorker()
-        runtime = manager.create_duplex("s1", WorkerDuplexBackendAdapter(worker))
+        runtime = manager.create_duplex("s1", DuplexBackendView(worker))
 
         assert manager.get_duplex("s1") is runtime
 
@@ -23,10 +23,10 @@ def test_runtime_manager_creates_and_closes_duplex_runtime():
 def test_runtime_manager_rejects_duplicate_session_id():
     manager = RuntimeManager()
     worker = _FakeWorker()
-    manager.create_duplex("s1", WorkerDuplexBackendAdapter(worker))
+    manager.create_duplex("s1", DuplexBackendView(worker))
 
     try:
-        manager.create_duplex("s1", WorkerDuplexBackendAdapter(worker))
+        manager.create_duplex("s1", DuplexBackendView(worker))
     except RuntimeError as exc:
         assert "already exists" in str(exc)
     else:
@@ -36,7 +36,7 @@ def test_runtime_manager_rejects_duplicate_session_id():
 def test_runtime_manager_can_forget_already_closed_runtime():
     manager = RuntimeManager()
     worker = _FakeWorker()
-    manager.create_duplex("s1", WorkerDuplexBackendAdapter(worker))
+    manager.create_duplex("s1", DuplexBackendView(worker))
 
     manager.forget_duplex("s1")
 

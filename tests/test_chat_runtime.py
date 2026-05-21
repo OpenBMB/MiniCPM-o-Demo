@@ -3,7 +3,7 @@ import asyncio
 import numpy as np
 
 from core.runtime.chat import ChatGenerateParams, ChatPrefillParams, ChatSessionRuntime
-from core.runtime.backends import WorkerChatBackendAdapter
+from core.runtime.backends import ChatBackendView
 from core.schemas.streaming import StreamingChunk
 
 
@@ -61,7 +61,7 @@ class _FakeWorker:
 def test_chat_runtime_prefill_returns_kv_length():
     async def _run():
         worker = _FakeWorker()
-        runtime = ChatSessionRuntime(WorkerChatBackendAdapter(worker))
+        runtime = ChatSessionRuntime(ChatBackendView(worker))
 
         kv = await runtime.prefill(ChatPrefillParams(session_id="s1", msgs=[]))
 
@@ -74,7 +74,7 @@ def test_chat_runtime_prefill_returns_kv_length():
 def test_chat_runtime_streaming_and_non_streaming_generation():
     async def _run():
         worker = _FakeWorker()
-        runtime = ChatSessionRuntime(WorkerChatBackendAdapter(worker))
+        runtime = ChatSessionRuntime(ChatBackendView(worker))
 
         chunks = list(runtime.streaming_generate(ChatGenerateParams(session_id="s1", generate_audio=True)))
         result = await runtime.non_streaming_generate(ChatGenerateParams(

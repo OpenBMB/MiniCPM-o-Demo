@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 import numpy as np
 
-from core.runtime.backends import DuplexBackendAdapter
+from core.runtime.backends import DuplexRuntimeBackend
 from core.runtime.events import RuntimeControl, RuntimeEvent
 from core.runtime.metrics import BackendMetrics
 
@@ -93,7 +93,7 @@ class DuplexSessionRuntime:
 
     def __init__(
         self,
-        backend: DuplexBackendAdapter,
+        backend: DuplexRuntimeBackend,
         *,
         finalize_timeout_s: float = 5.0,
     ) -> None:

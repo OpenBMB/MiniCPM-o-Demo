@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from core.runtime.backends import DuplexBackendAdapter
+from core.runtime.backends import DuplexRuntimeBackend
 from core.runtime.duplex import DuplexSessionRuntime
 
 
@@ -22,7 +22,7 @@ class RuntimeManager:
     def create_duplex(
         self,
         session_id: str,
-        backend: DuplexBackendAdapter,
+        backend: DuplexRuntimeBackend,
     ) -> DuplexSessionRuntime:
         if session_id in self._duplex:
             raise RuntimeError(f"duplex runtime already exists for session: {session_id}")

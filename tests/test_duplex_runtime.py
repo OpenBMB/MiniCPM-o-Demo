@@ -2,7 +2,7 @@ import asyncio
 
 import numpy as np
 
-from core.runtime.backends import WorkerDuplexBackendAdapter
+from core.runtime.backends import DuplexBackendView
 from core.runtime.events import RuntimeControl
 from core.runtime.duplex import DuplexInputFrame, DuplexSessionRuntime
 
@@ -102,7 +102,7 @@ class _FakeWorker:
 def test_deferred_finalize_is_runtime_managed():
     async def _run():
         worker = _FakeWorker()
-        runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+        runtime = DuplexSessionRuntime(DuplexBackendView(worker))
         emitted = []
 
         await runtime.process_frame(
@@ -135,7 +135,7 @@ def test_deferred_finalize_is_runtime_managed():
 def test_close_drains_finalize_before_cleanup():
     async def _run():
         worker = _FakeWorker()
-        runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+        runtime = DuplexSessionRuntime(DuplexBackendView(worker))
 
         await runtime.process_frame(
             frame=DuplexInputFrame(
@@ -157,7 +157,7 @@ def test_close_drains_finalize_before_cleanup():
 def test_pause_blocks_processing_until_resume():
     async def _run():
         worker = _FakeWorker()
-        runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+        runtime = DuplexSessionRuntime(DuplexBackendView(worker))
 
         paused = await runtime.control(RuntimeControl(type="session.pause", payload={"timeout": 60}))
         assert paused.payload["state"] == "paused"
@@ -192,7 +192,7 @@ def test_pause_blocks_processing_until_resume():
 def test_runtime_machine_owns_frame_processing_loop():
     async def _run():
         worker = _FakeWorker()
-        runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+        runtime = DuplexSessionRuntime(DuplexBackendView(worker))
         emitted = []
         emitted_event = asyncio.Event()
 
@@ -222,7 +222,7 @@ def test_runtime_machine_owns_frame_processing_loop():
 def test_runtime_machine_ignores_frames_while_paused():
     async def _run():
         worker = _FakeWorker()
-        runtime = DuplexSessionRuntime(WorkerDuplexBackendAdapter(worker))
+        runtime = DuplexSessionRuntime(DuplexBackendView(worker))
         emitted = []
         emitted_event = asyncio.Event()
 

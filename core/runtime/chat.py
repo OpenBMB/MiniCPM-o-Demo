@@ -8,7 +8,7 @@ from typing import Any, Iterator, Optional
 
 import numpy as np
 
-from core.runtime.backends import ChatBackendAdapter
+from core.runtime.backends import ChatRuntimeBackend
 from core.schemas.streaming import StreamingChunk
 
 
@@ -36,7 +36,7 @@ class ChatGenerateParams:
 class ChatSessionRuntime:
     """Runtime wrapper for a single turn-based chat request."""
 
-    def __init__(self, backend: ChatBackendAdapter):
+    def __init__(self, backend: ChatRuntimeBackend):
         self.backend = backend
 
     async def prefill(self, params: ChatPrefillParams) -> int:
