@@ -1,26 +1,26 @@
-"""Factory for concrete worker backend implementations."""
+"""Factory for concrete backend implementations."""
 
 from __future__ import annotations
 
 from typing import Any, Dict
 
 
-def create_worker(config: Dict[str, Any]) -> Any:
-    """Create the configured backend worker without leaking choices into host code."""
+def create_backend(config: Dict[str, Any]) -> Any:
+    """Create the configured backend without leaking the concrete choice into host code."""
 
     if config.get("backend") == "cpp":
-        from core.processors.cpp_backend import CppBackendWorker
+        from core.processors.cpp_backend import CppBackend
 
-        return CppBackendWorker(
+        return CppBackend(
             gpu_id=config["gpu_id"],
             ref_audio_path=config.get("ref_audio_path"),
             duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
             **config.get("cpp_backend", {}),
         )
 
-    from core.processors.pytorch_backend import MiniCPMOWorker
+    from core.processors.pytorch_backend import PyTorchBackend
 
-    return MiniCPMOWorker(
+    return PyTorchBackend(
         model_path=config["model_path"],
         gpu_id=config["gpu_id"],
         pt_path=config.get("pt_path"),

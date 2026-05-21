@@ -1,4 +1,4 @@
-"""PyTorch MiniCPM-o backend implementation for worker runtimes."""
+"""PyTorch MiniCPM-o backend implementation for session runtimes."""
 
 from __future__ import annotations
 
@@ -22,10 +22,8 @@ from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingRe
 logger = logging.getLogger("pytorch_backend")
 
 
-# ============ Worker 主类 ============
-
-class MiniCPMOWorker:
-    """MiniCPMO45 推理 Worker
+class PyTorchBackend:
+    """MiniCPMO45 PyTorch inference backend.
 
     持有一个 UnifiedProcessor 实例，提供三种推理模式。
     """

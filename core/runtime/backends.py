@@ -3,7 +3,7 @@
 SessionRuntime owns session semantics and lifecycle. Backend implementations
 own how a concrete inference engine (PyTorch, C++, SGLang, etc.) executes those
 semantics. The view classes below expose only the narrow chat/duplex surfaces
-that each runtime needs from a full backend worker object.
+that each runtime needs from a full backend object.
 """
 
 from __future__ import annotations
@@ -71,13 +71,13 @@ class DuplexRuntimeBackend(Protocol):
 class DuplexBackendView:
     """Runtime duplex view over a full backend implementation."""
 
-    def __init__(self, worker: Any):
-        self.worker = worker
+    def __init__(self, backend: Any):
+        self.backend = backend
         self._config: Optional[Dict[str, Any]] = None
 
     def configure(self, config: Optional[Dict[str, Any]]) -> None:
         self._config = config
-        self.worker.set_duplex_config(config)
+        self.backend.set_duplex_config(config)
 
     def prepare(
         self,
@@ -87,7 +87,7 @@ class DuplexBackendView:
         prompt_wav_path: Optional[str],
     ) -> str:
         cfg = self._config or {}
-        return self.worker.duplex_prepare(
+        return self.backend.duplex_prepare(
             system_prompt_text=system_prompt_text,
             ref_audio_path=ref_audio_path,
             prompt_wav_path=prompt_wav_path,
@@ -102,26 +102,26 @@ class DuplexBackendView:
         frame_list: Optional[list],
         max_slice_nums: int,
     ) -> Dict[str, Any]:
-        return self.worker.duplex_prefill(
+        return self.backend.duplex_prefill(
             audio_waveform=audio_waveform,
             frame_list=frame_list,
             max_slice_nums=max_slice_nums,
         )
 
     def generate(self, *, force_listen: bool) -> Any:
-        return self.worker.duplex_generate(force_listen=force_listen)
+        return self.backend.duplex_generate(force_listen=force_listen)
 
     def finalize(self) -> None:
-        self.worker.duplex_finalize()
+        self.backend.duplex_finalize()
 
     def stop(self) -> None:
-        self.worker.duplex_stop()
+        self.backend.duplex_stop()
 
     def cleanup(self) -> None:
-        self.worker.duplex_cleanup()
+        self.backend.duplex_cleanup()
 
     def metrics(self) -> Dict[str, Any]:
-        return _coerce_backend_metrics(self.worker.metrics())
+        return _coerce_backend_metrics(self.backend.metrics())
 
 
 class ChatRuntimeBackend(Protocol):
@@ -172,8 +172,8 @@ class ChatRuntimeBackend(Protocol):
 class ChatBackendView:
     """Runtime chat view over a full backend implementation."""
 
-    def __init__(self, worker: Any):
-        self.worker = worker
+    def __init__(self, backend: Any):
+        self.backend = backend
 
     def prefill(
         self,
@@ -185,7 +185,7 @@ class ChatBackendView:
         use_tts_template: bool,
         enable_thinking: bool,
     ) -> str:
-        return self.worker.chat_prefill(
+        return self.backend.chat_prefill(
             session_id=session_id,
             msgs=msgs,
             omni_mode=omni_mode,
@@ -195,10 +195,10 @@ class ChatBackendView:
         )
 
     def metrics(self) -> Dict[str, Any]:
-        return _coerce_backend_metrics(self.worker.metrics())
+        return _coerce_backend_metrics(self.backend.metrics())
 
     def init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
-        self.worker.chat_init_tts(ref_audio)
+        self.backend.chat_init_tts(ref_audio)
 
     def streaming_generate(
         self,
@@ -208,7 +208,7 @@ class ChatBackendView:
         max_new_tokens: int,
         length_penalty: float,
     ) -> Iterator[StreamingChunk]:
-        yield from self.worker.chat_streaming_generate(
+        yield from self.backend.chat_streaming_generate(
             session_id=session_id,
             generate_audio=generate_audio,
             max_new_tokens=max_new_tokens,
@@ -226,7 +226,7 @@ class ChatBackendView:
         tts_ref_audio: Optional[np.ndarray],
         length_penalty: float,
     ) -> Any:
-        return self.worker.chat_non_streaming_generate(
+        return self.backend.chat_non_streaming_generate(
             session_id=session_id,
             max_new_tokens=max_new_tokens,
             generate_audio=generate_audio,

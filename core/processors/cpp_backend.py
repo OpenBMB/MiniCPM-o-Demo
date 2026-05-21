@@ -1,6 +1,6 @@
 """C++ llama.cpp-omni 推理后端适配层
 
-通过 HTTP 调用 C++ llama-server 的 omni 接口，实现与 MiniCPMOWorker 相同的方法签名，
+通过 HTTP 调用 C++ llama-server 的 omni 接口，实现与 PyTorchBackend 相同的方法签名，
 作为 PyTorch 后端的 drop-in 替换。
 
 生命周期映射：
@@ -41,7 +41,7 @@ _AUDIO_OUTPUT_SR = 24000
 
 
 class CppBackendState:
-    """Small worker-state stand-in that avoids importing worker.py."""
+    """Small runtime-state stand-in that avoids importing worker.py."""
 
     def __init__(self) -> None:
         self.status = "loading"
@@ -212,10 +212,10 @@ def _sampling_from_generation(gen: Any) -> Dict[str, Any]:
     return out
 
 
-class CppBackendWorker:
+class CppBackend:
     """C++ llama-server 推理后端
 
-    实现与 MiniCPMOWorker 相同的方法签名，内部通过 HTTP 调用 C++ 服务。
+    实现与 PyTorchBackend 相同的方法签名，内部通过 HTTP 调用 C++ 服务。
     """
 
     def __init__(

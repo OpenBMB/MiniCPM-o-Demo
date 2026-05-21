@@ -30,7 +30,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from core.internal.worker_state import WorkerStatus
-from core.processors.worker_factory import create_worker
+from core.processors.backend_factory import create_backend
 from core.schemas.common import Message, Role, TextContent, AudioContent, ContentItem
 from core.schemas.chat import ChatRequest, ChatResponse
 from core.schemas.streaming import StreamingRequest
@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
     global worker
     config = WORKER_CONFIG
 
-    worker = create_worker(config)
+    worker = create_backend(config)
 
     # 模型加载是同步操作（~15s），在线程中执行避免阻塞
     await asyncio.to_thread(worker.load_model)
