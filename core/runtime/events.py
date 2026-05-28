@@ -18,8 +18,10 @@ RuntimeChannel = Literal[
     "output.text",
     "output.audio",
     "output.duplex_result",
+    "response",
     "model.state",
     "metrics",
+    "backend",
     "error",
 ]
 
@@ -47,4 +49,3 @@ class RuntimeControl:
 class OutputSink(Protocol):
     async def emit(self, event: RuntimeEvent) -> None:
         ...
-
