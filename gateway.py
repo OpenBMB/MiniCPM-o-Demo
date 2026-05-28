@@ -56,13 +56,6 @@ from gateway_modules.app_registry import (
     AppsPublicResponse,
     AppsAdminResponse,
 )
-from gateway_modules.runtime_protocol import (
-    chat_client_to_worker_runtime,
-    realtime_client_to_worker_runtime,
-    worker_runtime_to_response_api,
-    worker_runtime_to_realtime,
-)
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -537,117 +530,6 @@ async def _api_worker_passthrough_ws(
             await ws.close()
         except Exception:
             pass
-
-
-async def _chat_runtime_proxy_ws(
-    ws: WebSocket,
-    *,
-    worker_response_to_client,
-    source_channel: str,
-    source_mode: str,
-):
-    """Proxy one public turn-based WebSocket request to worker chat runtime."""
-
-    if not app_registry.is_enabled("turnbased"):
-        await ws.close(code=1008, reason="Turn-based Chat is currently disabled")
-        return
-    if worker_pool is None:
-        await ws.close(code=1013, reason="Service not ready")
-        return
-
-    await ws.accept()
-
-    assigned_worker: Optional[WorkerConnection] = None
-    worker_ws = None
-    task_start: Optional[datetime] = None
-
-    try:
-        # 收到前端发来的请求消息
-        raw = await ws.receive_text()
-
-        # 排队获取 Worker
-        try:
-            ticket, future = worker_pool.enqueue("chat")
-        except WorkerPool.QueueFullError:
-            await ws.send_json({"type": "error", "error": "Queue full"})
-            return
-
-        # 等待 Worker 分配
-        while not future.done():
-            try:
-                assigned_worker = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
-                break
-            except asyncio.TimeoutError:
-                continue
-            except asyncio.CancelledError:
-                await ws.send_json({"type": "error", "error": "Cancelled"})
-                return
-        if assigned_worker is None and future.done():
-            assigned_worker = future.result()
-
-        if assigned_worker is None:
-            await ws.send_json({"type": "error", "error": "No worker available"})
-            return
-
-        assigned_worker.mark_busy(GatewayWorkerStatus.BUSY_CHAT, "chat_ws")
-        task_start = datetime.now()
-
-        # 连接 Worker runtime WebSocket
-        import websockets
-        worker_session_id = f"chatgw_{int(datetime.now().timestamp()*1000)}"
-        identity_qs = _worker_identity_query(
-            ws,
-            session_id=worker_session_id,
-            source_channel=source_channel,
-            source_mode=source_mode,
-        )
-        ws_url = f"ws://{assigned_worker.host}:{assigned_worker.port}/v1/worker/sessions/{worker_session_id}/chat?{identity_qs}"
-        # max_size on the client side caps how large an *incoming* frame can
-        # be from the worker; chat chunks are small but we bump it for
-        # symmetry with the gateway uvicorn config.
-        worker_ws = await websockets.connect(ws_url, max_size=128 * 1024 * 1024)
-
-        # 转发请求
-        await worker_ws.send(json.dumps(chat_client_to_worker_runtime(json.loads(raw))))
-
-        # 将 Worker runtime 响应翻译回页面现有协议
-        async for msg_data in worker_ws:
-            await ws.send_json(worker_response_to_client(json.loads(msg_data)))
-
-    except WebSocketDisconnect:
-        logger.info("Chat WS proxy: client disconnected")
-    except Exception as e:
-        logger.error(f"Chat WS proxy error: {e}", exc_info=True)
-        try:
-            await ws.send_json({"type": "error", "error": str(e)})
-        except Exception:
-            pass
-    finally:
-        if worker_ws:
-            try:
-                await worker_ws.close()
-            except Exception:
-                pass
-        if assigned_worker and task_start:
-            duration = (datetime.now() - task_start).total_seconds()
-            worker_pool.release_worker(assigned_worker, request_type="chat", duration_s=duration)
-        try:
-            await ws.close()
-        except Exception:
-            pass
-
-
-@app.websocket("/v1/responses")
-async def responses_ws_proxy(ws: WebSocket):
-    """Turn-based response API WebSocket proxy."""
-
-    await _chat_runtime_proxy_ws(
-        ws,
-        worker_response_to_client=worker_runtime_to_response_api,
-        source_channel="responses_api",
-        source_mode="turn",
-    )
-
 
 # ============ Half-Duplex WebSocket（独占 Worker，FIFO 排队 + 代理到 Worker） ============
 

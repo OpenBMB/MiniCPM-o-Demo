@@ -4997,7 +4997,7 @@ function App() {
 
     const wsProto =
       window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = appendClientIdentity(`${wsProto}//${window.location.host}/v1/responses`)
+    const wsUrl = appendClientIdentity(`${wsProto}//${window.location.host}/v1/realtime?mode=chat`)
 
     // Auto-retry semantics: while no streaming data has been received yet,
     // a connection-level error / unexpected close is treated as a transient
@@ -5143,9 +5143,7 @@ function App() {
       }
     }
 
-    const requestBody = JSON.stringify(
-      buildChatRequestBody(nextMessages, systemMessage, true),
-    )
+    const requestPayload = buildChatRequestBody(nextMessages, systemMessage, true)
 
     const runAttempt = (attempt: number) => {
       if (finished || stoppedByUser) {
@@ -5165,20 +5163,8 @@ function App() {
       currentWs = ws
       streamingWsRef.current = ws
 
-      ws.onopen = () => {
-        try {
-          ws.send(requestBody)
-        } catch (error) {
-          finalize(null, {
-            errorMessage: i18n.sendFailed(getErrorMessage(error)),
-            cutPlayback: true,
-          })
-          try {
-            ws.close()
-          } catch {
-            /* ignore */
-          }
-        }
+      const sendWs = (payload: unknown) => {
+        ws.send(JSON.stringify(payload))
       }
 
       ws.onmessage = (event) => {
@@ -5190,7 +5176,8 @@ function App() {
           audio?: string
           audio_sample_rate?: number
           recording_session_id?: string | null
-          error?: string
+          error?: string | { message?: string }
+          kind?: string
         }
 
         try {
@@ -5199,41 +5186,16 @@ function App() {
           return
         }
 
-        if (msg.type === 'prefill_done' || msg.type === 'response.prefill.done') {
-          // prefill_done is a backend-side acknowledgement; treat it as
-          // proof that the connection is alive, so subsequent failures
-          // can no longer be silently retried (the model has started
-          // doing work for this request).
-          receivedAnyData = true
-          return
-        }
-
-        if (
-          msg.type === 'chunk' ||
-          msg.type === 'response.output_text.delta' ||
-          msg.type === 'response.output_audio.delta'
-        ) {
-          receivedAnyData = true
-          const textDelta = msg.text_delta || msg.text || ''
-          if (textDelta) {
-            fullText += textDelta
-            if (isStillActive()) {
-              setPendingReply({
-                id: pendingId,
-                role: 'assistant',
-                kind: 'pending',
-                text: fullText,
-              })
-            }
-          }
-
-          const audioData = msg.audio_data || msg.audio
-          if (audioData && player) {
-            if (typeof msg.audio_sample_rate === 'number') {
-              lastSampleRate = msg.audio_sample_rate
-            }
+        if (msg.type === 'session.queue_done') {
+          try {
+            sendWs({ type: 'session.init', payload: {} })
+          } catch (error) {
+            finalize(null, {
+              errorMessage: i18n.sendFailed(getErrorMessage(error)),
+              cutPlayback: true,
+            })
             try {
-              player.pushBase64(audioData)
+              ws.close()
             } catch {
               /* ignore */
             }
@@ -5241,8 +5203,30 @@ function App() {
           return
         }
 
-        if (msg.type === 'done' || msg.type === 'response.completed') {
+        if (msg.type === 'session.created') {
+          try {
+            sendWs({ type: 'input.append', input: requestPayload })
+          } catch (error) {
+            finalize(null, {
+              errorMessage: i18n.sendFailed(getErrorMessage(error)),
+              cutPlayback: true,
+            })
+            try {
+              ws.close()
+            } catch {
+              /* ignore */
+            }
+          }
+          return
+        }
+
+        if (msg.type === 'response.done') {
+          // response.done is a backend-side acknowledgement; treat it as
+          // proof that the connection is alive, so subsequent failures
+          // can no longer be silently retried (the model has started
+          // doing work for this request).
           receivedAnyData = true
+
           const finalText = (fullText || msg.text || '').trim() || i18n.emptyReply
           const recordingSessionId = msg.recording_session_id ?? null
 
@@ -5263,9 +5247,40 @@ function App() {
           )
 
           try {
-            ws.close()
+            sendWs({ type: 'session.close', reason: 'turn_done' })
           } catch {
-            /* ignore */
+            try {
+              ws.close()
+            } catch {
+              /* ignore */
+            }
+          }
+          return
+        }
+
+        if (msg.type === 'response.output.delta') {
+          receivedAnyData = true
+          const textDelta = msg.kind === 'text' ? (msg.text || '') : ''
+          if (textDelta) {
+            fullText += textDelta
+            if (isStillActive()) {
+              setPendingReply({
+                id: pendingId,
+                role: 'assistant',
+                kind: 'pending',
+                text: fullText,
+              })
+            }
+          }
+
+          const audioData = msg.kind === 'audio' ? msg.audio : null
+          if (audioData && player) {
+            lastSampleRate = 24000
+            try {
+              player.pushBase64(audioData)
+            } catch {
+              /* ignore */
+            }
           }
           return
         }
@@ -5273,8 +5288,11 @@ function App() {
         if (msg.type === 'error') {
           // Backend-reported error: don't retry, surface immediately.
           receivedAnyData = true
+          const errorText = typeof msg.error === 'string'
+            ? msg.error
+            : msg.error?.message || 'unknown error'
           finalize(null, {
-            errorMessage: i18n.requestFailedDetail(msg.error || 'unknown error'),
+            errorMessage: i18n.requestFailedDetail(errorText),
             cutPlayback: true,
           })
           try {

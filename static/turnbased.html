@@ -2490,7 +2490,58 @@ function _buildChatWSBody(maxTokens, streaming) {
     return { body, enableTts };
 }
 
-// ============ Chat 模式（非流式，走 /v1/responses） ============
+function _openRealtimeChatWS(body, handlers) {
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const chatWsUrl = `${wsProto}://${window.location.host}/v1/realtime?mode=chat`;
+    const ws = new WebSocket(window.ClientIdentity ? window.ClientIdentity.appendToUrl(chatWsUrl) : chatWsUrl);
+    let initSent = false;
+    let inputSent = false;
+    let closeSent = false;
+
+    const sendInit = () => {
+        if (initSent || ws.readyState !== WebSocket.OPEN) return;
+        initSent = true;
+        ws.send(JSON.stringify({ type: 'session.init', payload: {} }));
+    };
+
+    const sendInput = () => {
+        if (inputSent || ws.readyState !== WebSocket.OPEN) return;
+        inputSent = true;
+        ws.send(JSON.stringify({ type: 'input.append', input: body }));
+    };
+
+    const sendClose = (reason = 'turn_done') => {
+        if (closeSent || ws.readyState !== WebSocket.OPEN) return;
+        closeSent = true;
+        ws.send(JSON.stringify({ type: 'session.close', reason }));
+    };
+
+    ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'session.queue_done') {
+            sendInit();
+        } else if (msg.type === 'session.created') {
+            sendInput();
+        } else if (msg.type === 'response.output.delta') {
+            handlers.onDelta?.(msg);
+        } else if (msg.type === 'response.done') {
+            handlers.onDone?.(msg);
+            sendClose();
+        } else if (msg.type === 'session.closed') {
+            handlers.onClosed?.(msg);
+            ws.close();
+        } else if (msg.type === 'error') {
+            handlers.onError?.(msg.error?.message || msg.error || 'Unknown error');
+            sendClose('error');
+        }
+    };
+
+    ws.onerror = () => handlers.onError?.('WebSocket error');
+    ws.onclose = () => handlers.onClosed?.();
+    return ws;
+}
+
+// ============ Chat 模式（非流式，走 /v1/realtime?mode=chat） ============
 async function sendChatMessage(maxTokens) {
     setGenerating(true);
     state.generationPhase = 'generating';
@@ -2502,21 +2553,12 @@ async function sendChatMessage(maxTokens) {
     try {
         const { body, enableTts } = _buildChatWSBody(maxTokens, false);
 
-        const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-        const chatWsUrl = `${wsProto}://${window.location.host}/v1/responses`;
-        const ws = new WebSocket(window.ClientIdentity ? window.ClientIdentity.appendToUrl(chatWsUrl) : chatWsUrl);
-
-        ws.onopen = () => ws.send(JSON.stringify(body));
-
-        ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-
-            if (msg.type === 'prefill_done' || msg.type === 'response.prefill.done') {
-                // prefill 完成，等待 generate 结果
-            } else if (msg.type === 'done' || msg.type === 'response.completed') {
+        _openRealtimeChatWS(body, {
+            onDone: (msg) => {
                 const elapsed = Date.now() - startTime;
-                state.messages.push({ role: 'assistant', content: msg.text, displayText: msg.text });
-                updateLastAssistantMessage(msg.text);
+                const text = msg.text || '';
+                state.messages.push({ role: 'assistant', content: text, displayText: text });
+                updateLastAssistantMessage(text);
                 updateLastAssistantMeta({
                     mode: 'chat',
                     totalMs: elapsed,
@@ -2536,17 +2578,14 @@ async function sendChatMessage(maxTokens) {
                 if (msg.recording_session_id && typeof _saveShareUI !== 'undefined') {
                     _saveShareUI.setSessionId(msg.recording_session_id);
                 }
-                ws.close();
                 setGenerating(false);
-            } else if (msg.type === 'error') {
-                updateLastAssistantMessage(`Error: ${msg.error}`, 'error');
-                ws.close();
+            },
+            onError: (message) => {
+                updateLastAssistantMessage(`Error: ${message}`, 'error');
                 setGenerating(false);
-            }
-        };
-
-        ws.onerror = () => { updateLastAssistantMessage('WebSocket error', 'error'); setGenerating(false); };
-        ws.onclose = () => { if (state.isGenerating) setGenerating(false); };
+            },
+            onClosed: () => { if (state.isGenerating) setGenerating(false); },
+        });
 
     } catch (e) {
         updateLastAssistantMessage(`Connection error: ${e.message}`, 'error');
@@ -3071,7 +3110,7 @@ function appendStreamingAudioControl(player) {
     body.appendChild(wrap);
 }
 
-// ============ Streaming 模式（走 /v1/responses） ============
+// ============ Streaming 模式（走 /v1/realtime?mode=chat） ============
 async function sendStreamingMessage(maxTokens) {
     setGenerating(true);
     state.generationPhase = 'generating';
@@ -3092,25 +3131,15 @@ async function sendStreamingMessage(maxTokens) {
     }
 
     try {
-        const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-        const chatWsUrl = `${wsProto}://${window.location.host}/v1/responses`;
-        const ws = new WebSocket(window.ClientIdentity ? window.ClientIdentity.appendToUrl(chatWsUrl) : chatWsUrl);
-
-        ws.onopen = () => ws.send(JSON.stringify(body));
-
-        ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-
-            if (msg.type === 'prefill_done' || msg.type === 'response.prefill.done') {
-                // prefill 完成
-            } else if (msg.type === 'chunk' || msg.type === 'response.output_text.delta' || msg.type === 'response.output_audio.delta') {
+        _openRealtimeChatWS(body, {
+            onDelta: (msg) => {
                 if (ttfsTime === null) ttfsTime = Date.now() - startTime;
-                const textDelta = msg.text_delta || msg.text || '';
+                const textDelta = msg.kind === 'text' ? (msg.text || '') : '';
                 if (textDelta) {
                     fullText += textDelta;
                     updateLastAssistantMessage(fullText);
                 }
-                const audioData = msg.audio_data || msg.audio;
+                const audioData = msg.kind === 'audio' ? msg.audio : null;
                 if (audioData && streamAudioPlayer) {
                     streamAudioPlayer.pushChunk(audioData, null);
                     if (!controlCreated) {
@@ -3119,7 +3148,8 @@ async function sendStreamingMessage(maxTokens) {
                         controlCreated = true;
                     }
                 }
-            } else if (msg.type === 'done' || msg.type === 'response.completed') {
+            },
+            onDone: (msg) => {
                 const elapsed = Date.now() - startTime;
                 state.messages.push({ role: 'assistant', content: fullText || msg.text, displayText: fullText || msg.text });
                 if (fullText) {
@@ -3142,17 +3172,14 @@ async function sendStreamingMessage(maxTokens) {
                 if (msg.recording_session_id && typeof _saveShareUI !== 'undefined') {
                     _saveShareUI.setSessionId(msg.recording_session_id);
                 }
-                ws.close();
                 setGenerating(false);
-            } else if (msg.type === 'error') {
-                updateLastAssistantMessage(`Error: ${msg.error}`, 'error');
-                ws.close();
+            },
+            onError: (message) => {
+                updateLastAssistantMessage(`Error: ${message}`, 'error');
                 setGenerating(false);
-            }
-        };
-
-        ws.onerror = () => { updateLastAssistantMessage('WebSocket error', 'error'); setGenerating(false); };
-        ws.onclose = () => { if (state.isGenerating) setGenerating(false); };
+            },
+            onClosed: () => { if (state.isGenerating) setGenerating(false); },
+        });
 
     } catch (e) {
         updateLastAssistantMessage(`Connection error: ${e.message}`, 'error');
