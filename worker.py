@@ -29,7 +29,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from core.internal.worker_state import WorkerStatus
+from core.internal.worker_state import WorkerState, WorkerStatus
 from core.processors.backend_factory import create_backend
 from core.schemas.common import Message, Role, TextContent, AudioContent, ContentItem
 from core.schemas.chat import ChatRequest, ChatResponse
@@ -40,6 +40,7 @@ from core.runtime.worker_handlers import (
     handle_worker_chat_runtime_ws,
     handle_worker_duplex_runtime_ws,
 )
+from core.runtime.session import BackendRuntimeSession
 from session_recorder import TurnBasedSessionRecorder, generate_session_id
 
 logging.basicConfig(
@@ -72,16 +73,101 @@ runtime_manager = RuntimeManager()
 WORKER_CONFIG: Dict[str, Any] = {}
 
 
+class RemoteBackendWorker:
+    """Worker host used when inference lives in backend_server.py."""
+
+    def __init__(self, *, backend_server_url: str, gpu_id: int = 0) -> None:
+        self.backend_server_url = backend_server_url
+        self.gpu_id = gpu_id
+        self.processor = None
+        self.state = WorkerState(status=WorkerStatus.IDLE)
+
+    def metrics(self) -> Dict[str, Any]:
+        return {"backend": "backend_server", "backend_server_url": self.backend_server_url}
+
+    def shutdown(self) -> None:
+        return None
+
+
+def _backend_server_url() -> Optional[str]:
+    value = WORKER_CONFIG.get("backend_server_url")
+    return str(value).rstrip("/") if value else None
+
+
+def _message_payload(message: Dict[str, Any]) -> Dict[str, Any]:
+    payload = message.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    return message
+
+
+def _input_payload(message: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _message_payload(message)
+    for key in ("input", "data"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            return value
+    return payload
+
+
+def _init_payload(message: Dict[str, Any]) -> Dict[str, Any]:
+    for key in ("payload", "params", "session"):
+        value = message.get(key)
+        if isinstance(value, dict):
+            return value
+    return message
+
+
+def _event_payload(event: Any) -> Dict[str, Any]:
+    payload = dict(getattr(event, "payload", {}) or {})
+    raw_event = payload.get("event")
+    if isinstance(raw_event, dict):
+        return raw_event
+    return payload
+
+
+def _legacy_realtime_init(message: Dict[str, Any]) -> Dict[str, Any]:
+    session_cfg = message.get("session") or {}
+    config = dict(session_cfg.get("voice_config") or {})
+    if session_cfg.get("max_slice_nums") is not None:
+        config["max_slice_nums"] = session_cfg.get("max_slice_nums")
+    return {
+        "system_prompt": session_cfg.get("instructions", "You are a helpful assistant."),
+        "config": config or None,
+        "voice": {
+            "ref_audio_base64": session_cfg.get("ref_audio"),
+            "tts_ref_audio_base64": session_cfg.get("tts_ref_audio"),
+        },
+    }
+
+
+def _legacy_realtime_input(message: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "audio": message.get("audio", ""),
+        "video_frames": message.get("video_frames"),
+        "force_listen": message.get("force_listen", False),
+        "max_slice_nums": message.get("max_slice_nums"),
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时加载模型"""
     global worker
     config = WORKER_CONFIG
 
-    worker = create_backend(config)
+    backend_server_url = _backend_server_url()
+    if backend_server_url:
+        worker = RemoteBackendWorker(
+            backend_server_url=backend_server_url,
+            gpu_id=int(config.get("gpu_id", 0) or 0),
+        )
+        logger.info("Worker running as backend-server runtime host: %s", backend_server_url)
+    else:
+        worker = create_backend(config)
 
-    # 模型加载是同步操作（~15s），在线程中执行避免阻塞
-    await asyncio.to_thread(worker.load_model)
+        # 模型加载是同步操作（~15s），在线程中执行避免阻塞
+        await asyncio.to_thread(worker.load_model)
 
     try:
         yield
@@ -115,7 +201,8 @@ async def health():
 
     worker_metrics = worker.metrics()
     kv_len = int(worker_metrics.get("kv_cache_length", 0) or 0)
-    model_loaded = worker.processor is not None or bool(getattr(worker.state, "is_idle", False))
+    remote_backend_url = _backend_server_url()
+    model_loaded = bool(remote_backend_url) or worker.processor is not None or bool(getattr(worker.state, "is_idle", False))
     return WorkerHealthResponse(
         status="healthy" if model_loaded else "error",
         worker_status=worker.state.status,
@@ -225,9 +312,151 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _handle_remote_backend_runtime_ws(
+    ws: WebSocket,
+    *,
+    session_id: str,
+    mode: str,
+    active_status: WorkerStatus,
+    idle_status: WorkerStatus,
+) -> None:
+    """Bridge worker runtime WebSocket to backend_server.py."""
+
+    backend_url = _backend_server_url()
+    if backend_url is None:
+        await ws.close(code=1013, reason="Backend server URL is not configured")
+        return
+    if worker is None:
+        await ws.close(code=1013, reason="Worker not ready")
+        return
+    if not worker.state.is_idle:
+        await ws.close(code=1013, reason=f"Worker busy: {worker.state.status.value}")
+        return
+
+    await ws.accept()
+    worker.state.status = active_status
+    worker.state.current_session_id = session_id
+    runtime = BackendRuntimeSession(
+        backend_base_url=backend_url,
+        mode=mode,
+        session_id=session_id,
+    )
+    backend_closed = False
+
+    async def _send_runtime_event(event: Any) -> Dict[str, Any]:
+        payload = _event_payload(event)
+        await ws.send_json(payload)
+        return payload
+
+    try:
+        first = json.loads(await ws.receive_text())
+        first_type = str(first.get("type") or "")
+        pending_input: Optional[Dict[str, Any]] = None
+
+        if first_type in {"session.init", "init", "backend.init"}:
+            init_params = _init_payload(first)
+        elif first_type == "session.update" and mode == "full_duplex":
+            init_params = _legacy_realtime_init(first)
+        elif first_type in {"chat.request", "input.append", "push", "input", "backend.push"}:
+            init_params = {"mode": mode, "session_id": session_id}
+            pending_input = _input_payload(first)
+        else:
+            raise RuntimeError(f"first message must initialize or push input, got: {first_type}")
+
+        init_params = dict(init_params)
+        init_params.setdefault("mode", mode)
+        init_params.setdefault("session_id", session_id)
+        await _send_runtime_event(await runtime.init(init_params))
+
+        if pending_input is not None:
+            await runtime.push(pending_input)
+
+        async def client_to_backend() -> None:
+            nonlocal backend_closed
+            async for raw in ws.iter_text():
+                msg = json.loads(raw)
+                msg_type = str(msg.get("type") or "")
+
+                if msg_type in {"input.append", "push", "input", "backend.push", "chat.request"}:
+                    await runtime.push(_input_payload(msg))
+                    continue
+
+                if msg_type == "input_audio_buffer.append" and mode == "full_duplex":
+                    await runtime.push(_legacy_realtime_input(msg))
+                    continue
+
+                if msg_type in {"session.close", "close", "backend.close"}:
+                    close_event = await runtime.close(reason=str(msg.get("reason") or "client_closed"))
+                    backend_closed = True
+                    close_payload = _event_payload(close_event)
+                    if close_payload.get("type") != "session.closed":
+                        close_payload = {
+                            "type": "session.closed",
+                            "session_id": session_id,
+                            "reason": msg.get("reason", "client_closed"),
+                        }
+                    await ws.send_json(close_payload)
+                    await ws.close(code=1000, reason="client_closed")
+                    return
+
+                raise RuntimeError(f"unsupported runtime message type: {msg_type}")
+
+        async def backend_to_client() -> None:
+            nonlocal backend_closed
+            while not backend_closed:
+                event = await runtime.pull()
+                payload = await _send_runtime_event(event)
+                if payload.get("type") == "session.closed":
+                    backend_closed = True
+                    return
+
+        done, pending = await asyncio.wait(
+            [
+                asyncio.create_task(client_to_backend()),
+                asyncio.create_task(backend_to_client()),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        for task in done:
+            task.result()
+
+    except WebSocketDisconnect:
+        logger.info("Remote backend runtime WebSocket disconnected: session=%s", session_id)
+    except Exception as exc:
+        logger.error("Remote backend runtime failed: session=%s error=%s", session_id, exc, exc_info=True)
+        try:
+            await ws.send_json({"type": "session.closed", "session_id": session_id, "reason": "backend_error"})
+        except Exception:
+            pass
+    finally:
+        try:
+            if not backend_closed:
+                await runtime.close(reason="worker_disconnected")
+        except Exception:
+            logger.exception("Remote backend runtime cleanup failed: session=%s", session_id)
+        worker.state.status = idle_status
+        worker.state.current_session_id = None
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
 @app.websocket("/v1/worker/sessions/{session_id}/chat")
 async def worker_chat_runtime_ws(ws: WebSocket, session_id: str):
     """Worker-internal turn-based chat runtime protocol."""
+    if _backend_server_url():
+        await _handle_remote_backend_runtime_ws(
+            ws,
+            session_id=_sanitize_session_id(session_id),
+            mode="turn_based",
+            active_status=WorkerStatus.BUSY_CHAT,
+            idle_status=WorkerStatus.IDLE,
+        )
+        return
+
     await handle_worker_chat_runtime_ws(
         ws,
         session_id=_sanitize_session_id(session_id),
@@ -614,6 +843,16 @@ async def worker_duplex_runtime_ws(ws: WebSocket, session_id: str):
     This endpoint is meant for gateway-worker communication and uses runtime
     event payloads instead of page/demo-shaped result messages.
     """
+    if _backend_server_url():
+        await _handle_remote_backend_runtime_ws(
+            ws,
+            session_id=_sanitize_session_id(session_id),
+            mode="full_duplex",
+            active_status=WorkerStatus.DUPLEX_ACTIVE,
+            idle_status=WorkerStatus.IDLE,
+        )
+        return
+
     await handle_worker_duplex_runtime_ws(
         ws,
         session_id=_sanitize_session_id(session_id),
@@ -665,6 +904,7 @@ def main():
     parser.add_argument("--worker-index", type=int, default=0, help="Worker index (0, 1, 2, ...)")
     parser.add_argument("--duplex-pause-timeout", type=float, default=None, help="Duplex pause timeout (s)")
     parser.add_argument("--backend", choices=("pytorch", "cpp"), default=None, help="Override inference backend")
+    parser.add_argument("--backend-server-url", type=str, default=None, help="Remote backend_server.py base URL")
     args = parser.parse_args()
 
     port = args.port or cfg.worker_port(args.worker_index)
@@ -678,6 +918,7 @@ def main():
         "pt_path": args.pt_path or cfg.model.pt_path,
         "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
         "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,
+        "backend_server_url": args.backend_server_url,
         "compile": cfg.compile,
         "chat_vocoder": cfg.chat_vocoder,
         "attn_implementation": cfg.attn_implementation,

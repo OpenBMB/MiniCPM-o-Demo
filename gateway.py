@@ -386,6 +386,159 @@ async def chat(request: Request):
 
 # ============ Chat WebSocket 代理 ============
 
+async def _api_worker_passthrough_ws(
+    ws: WebSocket,
+    *,
+    request_type: str,
+    worker_status: GatewayWorkerStatus,
+    worker_path: str,
+    session_id: str,
+    source_channel: str,
+    source_mode: Optional[str],
+    max_duration_s: Optional[float] = None,
+) -> None:
+    """Queue, assign a worker, then pass API-shaped events through unchanged."""
+
+    if worker_pool is None:
+        await ws.close(code=1013, reason="Service not ready")
+        return
+
+    session_id = _sanitize_session_id(session_id)
+    await ws.accept()
+
+    try:
+        ticket, future = worker_pool.enqueue(request_type, session_id=session_id)
+    except WorkerPool.QueueFullError:
+        await ws.send_json({
+            "type": "error",
+            "error": {"code": "queue_full", "message": "Queue full", "type": "server_error"},
+        })
+        await ws.close(code=1013, reason="Queue full")
+        return
+
+    worker: Optional[WorkerConnection] = None
+    if future.done():
+        worker = future.result()
+    else:
+        try:
+            await ws.send_json({
+                "type": "session.queued",
+                "position": ticket.position,
+                "estimated_wait_s": ticket.estimated_wait_s,
+                "ticket_id": ticket.ticket_id,
+                "queue_length": worker_pool.queue_length,
+            })
+            while not future.done():
+                try:
+                    worker = await asyncio.wait_for(asyncio.shield(future), timeout=3.0)
+                    break
+                except asyncio.TimeoutError:
+                    updated = worker_pool.get_ticket(ticket.ticket_id)
+                    if updated:
+                        await ws.send_json({
+                            "type": "session.queue_update",
+                            "position": updated.position,
+                            "estimated_wait_s": updated.estimated_wait_s,
+                            "queue_length": worker_pool.queue_length,
+                        })
+                except asyncio.CancelledError:
+                    worker_pool.cancel(ticket.ticket_id)
+                    return
+        except (WebSocketDisconnect, Exception) as exc:
+            logger.info("API WS disconnected during queue: session=%s (%s)", session_id, exc)
+            worker_pool.cancel(ticket.ticket_id)
+            return
+        if worker is None and future.done():
+            worker = future.result()
+
+    if worker is None:
+        await ws.send_json({
+            "type": "error",
+            "error": {"code": "worker_busy", "message": "No worker available", "type": "server_error"},
+        })
+        await ws.close(code=1013, reason="No worker available")
+        return
+
+    await ws.send_json({"type": "session.queue_done"})
+    worker.mark_busy(worker_status, request_type, session_id=session_id)
+    task_start = datetime.now()
+    worker_ws = None
+    session_closed = asyncio.Event()
+
+    try:
+        import websockets
+        identity_qs = _worker_identity_query(
+            ws,
+            session_id=session_id,
+            source_channel=source_channel,
+            source_mode=source_mode,
+        )
+        ws_url = f"ws://{worker.host}:{worker.port}{worker_path}?{identity_qs}"
+        worker_ws = await websockets.connect(ws_url, open_timeout=5, max_size=128 * 1024 * 1024)
+
+        async def client_to_worker() -> None:
+            try:
+                async for raw in ws.iter_text():
+                    await worker_ws.send(raw)
+            except WebSocketDisconnect:
+                pass
+
+        async def worker_to_client() -> None:
+            async for raw in worker_ws:
+                await ws.send_text(raw)
+                try:
+                    msg = json.loads(raw)
+                    if msg.get("type") == "session.closed":
+                        session_closed.set()
+                        return
+                except Exception:
+                    pass
+
+        tasks = [
+            asyncio.create_task(client_to_worker()),
+            asyncio.create_task(worker_to_client()),
+        ]
+
+        if max_duration_s is not None:
+            async def session_timeout_watchdog() -> None:
+                await asyncio.sleep(max_duration_s)
+                if session_closed.is_set():
+                    return
+                logger.info("API session timeout (%ss): session=%s", max_duration_s, session_id)
+                await ws.send_json({"type": "session.closed", "reason": "timeout"})
+                session_closed.set()
+
+            tasks.append(asyncio.create_task(session_timeout_watchdog()))
+
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        for task in done:
+            task.result()
+
+    except Exception as exc:
+        logger.error("API worker passthrough failed: session=%s error=%s", session_id, exc, exc_info=True)
+        try:
+            await ws.send_json({
+                "type": "error",
+                "error": {"code": "session_failed", "message": str(exc), "type": "server_error"},
+            })
+        except Exception:
+            pass
+    finally:
+        if worker_ws:
+            try:
+                await worker_ws.close()
+            except Exception:
+                pass
+        duration = (datetime.now() - task_start).total_seconds()
+        worker_pool.release_worker(worker, request_type=request_type, duration_s=duration)
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
 async def _chat_runtime_proxy_ws(
     ws: WebSocket,
     *,
@@ -492,6 +645,26 @@ async def responses_ws_proxy(ws: WebSocket):
         ws,
         worker_response_to_client=worker_runtime_to_response_api,
         source_channel="responses_api",
+        source_mode="turn",
+    )
+
+
+@app.websocket("/v1/chat")
+async def chat_v1_ws(ws: WebSocket):
+    """Turn-based chat API V2 WebSocket."""
+
+    if not app_registry.is_enabled("turnbased"):
+        await ws.close(code=1008, reason="Turn-based Chat is currently disabled")
+        return
+
+    session_id = f"chat_{int(datetime.now().timestamp()*1000)}"
+    await _api_worker_passthrough_ws(
+        ws,
+        request_type="chat",
+        worker_status=GatewayWorkerStatus.BUSY_CHAT,
+        worker_path=f"/v1/worker/sessions/{session_id}/chat",
+        session_id=session_id,
+        source_channel="chat_api",
         source_mode="turn",
     )
 
@@ -1405,190 +1578,23 @@ app.mount("/docs", StaticFiles(directory=docs_static_dir, html=True, check_dir=F
 
 @app.websocket("/v1/realtime")
 async def realtime_ws(ws: WebSocket):
-    """OpenAI Realtime-style WebSocket 代理
+    """Full-duplex realtime API V2 WebSocket."""
 
-    Protocol translation gateway:
-      Client speaks OpenAI Realtime events → translates to worker runtime protocol
-      Worker runtime events → translate to OpenAI Realtime events
-
-    Uses FIFO queueing before assigning an exclusive duplex worker session.
-    """
     session_id = f"rt_{int(datetime.now().timestamp()*1000)}"
     mode = ws.query_params.get("mode", "video")
     max_duration_s = 300 if mode == "video" else 600
+    duplex_type = "omni_duplex" if mode == "video" else "audio_duplex"
 
-    if worker_pool is None:
-        await ws.close(code=1013, reason="Service not ready")
-        return
-
-    session_id = _sanitize_session_id(session_id)
-    await ws.accept()
-
-    try:
-        duplex_type = "omni_duplex" if mode == "video" else "audio_duplex"
-        ticket, future = worker_pool.enqueue(duplex_type, session_id=session_id)
-    except WorkerPool.QueueFullError:
-        await ws.send_json({
-            "type": "error",
-            "error": {"code": "queue_full", "message": "Queue full", "type": "server_error"},
-        })
-        await ws.close(code=1013, reason="Queue full")
-        return
-
-    worker: Optional[WorkerConnection] = None
-    if future.done():
-        worker = future.result()
-    else:
-        try:
-            await ws.send_json({
-                "type": "session.queued",
-                "position": ticket.position,
-                "estimated_wait_s": ticket.estimated_wait_s,
-                "ticket_id": ticket.ticket_id,
-                "queue_length": worker_pool.queue_length,
-            })
-            while not future.done():
-                try:
-                    worker = await asyncio.wait_for(asyncio.shield(future), timeout=3.0)
-                    break
-                except asyncio.TimeoutError:
-                    updated = worker_pool.get_ticket(ticket.ticket_id)
-                    if updated:
-                        await ws.send_json({
-                            "type": "session.queue_update",
-                            "position": updated.position,
-                            "estimated_wait_s": updated.estimated_wait_s,
-                            "queue_length": worker_pool.queue_length,
-                        })
-                except asyncio.CancelledError:
-                    worker_pool.cancel(ticket.ticket_id)
-                    return
-        except (WebSocketDisconnect, Exception) as e:
-            logger.info(f"Realtime WS disconnected during queue: session={session_id}, cancelling ({e})")
-            worker_pool.cancel(ticket.ticket_id)
-            return
-        if worker is None and future.done():
-            worker = future.result()
-
-    if worker is None:
-        await ws.send_json({
-            "type": "error",
-            "error": {"code": "worker_busy", "message": "No worker available", "type": "server_error"},
-        })
-        await ws.close(code=1013, reason="No worker available")
-        return
-
-    await ws.send_json({"type": "session.queue_done"})
-    logger.info(f"Realtime WS connected: session={session_id} → {worker.worker_id}")
-
-    worker.mark_busy(GatewayWorkerStatus.DUPLEX_ACTIVE, duplex_type, session_id=session_id)
-    task_start = datetime.now()
-    session_closed = asyncio.Event()
-
-    worker_ws = None
-
-    try:
-        import websockets
-        identity_qs = _worker_identity_query(
-            ws,
-            session_id=session_id,
-            source_channel="realtime_api",
-            source_mode=mode,
-        )
-        ws_url = f"ws://{worker.host}:{worker.port}/v1/worker/sessions/{session_id}/duplex?{identity_qs}"
-
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                worker_ws = await websockets.connect(ws_url, open_timeout=5)
-                break
-            except Exception as conn_err:
-                if attempt < max_retries - 1:
-                    logger.warning(f"Realtime WS connect to {worker.worker_id} failed (attempt {attempt + 1}): {conn_err}")
-                    await asyncio.sleep(1.0)
-                else:
-                    raise
-
-        async def session_timeout_watchdog():
-            """Total session duration watchdog."""
-            await asyncio.sleep(max_duration_s)
-            if session_closed.is_set():
-                return
-            logger.info(f"Realtime session timeout ({max_duration_s}s): session={session_id}")
-            try:
-                await ws.send_json({"type": "session.closed", "reason": "timeout"})
-            except Exception:
-                pass
-            session_closed.set()
-
-        async def client_to_worker():
-            """Client (OpenAI Realtime) → Worker runtime protocol."""
-            try:
-                async for raw in ws.iter_text():
-                    msg = json.loads(raw)
-                    await worker_ws.send(json.dumps(realtime_client_to_worker_runtime(msg)))
-
-            except WebSocketDisconnect:
-                pass
-
-        async def worker_to_client():
-            """Worker runtime protocol → Client (OpenAI Realtime)."""
-            try:
-                async for raw in worker_ws:
-                    msg = json.loads(raw)
-                    if msg.get("type") == "error":
-                        await ws.send_json({
-                            "type": "error",
-                            "error": {
-                                "code": "inference_failed",
-                                "message": msg.get("error", "Unknown error"),
-                                "type": "server_error",
-                            },
-                        })
-                    else:
-                        translated = worker_runtime_to_realtime(msg, session_id=session_id)
-                        await ws.send_json(translated)
-                        if translated.get("type") == "response.metrics":
-                            kv_len = translated.get("kv_cache_length", 0)
-                        else:
-                            kv_len = 0
-                        if kv_len >= 8192 and not session_closed.is_set():
-                            logger.info(f"Realtime context full (kv={kv_len}): session={session_id}")
-                            await ws.send_json({"type": "session.closed", "reason": "context_full"})
-                            session_closed.set()
-
-            except Exception:
-                pass
-
-        done, pending = await asyncio.wait(
-            [
-                asyncio.create_task(client_to_worker()),
-                asyncio.create_task(worker_to_client()),
-                asyncio.create_task(session_timeout_watchdog()),
-            ],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        for task in pending:
-            task.cancel()
-
-    except Exception as e:
-        logger.error(f"Realtime WS error: {e}", exc_info=True)
-    finally:
-        if worker_ws:
-            try:
-                await worker_ws.close()
-            except Exception:
-                pass
-
-        if worker:
-            duration = (datetime.now() - task_start).total_seconds() if task_start else 0
-            worker_pool.release_worker(
-                worker,
-                request_type=duplex_type,
-                duration_s=duration,
-            )
-            logger.info(f"Realtime WS ended: session={session_id}, Worker released ({duration:.1f}s)")
+    await _api_worker_passthrough_ws(
+        ws,
+        request_type=duplex_type,
+        worker_status=GatewayWorkerStatus.DUPLEX_ACTIVE,
+        worker_path=f"/v1/worker/sessions/{session_id}/duplex",
+        session_id=session_id,
+        source_channel="realtime_api",
+        source_mode=mode,
+        max_duration_s=max_duration_s,
+    )
 
 
 @app.get("/mobile-omni", include_in_schema=False)
