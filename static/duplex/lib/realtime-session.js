@@ -1,8 +1,8 @@
 /**
  * lib/realtime-session.js — OpenAI Realtime-style session manager
  *
- * Realtime session client that speaks the new protocol:
- *   session.update / input_audio_buffer.append / response.listen / response.output_audio.delta
+ * Realtime session client that speaks the API V2 protocol:
+ *   session.init / input.append / response.output.delta(kind=...)
  *
  * Keeps the established callback interface so UI code remains thin.
  */
@@ -122,26 +122,26 @@ export class RealtimeSession {
                 };
             });
 
-            // Wait for queue + send session.update
+            // Wait for queue + send session.init
             await new Promise((resolve, reject) => {
                 let queueDone = false;
-                let updateSent = false;
+                let initSent = false;
                 this._queueReject = reject;
 
-                const sendSessionUpdate = () => {
-                    if (updateSent) return;
-                    updateSent = true;
+                const sendSessionInit = () => {
+                    if (initSent) return;
+                    initSent = true;
 
-                    const sessionUpdate = {
-                        type: 'session.update',
-                        session: {
-                            instructions: systemPrompt,
+                    const sessionInit = {
+                        type: 'session.init',
+                        payload: {
+                            system_prompt: systemPrompt,
                             ...preparePayload,
                         },
                     };
-                    this.ws.send(JSON.stringify(sessionUpdate));
-                    this._logProtoEvent('client', 'session.update',
-                        `instructions="${systemPrompt.slice(0, 40)}…"`, sessionUpdate);
+                    this.ws.send(JSON.stringify(sessionInit));
+                    this._logProtoEvent('client', 'session.init',
+                        `system_prompt="${systemPrompt.slice(0, 40)}…"`, sessionInit);
                 };
 
                 this.ws.onmessage = (e) => {
@@ -171,7 +171,7 @@ export class RealtimeSession {
                         this.onQueueDone();
                         this.onQueueUpdate(null);
                         this.onSystemLog('Worker assigned, preparing...');
-                        sendSessionUpdate();
+                        sendSessionInit();
 
                     // Backward compat: old protocol queue messages
                     } else if (msg.type === 'queued') {
@@ -189,7 +189,7 @@ export class RealtimeSession {
                         this.onQueueDone();
                         this.onQueueUpdate(null);
                         this.onSystemLog('Worker assigned, preparing...');
-                        sendSessionUpdate();
+                        sendSessionInit();
 
                     } else if (msg.type === 'session.created') {
                         this._queueReject = null;
@@ -210,7 +210,7 @@ export class RealtimeSession {
                 };
 
                 setTimeout(() => {
-                    if (!queueDone) sendSessionUpdate();
+                    if (!queueDone) sendSessionInit();
                 }, 100);
             });
 
@@ -233,35 +233,37 @@ export class RealtimeSession {
     }
 
     /**
-     * Send audio chunk using the new protocol.
+     * Send audio chunk using the API V2 protocol.
      * Accepts the OLD format { type: 'audio_chunk', audio_base64, ... }
-     * and translates to the new { type: 'input_audio_buffer.append', audio, ... }
+     * and translates to the new { type: 'input.append', input: { audio, ... } }
      */
     sendChunk(msg) {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         if (this.paused) return;
 
         const newMsg = {
-            type: 'input_audio_buffer.append',
-            audio: msg.audio_base64,
+            type: 'input.append',
+            input: {
+                audio: msg.audio_base64,
+            },
         };
 
         if (this.forceListenActive || msg.force_listen) {
-            newMsg.force_listen = true;
+            newMsg.input.force_listen = true;
         }
         if (msg.frame_base64_list) {
-            newMsg.video_frames = msg.frame_base64_list;
+            newMsg.input.video_frames = msg.frame_base64_list;
         }
         if (msg.max_slice_nums) {
-            newMsg.max_slice_nums = msg.max_slice_nums;
+            newMsg.input.max_slice_nums = msg.max_slice_nums;
         }
 
         this.ws.send(JSON.stringify(newMsg));
         this.chunksSent++;
 
-        const hasVideo = newMsg.video_frames ? ` +${newMsg.video_frames.length}fr` : '';
-        this._logProtoEvent('client', 'input_audio_buffer.append',
-            `#${this.chunksSent}${hasVideo}${newMsg.force_listen ? ' force' : ''}`);
+        const hasVideo = newMsg.input.video_frames ? ` +${newMsg.input.video_frames.length}fr` : '';
+        this._logProtoEvent('client', 'input.append',
+            `#${this.chunksSent}${hasVideo}${newMsg.input.force_listen ? ' force' : ''}`, newMsg);
 
         this.onMetrics({ type: 'result', chunksSent: this.chunksSent });
     }
@@ -377,6 +379,10 @@ export class RealtimeSession {
                 this._handleSpeak(msg);
                 break;
 
+            case 'response.output.delta':
+                this._handleOutputDelta(msg);
+                break;
+
             case 'session.closed':
                 this._logProtoEvent('server', 'session.closed',
                     `reason=${msg.reason}`, msg);
@@ -419,8 +425,48 @@ export class RealtimeSession {
         }
     }
 
+    _applyFrameMetrics(msg) {
+        if (msg && typeof msg.metrics === 'object' && msg.metrics !== null) {
+            this._lastFrameMetrics = msg.metrics;
+            return;
+        }
+        if (msg && (msg.kv_cache_length !== undefined || msg.wall_clock_ms !== undefined || msg.generate_ms !== undefined)) {
+            this._lastFrameMetrics = {
+                ...this._lastFrameMetrics,
+                kv_cache_length: msg.kv_cache_length,
+                wall_clock_ms: msg.wall_clock_ms,
+                generate_ms: msg.generate_ms,
+            };
+        }
+    }
+
+    _handleOutputDelta(msg) {
+        const kind = msg.kind || '';
+        this._applyFrameMetrics(msg);
+        this._logProtoEvent('server', `response.output.delta/${kind}`,
+            kind === 'text' ? `"${(msg.text || '').slice(0, 30)}"`
+                : kind === 'audio' ? `audio=${msg.audio ? msg.audio.length : 0}`
+                : kind || 'unknown',
+            msg);
+
+        if (kind === 'listen') {
+            this._handleListen(msg);
+        } else if (kind === 'text') {
+            this._handleSpeak({
+                ...msg,
+                audio: undefined,
+            });
+        } else if (kind === 'audio') {
+            this._handleSpeak({
+                ...msg,
+                text: '',
+            });
+        }
+    }
+
     /** Handle new protocol response.listen */
     _handleListen(msg) {
+        this._applyFrameMetrics(msg);
         const recvTime = performance.now();
         this._resultCount++;
         this._lastListenTime = recvTime;
@@ -449,6 +495,7 @@ export class RealtimeSession {
 
     /** Handle new protocol response.output_audio.delta */
     _handleSpeak(msg) {
+        this._applyFrameMetrics(msg);
         const recvTime = performance.now();
         this._resultCount++;
 
