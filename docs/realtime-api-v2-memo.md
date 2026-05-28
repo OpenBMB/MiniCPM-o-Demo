@@ -2,21 +2,21 @@
 
 本文是新的外部 API 与 backend protocol 对齐备忘，不是最终 JSON Schema。
 
-目标是把当前 `/ws/chat` 和 `/ws/duplex/{session_id}` 的有效语义保留下来，同时去掉 legacy demo 命名和半 OpenAI-style 翻译层里的歧义字段。新的外部 API 保留 chat WebSocket 和 realtime WebSocket 两条主线；backend protocol 仍然可以统一成 `init/push/pull/close`。
+目标是把当前 `/ws/chat` 和 `/ws/duplex/{session_id}` 的有效语义保留下来，同时去掉 legacy demo 命名和半 OpenAI-style 翻译层里的歧义字段。新的外部 API 收敛到一个 WebSocket 入口；backend protocol 仍然统一成 `init/push/pull/close`。
 
 ## Scope
 
-外部 API 分两类：
+外部 API 只有一个 WebSocket 入口：
 
 ```text
-WebSocket /v1/chat
 WebSocket /v1/realtime
 ```
 
 其中：
 
-- `/v1/chat` 是 turn-based chat WebSocket，覆盖 streaming 和 non-streaming 输出。
-- `/v1/realtime` 是 full-duplex realtime WebSocket，覆盖连续音频/视频输入和实时输出。
+- `mode=chat` 是 turn-based chat，覆盖 streaming 和 non-streaming 输出。
+- `mode=video` 是 video full-duplex realtime，覆盖连续音频/视频输入和实时输出。
+- `mode=audio` 是 audio full-duplex realtime，覆盖连续音频输入和实时输出。
 
 本文同时标注每个语义属于：
 
@@ -38,13 +38,12 @@ backend protocol 不覆盖排队；排队只属于 API/gateway layer。
 ## API Endpoints
 
 ```text
-WebSocket /v1/chat
 WebSocket /v1/realtime
 ```
 
-连接参数可以继续表达 mode、client identity、页面来源等路由信息，但这些不属于本文的核心消息语义。
+连接参数可以继续表达 mode、client identity、页面来源等路由信息。API gateway 根据 `mode` 做 worker/runtime 路由；backend 仍通过 `session.init` 里的 mode 初始化内部 session。
 
-`/ws/chat`、`/ws/duplex/{session_id}` 不再作为新的外部 API 主线，只作为 legacy compatibility 或迁移参考。
+`/ws/chat`、`/ws/duplex/{session_id}` 不再作为新的外部 API 主线，只作为迁移参考。
 
 ## Primitive Mapping
 
@@ -76,9 +75,9 @@ Layer: API and backend protocol.
 
 初始化一个 session。
 
-在 `/v1/chat` 中，它初始化 turn-based chat session。
+在 `mode=chat` 中，它初始化 turn-based chat session。
 
-在 `/v1/realtime` 中，它初始化 full-duplex realtime session。
+在 `mode=video|audio` 中，它初始化 full-duplex realtime session。
 
 它替代：
 
@@ -101,13 +100,13 @@ Layer: API and backend protocol.
 
 提交模型输入。
 
-在 `/v1/chat` 中：
+在 `mode=chat` 中：
 
 - `input.append` 表示一次完整 turn request。
 - streaming 和 non-streaming 都走同一个输入事件。
 - 是否使用底层 streaming view 或 non-streaming view 是 runtime/backend adapter 的职责，不由 API runtime 聚合 stream delta 伪造。
 
-在 `/v1/realtime` 中：
+在 `mode=video|audio` 中：
 
 - `input.append` 表示一段新的模型观察。
 - 音频输入是必选或主要输入。
@@ -216,19 +215,19 @@ kind = listen | text | audio
 
 ### response.done
 
-Layer: API and backend protocol for `/v1/chat`.
+Layer: API and backend protocol for `mode=chat`.
 
 chat response 输出边界。它替代当前 `/ws/chat` 的 `done`。
 
 语义：
 
-- 仅 `/v1/chat` 必须定义该事件。
+- 仅 `mode=chat` 必须定义该事件。
 - 表示一次 turn-based response 已经完成。
 - streaming chat 中，前面可以有多个 `response.output.delta`，最后发 `response.done`。
 - non-streaming chat 中，可以先发完整 text/audio delta，再发 `response.done`。
 - 完整文本、完整音频和 metrics 可以放在 `response.done` 或附着在最后的 delta/metrics 字段上，具体 schema 后续再定。
 
-`/v1/realtime` 暂不强制定义 `response.done`。full-duplex 输出边界先通过 `kind=listen`、后续输入和 `session.closed` 表达，避免把 turn-based done 语义强行塞进 realtime。
+`mode=video|audio` 暂不强制定义 `response.done`。full-duplex 输出边界先通过 `kind=listen`、后续输入和 `session.closed` 表达，避免把 turn-based done 语义强行塞进 realtime。
 
 ### session.closed
 
@@ -281,7 +280,7 @@ Layer: migration reference only.
 
 Layer: migration reference only.
 
-| Existing `/ws/chat` | Chat API V2 |
+| Existing `/ws/chat` | Realtime API V2 `mode=chat` |
 |---|---|
 | initial chat request | `session.init` then `input.append` |
 | `prefill_done` | `session.created` or metrics attached to early events |
@@ -296,5 +295,5 @@ Layer: migration reference only.
 - Avoid `response.listen`: it is not a standard OpenAI Realtime event and makes a model state look like a separate response type.
 - Avoid `response.output_audio.delta`: current payload carries text, audio, listen state and turn boundary, so `response.output.delta` plus `kind` is more accurate.
 - Do not put text and audio in the same output frame. Text/audio/listen are independent output deltas and must remain separately ordered frames.
-- Keep `/v1/chat` and `/v1/realtime` separate at the external API layer. They can still share backend protocol primitives internally.
+- Keep one external API WebSocket: `/v1/realtime`. Use `mode=chat|video|audio` for routing; backend protocol primitives remain shared internally.
 - Keep concrete payload schemas out of this memo until parameter strong typing is settled.

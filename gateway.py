@@ -649,26 +649,6 @@ async def responses_ws_proxy(ws: WebSocket):
     )
 
 
-@app.websocket("/v1/chat")
-async def chat_v1_ws(ws: WebSocket):
-    """Turn-based chat API V2 WebSocket."""
-
-    if not app_registry.is_enabled("turnbased"):
-        await ws.close(code=1008, reason="Turn-based Chat is currently disabled")
-        return
-
-    session_id = f"chat_{int(datetime.now().timestamp()*1000)}"
-    await _api_worker_passthrough_ws(
-        ws,
-        request_type="chat",
-        worker_status=GatewayWorkerStatus.BUSY_CHAT,
-        worker_path=f"/v1/worker/sessions/{session_id}/chat",
-        session_id=session_id,
-        source_channel="chat_api",
-        source_mode="turn",
-    )
-
-
 # ============ Half-Duplex WebSocket（独占 Worker，FIFO 排队 + 代理到 Worker） ============
 
 @app.websocket("/ws/half_duplex/{session_id}")
@@ -1578,16 +1558,36 @@ app.mount("/docs", StaticFiles(directory=docs_static_dir, html=True, check_dir=F
 
 @app.websocket("/v1/realtime")
 async def realtime_ws(ws: WebSocket):
-    """Full-duplex realtime API V2 WebSocket."""
+    """Unified API V2 WebSocket for chat and realtime duplex modes."""
 
     session_id = f"rt_{int(datetime.now().timestamp()*1000)}"
     mode = ws.query_params.get("mode", "video")
+
+    if mode == "chat":
+        if not app_registry.is_enabled("turnbased"):
+            await ws.close(code=1008, reason="Turn-based Chat is currently disabled")
+            return
+        await _api_worker_passthrough_ws(
+            ws,
+            request_type="chat",
+            worker_status=GatewayWorkerStatus.BUSY_CHAT,
+            worker_path=f"/v1/worker/sessions/{session_id}/chat",
+            session_id=session_id,
+            source_channel="realtime_api",
+            source_mode=mode,
+        )
+        return
+
+    if mode not in {"video", "audio"}:
+        await ws.close(code=1008, reason=f"Unsupported realtime mode: {mode}")
+        return
+
     max_duration_s = 300 if mode == "video" else 600
-    duplex_type = "omni_duplex" if mode == "video" else "audio_duplex"
+    request_type = "omni_duplex" if mode == "video" else "audio_duplex"
 
     await _api_worker_passthrough_ws(
         ws,
-        request_type=duplex_type,
+        request_type=request_type,
         worker_status=GatewayWorkerStatus.DUPLEX_ACTIVE,
         worker_path=f"/v1/worker/sessions/{session_id}/duplex",
         session_id=session_id,
