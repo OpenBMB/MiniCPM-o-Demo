@@ -5177,6 +5177,8 @@ function App() {
           audio_sample_rate?: number
           recording_session_id?: string | null
           error?: string | { message?: string }
+          diagnostic?: { message?: string }
+          reason?: string
           kind?: string
         }
 
@@ -5281,6 +5283,34 @@ function App() {
             } catch {
               /* ignore */
             }
+          }
+          return
+        }
+
+        if (msg.type === 'session.closed') {
+          receivedAnyData = true
+          const reason = msg.reason || ''
+          const diagnostic = msg.diagnostic?.message
+          const closeError =
+            diagnostic ||
+            (reason && !['turn_done', 'client_closed'].includes(reason)
+              ? reason
+              : '')
+          if (closeError) {
+            finalize(null, {
+              errorMessage: i18n.requestFailedDetail(closeError),
+              cutPlayback: true,
+            })
+          } else {
+            finalize(null, {
+              errorMessage: i18n.wsClosed,
+              cutPlayback: true,
+            })
+          }
+          try {
+            ws.close()
+          } catch {
+            /* ignore */
           }
           return
         }

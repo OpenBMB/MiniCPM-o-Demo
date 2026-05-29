@@ -3294,6 +3294,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             do_sample=do_sample,
             max_new_tokens=max_new_tokens,
             min_new_tokens=min_new_tokens,
+            num_beams=1,
             length_penalty=length_penalty,
         )
         generation_config.pop("max_new_tokens", None)

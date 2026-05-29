@@ -2516,6 +2516,14 @@ function _openRealtimeChatWS(body, handlers) {
         ws.send(JSON.stringify({ type: 'session.close', reason }));
     };
 
+    const getCloseError = (msg) => {
+        const reason = msg.reason || '';
+        const diagnostic = msg.diagnostic?.message || msg.error?.message || msg.error || '';
+        if (diagnostic) return diagnostic;
+        if (reason && !['turn_done', 'client_closed'].includes(reason)) return reason;
+        return '';
+    };
+
     ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === 'session.queue_done') {
@@ -2528,7 +2536,12 @@ function _openRealtimeChatWS(body, handlers) {
             handlers.onDone?.(msg);
             sendClose();
         } else if (msg.type === 'session.closed') {
-            handlers.onClosed?.(msg);
+            const closeError = getCloseError(msg);
+            if (closeError) {
+                handlers.onError?.(closeError);
+            } else {
+                handlers.onClosed?.(msg);
+            }
             ws.close();
         } else if (msg.type === 'error') {
             handlers.onError?.(msg.error?.message || msg.error || 'Unknown error');
