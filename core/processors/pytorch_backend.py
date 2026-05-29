@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterator, List, Optional
 import numpy as np
 import torch
 
-from core.runtime.metrics import BackendMetrics
+from core.schemas.metrics import BackendMetrics
 from core.schemas.common import Message
 from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
