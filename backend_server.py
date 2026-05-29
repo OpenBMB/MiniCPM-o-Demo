@@ -540,11 +540,10 @@ app = FastAPI(title="MiniCPMO45 Backend Protocol Server", lifespan=lifespan)
 
 @app.get("/health")
 async def health() -> Dict[str, Any]:
-    state = getattr(_backend, "state", None)
     return {
         "status": "ready" if _backend is not None else "loading",
         "backend": "pytorch",
-        "worker_status": getattr(getattr(state, "status", None), "value", getattr(state, "status", None)),
+        "worker_status": getattr(_backend, "status", None),
         "active_session_id": _server_state.active_session_id if _server_state else None,
     }
 

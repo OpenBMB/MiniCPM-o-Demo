@@ -6,15 +6,12 @@ import asyncio
 import gc
 import logging
 import time
-from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
 import torch
 
-from core.internal.worker_state import WorkerState, WorkerStatus
 from core.runtime.metrics import BackendMetrics
-from core.schemas.chat import ChatRequest, ChatResponse
 from core.schemas.common import Message
 from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
@@ -48,7 +45,7 @@ class PyTorchBackend:
         self.chat_vocoder = chat_vocoder
         self.attn_implementation = attn_implementation
 
-        self.state = WorkerState()
+        self.status = "loading"
         self.processor = None
 
         # Duplex 暂停超时监控 task
@@ -56,7 +53,7 @@ class PyTorchBackend:
 
     def load_model(self) -> None:
         """加载模型（同步，在启动时调用）"""
-        self.state.status = WorkerStatus.LOADING
+        self.status = "loading"
         logger.info(f"[GPU {self.gpu_id}] Loading model from {self.model_path}...")
 
         from core.processors.unified import UnifiedProcessor
@@ -73,7 +70,7 @@ class PyTorchBackend:
         gc.collect()
         torch.cuda.empty_cache()
 
-        self.state.status = WorkerStatus.IDLE
+        self.status = "ready"
         logger.info(f"[GPU {self.gpu_id}] Model loaded successfully")
 
         # 检查模型各组件的 device 分布
@@ -159,54 +156,6 @@ class PyTorchBackend:
             on_gpu = "cuda" in device
             marker = "✓" if on_gpu else "⚠ CPU!"
             logger.info(f"[GPU {self.gpu_id}]   {marker} {name}: {device}")
-
-    # ========== Chat ==========
-
-    def chat(self, request: ChatRequest) -> ChatResponse:
-        """执行 Chat 推理（无状态）
-
-        Chat 模式下 cached_tokens 始终为 0（每次从头 prefill）。
-        token_stats 中的 input_tokens/generated_tokens 从模型输出精确获取：
-        - input_tokens: tokenizer 级别（含 audio/image 占位符，不含 embedding 展开）
-        - generated_tokens: LLM 实际生成的 token 数
-        """
-        if not self.state.is_idle:
-            raise RuntimeError(f"Worker not idle, status: {self.state.status}")
-
-        self.state.status = WorkerStatus.BUSY_CHAT
-        self.state.last_activity = datetime.now().isoformat()
-        start_time = time.perf_counter()
-
-        try:
-            chat_view = self.processor.set_chat_mode()
-            response = chat_view.chat(
-                request,
-                max_new_tokens=request.generation.max_new_tokens,
-                do_sample=request.generation.do_sample,
-                generate_audio=request.tts.enabled if request.tts else False,
-            )
-
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            self.state.total_requests += 1
-            self.state.total_inference_time_ms += elapsed_ms
-
-            # Chat token 统计已在 ChatView._chat_impl() 中从模型输出精确获取
-            # input_tokens: tokenizer 级别（含 audio/image 占位符）
-            # generated_tokens: LLM 实际生成的 token 数
-
-            ts = response.token_stats or {}
-            logger.info(
-                f"[GPU {self.gpu_id}] Chat completed: "
-                f"{len(response.text)} chars, {elapsed_ms:.0f}ms, "
-                f"tokens: in={ts.get('input_tokens', '?')} "
-                f"gen={ts.get('generated_tokens', '?')} "
-                f"total={ts.get('total_tokens', '?')}"
-            )
-            return response
-        finally:
-            # Chat 是无状态的，完成后清除 KV Cache 映射
-            self.state.status = WorkerStatus.IDLE
-            self.state.current_session_id = None
 
     # ========== Runtime backend surface ==========
 
