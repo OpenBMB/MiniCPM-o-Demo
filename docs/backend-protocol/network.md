@@ -2,9 +2,21 @@
 
 本文描述 scheduler 与远端 inference backend server 之间的下层网络协议。它不是公网 `/v1/realtime` 协议，也不描述 UI 事件；它描述的是调度层如何初始化一个有状态 backend session、持续提交模型输入，并从 backend 读取模型输出、状态和指标。
 
-本文当前只定义过程、原语和完成语义，不定义具体 JSON Schema。具体字段名、参数结构、音频/视频编码、metrics 字段和诊断字段会在 schema 稳定后另行确定。
+本文当前只定义过程、原语和完成语义，不定义具体 JSON Schema。具体字段名、参数结构、音频/视频编码、metrics 字段和诊断字段见 [Message Schema](./schema.md)；交互时序与示例见 [Sequences](./sequences.md)。
 
-## 1. Scope
+## 1. Terminology
+
+本协议有两个端：**backend** 一端，**scheduler/runtime** 一端。二者通过本协议
+（WebSocket 数据通道 + unary 控制通道）通信。
+
+| 术语 | 含义 |
+|------|------|
+| **backend** | 协议的服务端，持有模型、执行推理。它接收 `init`/`push`，产出 `pull` 事件流，响应 `close`。**这是本协议要新实现的一侧**（如 C++/llama-server backend）。backend 不感知公网 API、UI、调度或队列。 |
+| **scheduler / runtime** | 协议的客户端，是 backend 的**上游**，负责建立 session、按节奏 `push` 输入、消费 `pull` 事件、发起 `close`。它把上层（公网 API、UI 事件、队列调度）翻译成本协议原语。**backend 不是它的一部分，也无需了解其内部结构。** 本文中 `scheduler` 与 `runtime` 指同一侧的职责，不区分。 |
+| **session** | 一次有状态的推理会话，由 `init` 建立、`close` 结束，生命周期见 §4。 |
+| **inference / 模型** | backend 内部实际执行生成的部分。本协议不规定其实现。 |
+
+## 2. Scope
 
 该协议覆盖两类有状态推理会话：
 
@@ -12,6 +24,9 @@
 |------|---------|
 | `turn_based` | 一次输入产生一次 response；backend 可以按请求选择 stream 或 non-stream 推理路径，但输出都通过 pull 事件表达。 |
 | `full_duplex` | 持续接收音频/视频输入，模型可以在 listen/speak 状态间切换。 |
+
+当前版本只定义 `turn_based` 与 `full_duplex`，**不包括半双工（half-duplex）**。半双工
+能力将来若实现，会在本协议的 `push` / `pull` 原语之上新增一种交互类型。
 
 该协议把 backend 类原语映射到网络：
 
@@ -26,17 +41,15 @@ unary(request) -> result
 
 - `init` 创建一个有状态 backend session。
 - `push` 只承载模型输入。turn-based 的请求、full-duplex 的连续观察都通过 `push(input)` 进入 backend。
-- `pull` 承载该 session 的单一有序事件流，包括初始化确认、模型输出、response 完成、关闭和 metrics。
+- `pull` 承载该 session 的单一有序事件流，包括初始化确认、模型输出、response 完成和关闭。metrics 不是独立事件，而是附着在这些下行事件上的字段（见 §6.7）。
 - `unary` 承载不进入模型上下文的一次性控制请求。当前版本只定义 `close`。
 - session identity 是网络层概念，由 backend 在 init 成功后分配或确认。
 
-当前版本不定义 `pause` / `resume`。如果 runtime 或 scheduler 想暂停输入，只需停止调用 `push`；backend 没有新的模型观察时自然处于等待输入状态。暂停策略、上游队列暂停、麦克风/VAD 暂停属于 runtime/scheduler 逻辑，不是 backend 控制命令。
+当前版本不定义 `pause` / `resume`。如果 runtime 或 scheduler 想暂停输入，只需停止调用 `push`；backend 没有新的模型观察时自然处于等待输入状态。暂停是 backend 上游的行为：可能发生在客户端采集层，或 runtime/scheduler 层（如暂停队列调度、停止向 backend 发送 input），都不是 backend 的控制命令。
 
-当前版本不定义独立 `get_metrics` 请求。运行指标随下行事件返回，具体指标字段由后续 schema 定义。
+## 3. Transport Layout
 
-## 2. Transport Layout
-
-### 2.1 WebSocket Data Channel
+### 3.1 WebSocket Data Channel
 
 WebSocket 是主数据通道。连接建立后，scheduler 必须先发起 init。backend 完成初始化后，在同一条下行事件流中确认 session 进入 active 状态。
 
@@ -51,7 +64,7 @@ active 后，WebSocket 同时承载：
 
 如果后续 schema 需要上行顺序标识或业务关联标识，它们只用于上行诊断、metrics 关联或 response 关联，不改变下行事件按接收顺序消费的语义。
 
-### 2.2 Unary Control Channel
+### 3.2 Unary Control Channel
 
 当前 unary control 只定义 `close`，使用独立请求通道，并定位到一个已初始化 session。
 
@@ -65,9 +78,9 @@ backend 可以在 WebSocket 下行事件流中额外发送 `session.closed`，�
 
 `close` 不走 WebSocket `push` 通道的原因是：关闭请求应避免被输入数据流、输出写队列或长时间 decode 阻塞。实现可以取消正在进行的 decode，也可以在有界时间内完成清理；如果 close 过程中发生任何异常，backend 必须把 session 视为终止并关闭 WebSocket。unary 不能返回成功，除非关闭和资源释放已经完成。
 
-## 3. Session Lifecycle
+## 4. Session Lifecycle
 
-### 3.1 Init
+### 4.1 Init
 
 init 阶段完成以下事情：
 
@@ -87,7 +100,7 @@ init 成功后：
 - scheduler 可以按 session 支持的模式 `push(input)`。
 - scheduler 可以通过 unary close 关闭该 session。
 
-### 3.2 Active
+### 4.2 Active
 
 active 状态下，scheduler 持续 push 输入，backend 持续在 pull 事件流中返回模型输出和状态。
 
@@ -103,7 +116,7 @@ turn-based streaming / non-streaming 不是两套 backend 网络原语。二者�
 - streaming 请求可以调用底层 stream view，边生成边输出 delta。
 - non-streaming 请求可以调用底层 non-stream view，在生成完成后一次性或少量输出 delta，再输出 response 完成边界。
 
-因此 runtime/scheduler 不应该为了得到 non-stream 语义而聚合 stream delta。是否使用 stream view 或 non-stream view 是 backend adapter 的职责，runtime 只负责转发、记录、协议翻译和 emit。
+> **设计说明（暂定，待确认）：** 当前设计倾向于把"用哪种 view"作为 backend adapter 的职责，runtime 只负责转发、记录、协议翻译和 emit，不为了得到 non-stream 语义而在 runtime 侧聚合 stream delta。此约定尚未最终确认，可能调整；见 §11 Open Issues。
 
 full-duplex 的过程是：
 
@@ -115,7 +128,7 @@ full-duplex 的过程是：
 
 backend 输出是该 session 的单一有序事件流。scheduler 不应假设某个输出事件一定能和某个输入包一一对应。尤其是 C++ backend 中，文字和音频不是一一对应关系，因此协议把文字和音频作为独立的内容 delta 语义处理。
 
-### 3.3 Close
+### 4.3 Close
 
 close 使用 unary control，且必须满足完成语义：
 
@@ -133,9 +146,9 @@ close 后：
 - 后续 close 可以返回 session 不存在或 session 已关闭。
 - 如果 WebSocket 在 close unary 返回前已经断开，unary 成功返回仍然表示 session 已关闭。
 
-## 4. Input Semantics
+## 5. Input Semantics
 
-### 4.1 Common Input Semantics
+### 5.1 Common Input Semantics
 
 `push(input)` 表示把新的模型输入交给 backend。当前文档不规定 input envelope 的具体字段。
 
@@ -155,19 +168,19 @@ backend 必须保证：
 
 `push` 没有 reject 语义。对 scheduler 来说，push 成功写入连接只表示输入进入该 session 的有序输入流；backend 后续要么继续通过 pull 产出事件，要么在 fatal condition 下终止 session。
 
-### 4.2 Turn-Based Input
+### 5.2 Turn-Based Input
 
 turn-based input 表示一次新的对话请求。它通过 `push(input)` 进入 backend，输出通过 `pull()` 的 response 事件返回。
 
 turn-based 可以是文本、多模态输入、带生成选项的输入等；具体 payload schema 当前不在本文定义。
 
-### 4.3 Full-Duplex Input
+### 5.3 Full-Duplex Input
 
 full-duplex input 表示一次新的模型观察。它通常来自连续音频流，也可以带随时间采样的视频/图像观察。
 
 full-duplex input 的具体编码、分块大小、是否允许 image-only、视频帧数量和 hint 结构，当前不在本文定义。本文只要求这些输入走同一个 `push(input)` 通道，并按 session 内顺序进入 backend。
 
-## 5. Pull Event Semantics
+## 6. Pull Event Semantics
 
 backend 输出分为三类：
 
@@ -188,11 +201,11 @@ session.closed
 
 这些名称描述语义，不代表最终 payload schema 已经稳定。
 
-### 5.1 Session Created
+### 6.1 Session Created
 
 `session.created` 表示 init 成功，WebSocket 进入 active 状态。该事件之后，scheduler 才能开始 push input。
 
-### 5.2 Response Output Delta
+### 6.2 Response Output Delta
 
 `response.output.delta` 表示一次原子下行输出。用 `kind` 区分输出分支：
 
@@ -202,37 +215,37 @@ kind = listen | text | audio
 
 同一个 output frame 只能表达一种输出，不把文字和音频放在同一个 frame 中。
 
-### 5.3 Listen
+### 6.3 Listen
 
 `response.output.delta` with `kind=listen` 表示 full-duplex 模型决定继续听用户输入，本次模型推进没有内容输出。内部 `<|listen|>` token 不应直接暴露到协议层；协议层只暴露 listen 语义。
 
-### 5.4 Text Delta
+### 6.4 Text Delta
 
 `response.output.delta` with `kind=text` 表示一段模型文本输出。文字输出是增量语义，需要由上层按 pull 顺序拼接或展示。
 
-### 5.5 Audio Delta
+### 6.5 Audio Delta
 
 `response.output.delta` with `kind=audio` 表示一段模型音频输出。音频输出是增量语义，需要由上层按 pull 顺序播放或拼接。
 
 音频格式、采样率、编码和分片边界由后续 schema 定义。
 
-### 5.6 Response Done
+### 6.6 Response Done
 
 `response.done` 表示 turn-based chat 当前 response 的全部可输出内容已经结束。
 
 response 完成原因可以表达正常 turn 结束、达到生成上限、或 close 导致 response 被终止；具体枚举由后续 schema 定义。
 
-错误不通过 `response.done` 作为正常 response 收尾。任何错误都是 terminal condition，见 5.8。
+错误不通过 `response.done` 作为正常 response 收尾。任何错误都是 terminal condition，见 §6.8。
 
 full-duplex 当前不要求 `response.done`。如果需要显式表达模型切回听的边界，使用 `response.output.delta` with `kind=listen`。
 
-### 5.7 Metrics
+### 6.7 Metrics
 
 metrics 不通过独立请求获取，而是附着在下行事件上。实现可以在每个事件上附带 metrics，也可以只在有新观测值的事件上附带。
 
 本文不定义 metrics 字段集合。后续 schema 可以根据 Python backend、C++ backend 和 runtime 需要统一指标名称。
 
-### 5.8 Lifecycle And Fatal Termination
+### 6.8 Lifecycle And Fatal Termination
 
 除模型内容事件外，backend 可以输出 `session.closed`。
 
@@ -248,7 +261,7 @@ fatal condition 的处理规则：
 - `session.closed` 发送失败时，直接关闭连接即可。
 - fatal condition 后不能继续发送模型内容事件，也不能继续接收新的 input。
 
-## 6. Backpressure And Capacity
+## 7. Backpressure And Capacity
 
 backend 可以限制同一 session 内同时处理的 input 数量，但不应该把容量控制暴露成 `input.rejected` 或 `busy` 业务事件。
 
@@ -261,16 +274,16 @@ backend 可以限制同一 session 内同时处理的 input 数量，但不应�
 
 无论策略如何，backend 必须保持同一 session 内 input 的顺序语义。
 
-turn-based input 与 full-duplex input 是否允许在同一 session 中混合，由 init 阶段声明或配置的 session 能力决定。如果不允许混合，scheduler 不应发送不匹配的 input。backend 收到不匹配 input 时应视为 fatal protocol violation，并立即断开。
+session 的 mode 在 init 时确定，且在 session 生命周期内固定。turn-based input 与 full-duplex input MUST NOT 在同一 session 中混合：scheduler 只能发送与该 session mode 匹配的 input。backend 收到与 mode 不匹配的 input 时，视为 fatal protocol violation，立即断开（见 §6.8）。
 
-## 7. Pause Semantics
+## 8. Pause Semantics
 
 当前版本不定义 backend-level `pause` / `resume`。
 
 理由：
 
 - 对 backend 来说，没有新的 `push(input)` 就没有新的模型观察，session 会自然停在等待输入状态。
-- 运行时的暂停通常是上游行为，例如停止麦克风采集、停止 VAD commit、暂停队列调度或暂停向 backend 发送 input。
+- 运行时的暂停发生在 backend 上游：可能在客户端采集层，也可能在 runtime/scheduler 层（暂停队列调度、停止向 backend 发送 input）。
 - backend 若提供 `pause/resume`，容易和输入队列、正在进行的 decode/finalize、TTS 队列产生不清晰的完成语义。
 
 因此：
@@ -279,7 +292,7 @@ turn-based input 与 full-duplex input 是否允许在同一 session 中混合�
 - scheduler/runtime 恢复时继续 push。
 - backend 协议只保留 terminal control：`close`。
 
-## 8. Disconnect Semantics
+## 9. Disconnect Semantics
 
 WebSocket 断开后，不支持恢复。
 
@@ -296,7 +309,7 @@ WebSocket 断开后，不支持恢复。
 - scheduler 应丢弃该 session，并在排查原因后重新建立新 session。
 - 协议不要求支持 message replay、Last-Event-ID、event journal、断线续传或 exactly-once 语义。
 
-## 9. Non-goals
+## 10. Non-goals
 
 本文不定义：
 
@@ -316,3 +329,12 @@ WebSocket 断开后，不支持恢复。
 - exactly-once / at-least-once 语义。
 - 可恢复 backend error / reject 分支。
 - tool-calling。
+
+## 11. Open Issues
+
+以下为尚未最终确认的设计点，可能在后续版本调整。实现可参考当前倾向，但不应将其视为
+稳定契约：
+
+- **stream/non-stream 的 view 选择归属（见 §4.2 设计说明）。** 当前倾向：由 backend
+  adapter 决定用 stream view 还是 non-stream view，runtime 不在自己一侧聚合 stream
+  delta 来模拟 non-stream。此职责划分尚未定稿。
