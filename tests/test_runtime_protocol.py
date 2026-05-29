@@ -2,8 +2,8 @@ import base64
 
 import numpy as np
 
-from core.runtime.protocol import DEFAULT_WORKER_CAPABILITIES, capability_for_request
-from core.runtime.chat_util import parse_worker_chat_request_message
+from runtime.protocol import DEFAULT_WORKER_CAPABILITIES, capability_for_request
+from py_backend.chat_util import parse_worker_chat_request_message
 
 
 def test_default_worker_capabilities_cover_existing_modes():

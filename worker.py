@@ -29,10 +29,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from core.internal.worker_state import WorkerState, WorkerStatus
+from worker_state import WorkerState, WorkerStatus
 from core.processors.backend_factory import create_backend
-from core.runtime.protocol import DEFAULT_WORKER_CAPABILITIES
-from core.runtime.session import BackendRuntimeSession
+from runtime.protocol import DEFAULT_WORKER_CAPABILITIES
+from runtime.session import BackendRuntimeSession
 
 logging.basicConfig(
     level=logging.INFO,

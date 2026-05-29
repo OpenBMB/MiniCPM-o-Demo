@@ -5,8 +5,8 @@ the worker transport protocol and concrete inference backends, so transport
 code does not need to know backend bookkeeping details such as duplex finalize.
 """
 
-from core.runtime.backend_client import RemoteBackendSession
-from core.runtime.session import BackendRuntimeSession
+from runtime.backend_client import RemoteBackendSession
+from runtime.session import BackendRuntimeSession
 
 __all__ = [
     "BackendRuntimeSession",

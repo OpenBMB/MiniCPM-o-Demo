@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from core.runtime.backend_client import RemoteBackendSession
-from core.runtime.events import RuntimeEvent
+from runtime.backend_client import RemoteBackendSession
+from runtime.events import RuntimeEvent
 
 
 def backend_event_to_runtime_event(event: Dict[str, Any]) -> RuntimeEvent:

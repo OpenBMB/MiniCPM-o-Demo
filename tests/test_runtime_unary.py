@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from core.runtime.session import BackendRuntimeSession
+from runtime.session import BackendRuntimeSession
 
 
 class _FakeBackend:

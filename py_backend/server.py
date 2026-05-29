@@ -23,9 +23,9 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from core.processors.backend_factory import create_backend
-from core.runtime.media import decode_audio_base64, decode_frame_base64_list
-from core.runtime.voice import resolve_duplex_voice_refs
-from core.runtime.chat_util import (
+from py_backend.media import decode_audio_base64, decode_frame_base64_list
+from py_backend.voice import resolve_duplex_voice_refs
+from py_backend.chat_util import (
     convert_to_model_msgs,
     parse_raw_messages,
     parse_worker_chat_request_message,

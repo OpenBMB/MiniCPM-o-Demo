@@ -3,7 +3,7 @@ import os
 import numpy as np
 import soundfile as sf
 
-from core.runtime.voice import resolve_duplex_voice_refs
+from py_backend.voice import resolve_duplex_voice_refs
 
 
 def _pcm_b64(samples: int = 1600) -> str:

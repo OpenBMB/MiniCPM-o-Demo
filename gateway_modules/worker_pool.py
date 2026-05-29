@@ -40,7 +40,7 @@ from .models import (
     EtaConfig,
     EtaStatus,
 )
-from core.runtime.protocol import DEFAULT_WORKER_CAPABILITIES, capability_for_request
+from runtime.protocol import DEFAULT_WORKER_CAPABILITIES, capability_for_request
 
 logger = logging.getLogger("gateway.worker_pool")
 

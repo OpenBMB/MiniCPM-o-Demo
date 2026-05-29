@@ -4,7 +4,7 @@ import io
 import numpy as np
 from PIL import Image
 
-from core.runtime.media import decode_audio_base64, decode_frame_base64_list
+from py_backend.media import decode_audio_base64, decode_frame_base64_list
 
 
 def test_decode_audio_base64_returns_float32_waveform():
