@@ -69,7 +69,7 @@ session.created：
 ```json
 {
   "type": "session.created",
-  "session_id": "rt_1780048876006",
+  "session_id": "sess_a1b2c3d4e5f6",
   "mode": "full_duplex",
   "metrics": { "backend": "pytorch", "kv_cache_length": 68 },
   "server_send_ts": 1780048876.4079616
@@ -93,7 +93,7 @@ listen 事件（模型继续听，无内容输出）：
 {
   "type": "response.output.delta",
   "kind": "listen",
-  "session_id": "rt_1780048876006",
+  "session_id": "sess_a1b2c3d4e5f6",
   "metrics": {
     "backend": "pytorch", "kv_cache_length": 93,
     "prefill_ms": 79.0, "generate_ms": 1.7, "wall_clock_ms": 81.1
@@ -105,30 +105,30 @@ listen 事件（模型继续听，无内容输出）：
 speak 事件（文字与音频是独立 delta）：
 ```json
 { "type": "response.output.delta", "kind": "text",
-  "session_id": "rt_...", "response_id": "resp_ab12cd34ef56",
+  "session_id": "sess_...", "response_id": "resp_ab12cd34ef56",
   "text": "你好", "metrics": { "wall_clock_ms": 350.0 } }
 ```
 ```json
 { "type": "response.output.delta", "kind": "audio",
-  "session_id": "rt_...", "response_id": "resp_ab12cd34ef56",
+  "session_id": "sess_...", "response_id": "resp_ab12cd34ef56",
   "audio": "<base64 f32 16k>", "metrics": { "wall_clock_ms": 352.0 } }
 ```
 
 轮次结束（模型切回听）：
 ```json
 { "type": "response.output.delta", "kind": "listen",
-  "session_id": "rt_...", "response_id": "resp_ab12cd34ef56" }
+  "session_id": "sess_...", "response_id": "resp_ab12cd34ef56" }
 ```
 
 close（unary）：
 ```http
-POST /sessions/rt_1780048876006/close
+POST /sessions/sess_a1b2c3d4e5f6/close
 Content-Type: application/json
 
 { "reason": "client_closed" }
 ```
 ```json
-{ "ok": true, "session_id": "rt_1780048876006", "closed": true }
+{ "ok": true, "session_id": "sess_a1b2c3d4e5f6", "closed": true }
 ```
 
 ---
@@ -156,8 +156,10 @@ sequenceDiagram
     end
     B-->>C: response.done {text:"<完整>", reason:"turn_end", metrics}
 
-    C->>B: session.close {reason}
-    B-->>C: session.closed {session_id, reason}
+    Note over C,B: HTTP 控制通道
+    C->>B: POST /sessions/{id}/close {reason}
+    B-->>C: {ok:true, closed:true}
+    B-->>C: session.closed {session_id, reason}  %% best-effort
 ```
 
 ### 2.2 示例数据包
@@ -186,18 +188,18 @@ input（streaming = true）：
 文字 delta（多条，需按序拼接）：
 ```json
 { "type": "response.output.delta", "kind": "text",
-  "session_id": "rt_...", "response_id": "resp_...", "text": "北京是" }
+  "session_id": "sess_...", "response_id": "resp_...", "text": "北京是" }
 ```
 ```json
 { "type": "response.output.delta", "kind": "text",
-  "session_id": "rt_...", "response_id": "resp_...", "text": "中国的首都。" }
+  "session_id": "sess_...", "response_id": "resp_...", "text": "中国的首都。" }
 ```
 
 response.done（text 为完整拼接）：
 ```json
 {
   "type": "response.done",
-  "session_id": "rt_...", "response_id": "resp_...",
+  "session_id": "sess_...", "response_id": "resp_...",
   "text": "北京是中国的首都。",
   "reason": "turn_end",
   "metrics": { "backend": "pytorch", "kv_cache_length": 142,
@@ -205,9 +207,12 @@ response.done（text 为完整拼接）：
 }
 ```
 
-close：
-```json
-{ "type": "session.close", "reason": "turn_done" }
+close（unary，与 §1 相同；close 只走 HTTP，不在 WS 上发）：
+```http
+POST /sessions/sess_a1b2c3d4e5f6/close
+Content-Type: application/json
+
+{ "reason": "turn_done" }
 ```
 
 ---
@@ -230,8 +235,10 @@ sequenceDiagram
     Note over B: 生成完成后一次性返回
     B-->>C: response.done {text, audio?, reason:"turn_end", metrics}
 
-    C->>B: session.close {reason}
-    B-->>C: session.closed {session_id, reason}
+    Note over C,B: HTTP 控制通道
+    C->>B: POST /sessions/{id}/close {reason}
+    B-->>C: {ok:true, closed:true}
+    B-->>C: session.closed {session_id, reason}  %% best-effort
 ```
 
 ### 3.2 示例数据包
@@ -255,7 +262,7 @@ response.done（一次性，含合成音频）：
 ```json
 {
   "type": "response.done",
-  "session_id": "rt_...", "response_id": "resp_...",
+  "session_id": "sess_...", "response_id": "resp_...",
   "text": "测试",
   "audio": "<base64 f32 16k>",
   "reason": "turn_end",

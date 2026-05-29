@@ -67,8 +67,9 @@ Unix 时间，单位秒，浮点。接收方用其计算网络漂移；该字段
 
 `POST /sessions/{session_id}/close`
 
-请求体 MUST 为 JSON 对象，MAY 含 `reason`（字符串）。响应 MUST 为 JSON 对象，
-含 `ok`（布尔）、`session_id`（字符串）、`closed`（布尔）。
+请求体 MUST 为 JSON 对象，MAY 含 `reason`（字符串）。对存在的 session，响应 MUST 为
+JSON 对象，含 `ok`（布尔）、`session_id`（字符串）、`closed`（布尔）。close 后 session 被
+遗忘，对同一 id 再次 close 返回 **HTTP 404**（重复语义见 §7.3）。
 
 ---
 
@@ -250,9 +251,10 @@ full_duplex 的 `payload.config`（亦称 sampling）为采样/解码参数集�
 
 ## 7. 状态与错误处理
 
-本协议是 scheduler 与 backend 之间的**受信任内部协议**（见上层 §6.8）。除 `close`
-幂等外，任何重复、乱序或非法的状态转移都视为对端实现 bug，backend MUST **fail-fast**：
-立即终止 session 并关闭 WebSocket，MUST NOT 提供可恢复的错误分支或 reject 事件。
+本协议是 scheduler 与 backend 之间的**受信任内部协议**（见上层 §6.8）。`close` 是唯一的
+正常终止操作（走 HTTP unary 控制通道）；除此之外，任何重复、乱序或非法的状态转移都视为
+对端实现 bug，backend MUST **fail-fast**：立即终止 session 并关闭 WebSocket，MUST NOT
+提供可恢复的错误分支或 reject 事件。
 
 ### 7.1 会话状态
 
@@ -264,15 +266,19 @@ full_duplex 的 `payload.config`（亦称 sampling）为采样/解码参数集�
 |------|---------------|--------|--------|
 | init | → active | **非法（fail-fast）** | — |
 | push | **非法（fail-fast）** | 处理 | — |
-| close（WS 或 unary） | （无 session，HTTP 返回 404） | → closed | **幂等**：返回成功 / "已关闭" |
+| close（仅 HTTP unary） | 404（尚无此 session） | → closed，session 被遗忘 | 404（session 已遗忘） |
 | 其它/未知 `type` | **非法（fail-fast）** | **非法（fail-fast）** | — |
 
-### 7.3 幂等操作
+### 7.3 close 的重复语义
 
-- **close 幂等。** 对已 closed 的 session 再次 close，backend MUST NOT 报错或重复释放资源，
-  MUST 返回成功语义（unary：`{ok:true, ..., closed:true}`）。
-- WS 通道在 close 后即关闭，不再接收后续消息；HTTP close 通道对**不存在**的 session
-  MUST 返回 404，对**已关闭但仍可定位**的 session MUST 返回成功。
+- **close 后 backend 立即遗忘该 session**（释放资源并从会话表移除），不保留 `closed`
+  状态记录。
+- 因此对同一 `session_id` **再次** HTTP close 返回 **404**。backend **不区分**“从未存在”
+  与“已关闭并遗忘”——两者都返回 404。
+- **协议层不保证 close 幂等。** 重复 close 的安全性由调用方（runtime/scheduler）在自己
+  一侧保证：记录 session 已关闭、不再重复发起 close。参考实现中 runtime 用本地 `_closed`
+  标志短路，第二次 close 直接本地返回成功、不打到 backend（故正常使用下重复 close 无副作用）。
+- WS 数据通道在 close 后即关闭，不再接收任何消息。
 
 ### 7.4 MUST fail-fast 的情形（非穷举）
 

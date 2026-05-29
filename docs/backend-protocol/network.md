@@ -143,7 +143,8 @@ close 后：
 
 - 该 session 不再可用。
 - 后续 WebSocket input 无效，因为连接已经关闭。
-- 后续 close 可以返回 session 不存在或 session 已关闭。
+- backend 在 close 后遗忘该 session：对同一 session 再次 close 返回 session 不存在
+  （HTTP 404）。协议层不保证 close 幂等，重复 close 的安全性由上游自己保证（见 schema §7.3）。
 - 如果 WebSocket 在 close unary 返回前已经断开，unary 成功返回仍然表示 session 已关闭。
 
 ## 5. Input Semantics
