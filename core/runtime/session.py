@@ -68,12 +68,8 @@ class BackendRuntimeSession:
         event = await self.backend.pull()
         return backend_event_to_runtime_event(event)
 
-    async def unary(self, request: Dict[str, Any]) -> RuntimeEvent:
-        event = await self.backend.unary(request)
-        return RuntimeEvent(channel="session", payload={"event": event, **event})
-
-    async def close(self, *, reason: str = "client_closed") -> RuntimeEvent:
-        event = await self.backend.close(reason=reason)
+    async def unary(self, method: str, payload: Optional[Dict[str, Any]] = None) -> RuntimeEvent:
+        event = await self.backend.unary(method, payload)
         return RuntimeEvent(channel="session", payload={"event": event, **event})
 
     async def aclose(self) -> None:

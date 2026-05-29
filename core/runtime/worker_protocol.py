@@ -14,10 +14,64 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from core.runtime.duplex import DuplexInputFrame, DuplexPrepareParams
 from core.runtime.events import RuntimeControl, RuntimeEvent
 from core.runtime.media import decode_audio_base64, decode_frame_base64_list
 from core.runtime.voice import DuplexVoiceRefs, resolve_duplex_voice_refs
+
+
+@dataclass
+class DuplexFrameResult:
+    """A completed duplex frame ready to be emitted by the transport layer."""
+
+    result: Any
+    result_dict: Dict[str, Any]
+    prefill_ms: float
+    prefill_result: Dict[str, Any]
+    metrics: Dict[str, Any]
+    wall_clock_ms: float
+    n_vision_images: int
+    vision_tokens: int
+
+    @property
+    def kv_cache_len(self) -> int:
+        return int(self.metrics.get("kv_cache_length", 0) or 0)
+
+    def to_runtime_event(self) -> RuntimeEvent:
+        return RuntimeEvent(
+            channel="output.duplex_result",
+            payload={
+                "frame": self,
+                "result": self.result,
+                "result_dict": self.result_dict,
+                "prefill_ms": self.prefill_ms,
+                "prefill_result": self.prefill_result,
+                "metrics": self.metrics,
+                "wall_clock_ms": self.wall_clock_ms,
+                "n_vision_images": self.n_vision_images,
+                "vision_tokens": self.vision_tokens,
+            },
+        )
+
+
+@dataclass
+class DuplexPrepareParams:
+    """Backend-facing prepare parameters for one duplex session."""
+
+    system_prompt_text: Optional[str]
+    ref_audio_path: Optional[str]
+    prompt_wav_path: Optional[str]
+    config: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class DuplexInputFrame:
+    """Backend-facing input frame for one duplex unit."""
+
+    audio_waveform: np.ndarray
+    frame_list: Optional[list]
+    max_slice_nums: int = 1
+    force_listen: bool = False
+    chunk_start: Optional[float] = None
 
 
 class WorkerProtocolError(ValueError):

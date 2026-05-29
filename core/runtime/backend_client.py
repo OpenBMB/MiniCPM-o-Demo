@@ -99,11 +99,12 @@ class RemoteBackendSession:
             self._closed = True
         return event
 
-    async def unary(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        request_type = str(request.get("type") or "")
-        if request_type not in {"close", "backend.close", "session.close"}:
-            raise ValueError(f"unsupported backend unary request: {request_type}")
-        return await self.close(reason=str(request.get("reason") or "client_closed"))
+    async def unary(self, method: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generic one-shot RPC to the backend. The only method today is "close"."""
+        payload = payload or {}
+        if method in {"close", "backend.close", "session.close"}:
+            return await self.close(reason=str(payload.get("reason") or "client_closed"))
+        raise ValueError(f"unsupported backend unary method: {method}")
 
     async def close(self, *, reason: str = "client_closed") -> Dict[str, Any]:
         if self._closed:

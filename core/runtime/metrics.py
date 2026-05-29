@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.runtime.duplex import DuplexFrameResult
+    from core.runtime.worker_protocol import DuplexFrameResult
 
 
 @dataclass

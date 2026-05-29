@@ -1,8 +1,21 @@
 import logging
 
-from core.runtime.duplex import DuplexFrameResult
+from core.runtime.worker_protocol import DuplexFrameResult
 from core.runtime.metrics import log_duplex_frame
-from tests.test_duplex_runtime import _FakeResult
+
+
+class _FakeResult:
+    is_listen = True
+    text = ""
+    audio_data = None
+    current_time = 1
+    cost_all_ms = 1.0
+    cost_llm_ms = None
+    cost_tts_prep_ms = None
+    cost_tts_ms = None
+    cost_token2wav_ms = None
+    n_tokens = None
+    n_tts_tokens = None
 
 
 def test_log_duplex_frame_listen(caplog):

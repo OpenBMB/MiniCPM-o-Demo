@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from core.processors.backend_factory import create_backend
 from core.runtime.media import decode_audio_base64, decode_frame_base64_list
 from core.runtime.voice import resolve_duplex_voice_refs
-from core.runtime.worker_handlers import _convert_to_model_msgs, _parse_raw_messages
+from core.runtime.messages import convert_to_model_msgs, parse_raw_messages
 from core.runtime.worker_protocol import parse_worker_chat_request_message
 
 
@@ -279,8 +279,8 @@ class BackendProtocolSession:
             response_id = str(payload.get("response_id") or f"resp_{uuid.uuid4().hex[:12]}")
             input_id = payload.get("input_id")
 
-            messages = _parse_raw_messages(request.messages)
-            model_msgs = _convert_to_model_msgs(messages)
+            messages = parse_raw_messages(request.messages)
+            model_msgs = convert_to_model_msgs(messages)
 
             await asyncio.to_thread(
                 self.backend.chat_prefill,
