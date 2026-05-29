@@ -520,7 +520,7 @@ class BackendProtocolSession:
 async def lifespan(app: FastAPI):
     global _backend, _server_state
     logging.basicConfig(level=logging.INFO)
-    logger.info("Loading backend server backend: %s", SERVER_CONFIG.get("backend"))
+    logger.info("Loading backend server backend: pytorch")
     _backend = create_backend(SERVER_CONFIG)
     await asyncio.to_thread(_backend.load_model)
     _server_state = BackendServerState(_backend)
@@ -543,7 +543,7 @@ async def health() -> Dict[str, Any]:
     state = getattr(_backend, "state", None)
     return {
         "status": "ready" if _backend is not None else "loading",
-        "backend": SERVER_CONFIG.get("backend"),
+        "backend": "pytorch",
         "worker_status": getattr(getattr(state, "status", None), "value", getattr(state, "status", None)),
         "active_session_id": _server_state.active_session_id if _server_state else None,
     }
@@ -628,14 +628,11 @@ def main() -> None:
     parser.add_argument("--pt-path", default=None)
     parser.add_argument("--ref-audio-path", default=None)
     parser.add_argument("--gpu-id", type=int, default=0)
-    parser.add_argument("--backend", choices=("pytorch", "cpp"), default=None)
     parser.add_argument("--worker-index", type=int, default=0)
     parser.add_argument("--duplex-pause-timeout", type=float, default=None)
     args = parser.parse_args()
 
-    backend = args.backend or cfg.backend
     SERVER_CONFIG.update({
-        "backend": backend,
         "model_path": args.model_path or cfg.model.model_path,
         "gpu_id": args.gpu_id,
         "pt_path": args.pt_path or cfg.model.pt_path,
@@ -644,14 +641,6 @@ def main() -> None:
         "compile": cfg.compile,
         "chat_vocoder": cfg.chat_vocoder,
         "attn_implementation": cfg.attn_implementation,
-        "cpp_backend": {
-            **cfg.cpp_backend.model_dump(),
-            "cpp_server_port": (
-                (cfg.cpp_backend.cpp_server_port + args.worker_index)
-                if cfg.cpp_backend.cpp_server_port is not None
-                else None
-            ),
-        },
     })
 
     uvicorn.run(app, host=args.host, port=args.port, ws_max_size=128 * 1024 * 1024)

@@ -1,5 +1,4 @@
 {
-    "backend": "pytorch",
     "model": {
         "model_path": "openbmb/MiniCPM-o-4_5",
         "pt_path": null,
@@ -26,14 +25,5 @@
     },
     "duplex": {
         "pause_timeout": 60.0
-    },
-    "cpp_backend": {
-        "_comment": "backend='cpp' 时生效，使用 C++ llama.cpp-omni 推理",
-        "llamacpp_root": "/abs/path/to/llama.cpp-omni",
-        "model_dir": "/abs/path/to/MiniCPM-o-4_5-gguf",
-        "llm_model": "MiniCPM-o-4_5-Q4_K_M.gguf",
-        "cpp_server_port": null,
-        "ctx_size": 32768,
-        "n_gpu_layers": 99
     }
 }

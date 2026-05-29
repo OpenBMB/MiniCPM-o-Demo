@@ -441,16 +441,13 @@ def main():
     parser.add_argument("--gpu-id", type=int, default=None, help="GPU ID (inferred from port if not set)")
     parser.add_argument("--worker-index", type=int, default=0, help="Worker index (0, 1, 2, ...)")
     parser.add_argument("--duplex-pause-timeout", type=float, default=None, help="Duplex pause timeout (s)")
-    parser.add_argument("--backend", choices=("pytorch", "cpp"), default=None, help="Override inference backend")
     parser.add_argument("--backend-server-url", type=str, default=None, help="Remote backend_server.py base URL")
     args = parser.parse_args()
 
     port = args.port or cfg.worker_port(args.worker_index)
     gpu_id = args.gpu_id if args.gpu_id is not None else args.worker_index
-    backend = args.backend or cfg.backend
 
     WORKER_CONFIG.update({
-        "backend": backend,
         "model_path": args.model_path or cfg.model.model_path,
         "gpu_id": gpu_id,
         "pt_path": args.pt_path or cfg.model.pt_path,
@@ -460,14 +457,6 @@ def main():
         "compile": cfg.compile,
         "chat_vocoder": cfg.chat_vocoder,
         "attn_implementation": cfg.attn_implementation,
-        "cpp_backend": {
-            **cfg.cpp_backend.model_dump(),
-            "cpp_server_port": (
-                (cfg.cpp_backend.cpp_server_port + args.worker_index)
-                if cfg.cpp_backend.cpp_server_port is not None
-                else None
-            ),
-        },
     })
 
     logger.info(f"Starting Worker on port {port}, GPU {gpu_id}")
