@@ -46,6 +46,9 @@ MUST NOT 是 WAV/容器封装，MUST NOT 是整型 PCM。
 
 视频/图像帧 MUST 为 base64 编码的单张 **JPEG** 图片。多帧以 base64 字符串数组表示。
 
+适用于 `image` 内容项（§4.4）与 full_duplex 的 `video_frames`（§4.1）。turn_based
+`messages` 中的 `video` 内容项是另一种编码（完整 MP4 容器文件），见 §4.4。
+
 ### 1.5 时间戳
 
 backend 发出的每条下行事件 SHOULD 含字段 `server_send_ts`：事件发送时刻的
@@ -171,8 +174,13 @@ push 消息：`type` MUST 为 `input.append`。模型输入 MUST 位于 `input` 
 |--------|----------|------|
 | `text` | `text` (string) | — |
 | `audio` | `data` (string) | §1.3 |
-| `image` | `data` (string) | §1.4 |
-| `video` | `data` (string)、`stack_frames`(int) | §1.4 |
+| `image` | `data` (string) | §1.4（单张 JPEG）|
+| `video` | `data` (string)、`stack_frames`(int) | base64 **视频容器文件（MP4）**，见下注 |
+
+> **`video` 内容项的 `data` 与 §1.4 的“JPEG 帧”不同。** 它是 base64 编码的**完整视频
+> 容器文件（MP4）**：backend 解码该文件，抽取视频帧与对应音频段一并交给模型；
+> `stack_frames` 控制每个采样点堆叠的帧数。这与 full_duplex 的 `video_frames`
+> （= JPEG 帧数组，§1.4）是**两条不同的视频输入路径**，不要混用。
 
 ---
 

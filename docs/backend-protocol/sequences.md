@@ -277,7 +277,7 @@ response.done（一次性，含合成音频）：
 
 ## 4. 多模态输入示例（messages content 项）
 
-turn_based 的 `messages[].content` 可混合多种内容项（编码见 schema §1.3/§1.4）：
+turn_based 的 `messages[].content` 可混合多种内容项（编码见 schema §1.3/§1.4/§4.4）：
 
 ```json
 {
@@ -286,7 +286,10 @@ turn_based 的 `messages[].content` 可混合多种内容项（编码见 schema 
     { "type": "text",  "text": "描述这张图和这段话" },
     { "type": "image", "data": "<jpeg base64>" },
     { "type": "audio", "data": "<base64 f32 16k>" },
-    { "type": "video", "data": "<jpeg base64>", "stack_frames": 1 }
+    { "type": "video", "data": "<base64 mp4 容器文件>", "stack_frames": 1 }
   ]
 }
 ```
+
+> `image` 是单张 JPEG（§1.4）；`video` 的 `data` 是**完整 MP4 容器文件**的 base64，
+> 由 backend 解码抽帧+音频（§4.4），与 full_duplex 的 JPEG `video_frames` 不同。
