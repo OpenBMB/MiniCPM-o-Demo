@@ -8,9 +8,9 @@
 - `turn_based`（streaming）—— 流式对话
 - `turn_based`（non-streaming）—— 一次性对话
 
-> 示例中的 base64 音视频负载以 `...` 省略；实际为 base64 字符串（音频见 schema §1.3：
-> float32 LE PCM 16k mono；图像见 §1.4：JPEG）。每条下行事件实际还带 `server_send_ts`，
-> 示例中按需省略。
+> 示例中的 base64 音视频负载以 `...` 或 `<base64 f32 16k>` 省略；实际为 base64 字符串
+> （音频见 schema §1.3：base64 裸 float PCM，示例抓包为 float32 / 16k / mono；图像见
+> §1.4：JPEG）。每条下行事件实际还带 `server_send_ts`，示例中按需省略。
 
 ---
 
