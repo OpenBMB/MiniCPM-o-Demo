@@ -43,7 +43,7 @@ unary(request) -> result
 - `push` 只承载模型输入。turn-based 的请求、full-duplex 的连续观察都通过 `push(input)` 进入 backend。
 - `pull` 承载该 session 的单一有序事件流，包括初始化确认、模型输出、response 完成和关闭。metrics 不是独立事件，而是附着在这些下行事件上的字段（见 §6.7）。
 - `unary` 承载不进入模型上下文的一次性控制请求。当前版本只定义 `close`。
-- session identity 是网络层概念，由 backend 在 init 成功后分配或确认。
+- session identity 是网络层概念，由 backend 在 init 成功后分配，不接受客户端指定。
 
 当前版本不定义 `pause` / `resume`。如果 runtime 或 scheduler 想暂停输入，只需停止调用 `push`；backend 没有新的模型观察时自然处于等待输入状态。暂停是 backend 上游的行为：可能发生在客户端采集层，或 runtime/scheduler 层（如暂停队列调度、停止向 backend 发送 input），都不是 backend 的控制命令。
 

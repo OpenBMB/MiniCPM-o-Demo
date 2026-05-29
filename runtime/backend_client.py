@@ -57,8 +57,9 @@ class RemoteBackendSession:
 
         init_params = dict(params or {})
         init_params.setdefault("mode", self.mode)
-        if self.session_id is not None:
-            init_params.setdefault("session_id", self.session_id)
+        # session identity 由 backend 分配：不向 init 发送建议的 session_id（见协议 schema §3.1）。
+        # backend 在 session.created 中回传真实 id，下面 pull 后读回。
+        init_params.pop("session_id", None)
 
         self._ws = await websockets.connect(
             _ws_url_for(self.base_url, self.ws_path),

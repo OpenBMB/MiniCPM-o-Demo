@@ -76,19 +76,22 @@ Unix 时间，单位秒，浮点。接收方用其计算网络漂移；该字段
 
 ### 3.1 Init 请求
 
-`type` MUST 取 `init`、`backend.init`、`session.init` 之一。
+`type` MUST 为 `session.init`。
 
 字段：
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
-| `type` | string | MUST | 见上 |
-| `payload` | object | MUST | init 参数，结构见下；亦接受顶层平铺 |
+| `type` | string = `session.init` | MUST | |
+| `payload` | object | MUST | init 参数，结构见下 |
 | `payload.mode` | string | MUST | `turn_based` 或 `full_duplex`；缺省 `full_duplex` |
-| `payload.session_id` | string | MAY | 客户端建议的 session id；缺省由 backend 分配 |
 | `payload.voice` | object | MAY | 参考音频，见 §3.1.1（full_duplex） |
 | `payload.system_prompt` | string | MAY | 系统提示（full_duplex） |
 | `payload.config` | object | MAY | 透传采样/解码参数，见 §6 |
+
+session identity 由 backend 分配，**不接受**客户端指定：init 请求 MUST NOT 含
+`session_id`；backend MUST 自行生成 session id，并在 `session.created`（§3.2）中回传。
+backend 收到带 `session_id` 的 init MAY 忽略该字段，MUST NOT 采用客户端建议值。
 
 #### 3.1.1 参考音频（voice，契约）
 
@@ -110,21 +113,20 @@ backend 完成初始化后 MUST 在下行流发送：
 | 字段 | 类型 | 约束 |
 |------|------|------|
 | `type` | string = `session.created` | MUST |
-| `session_id` | string | MUST |
+| `session_id` | string | MUST，backend 分配的 session id（§3.1） |
 | `mode` | string | MUST |
 | `metrics` | object | MAY，见 §5.4 |
 
 ### 3.3 Close
 
-数据通道 close 消息：`type` MUST 取 `close`、`backend.close`、`session.close` 之一，
-MAY 含 `reason`。控制通道 close 见 §2.2。完成语义见上层 §3.2 / §4.3。
+close 只走控制通道（HTTP unary，见 §2.2）；数据通道（WebSocket）上 MUST NOT 发送
+close 消息（理由见上层 §3.2）。完成语义见上层 §3.2 / §4.3。
 
 ---
 
 ## 4. 输入消息（push）
 
-push 消息：`type` MUST 取 `push`、`input`、`backend.push`、`input.append` 之一。
-模型输入位于 `input` 字段（亦接受 `data`，或顶层平铺）。
+push 消息：`type` MUST 为 `input.append`。模型输入 MUST 位于 `input` 字段（对象）。
 
 ### 4.1 Full-Duplex 输入
 

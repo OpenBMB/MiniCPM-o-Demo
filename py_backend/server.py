@@ -41,9 +41,9 @@ _server_state: Optional["BackendServerState"] = None
 
 def _payload(message: Dict[str, Any]) -> Dict[str, Any]:
     payload = message.get("payload")
-    if isinstance(payload, dict):
-        return payload
-    return message
+    if not isinstance(payload, dict):
+        raise RuntimeError("message must carry an object `payload`")
+    return payload
 
 
 def _message_type(message: Dict[str, Any]) -> str:
@@ -65,12 +65,10 @@ def _coalesce(*values: Any, default: Any = None) -> Any:
 
 
 def _get_input_payload(message: Dict[str, Any]) -> Dict[str, Any]:
-    payload = _payload(message)
-    for key in ("input", "data"):
-        value = payload.get(key)
-        if isinstance(value, dict):
-            return value
-    return payload
+    value = message.get("input")
+    if not isinstance(value, dict):
+        raise RuntimeError("input.append must carry an object `input`")
+    return value
 
 
 def _extract_frame_base64_list(payload: Dict[str, Any]) -> Optional[list[str]]:
@@ -562,12 +560,13 @@ async def backend_ws(ws: WebSocket) -> None:
     session: Optional[BackendProtocolSession] = None
     try:
         first = json.loads(await ws.receive_text())
-        if _message_type(first) not in {"init", "backend.init", "session.init"}:
-            raise RuntimeError("first message must be init")
+        if _message_type(first) != "session.init":
+            raise RuntimeError("first message must be session.init")
 
         params = _payload(first)
-        mode = str(_coalesce(params.get("mode"), first.get("mode"), default="full_duplex"))
-        session_id = str(_coalesce(params.get("session_id"), first.get("session_id"), default=f"sess_{uuid.uuid4().hex[:12]}"))
+        mode = str(params.get("mode") or "full_duplex")
+        # session identity 由 backend 分配，不接受客户端建议的 session_id（见协议 schema §3.1）
+        session_id = f"sess_{uuid.uuid4().hex[:12]}"
         session = BackendProtocolSession(
             session_id=session_id,
             mode=mode,
@@ -581,12 +580,10 @@ async def backend_ws(ws: WebSocket) -> None:
         while not session.closed:
             message = json.loads(await ws.receive_text())
             msg_type = _message_type(message)
-            if msg_type in {"push", "input", "backend.push", "input.append"}:
+            if msg_type == "input.append":
                 await session.push(message)
                 continue
-            if msg_type in {"close", "backend.close", "session.close"}:
-                await session.close(reason="client_closed")
-                break
+            # close 只走 HTTP unary 控制通道（见协议 network §3.2），WS 上不接受 close
             raise RuntimeError(f"unsupported message type: {msg_type}")
 
     except WebSocketDisconnect:
