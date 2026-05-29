@@ -198,6 +198,7 @@ export class RealtimeSession {
                         this._logProtoEvent('server', 'session.created',
                             `session_id=${this.sessionId}`, msg);
                         this.onQueueUpdate(null);
+                        this.onMetrics({ type: 'state', sessionId: this.sessionId });
                         this.onSystemLog(`Session created: ${this.sessionId} (${msg.prompt_length || '?'} tokens)`);
                         resolve();
                     } else if (msg.type === 'error') {
@@ -425,7 +426,22 @@ export class RealtimeSession {
         }
     }
 
+    /** Network drift: latency change vs the first result (ported from duplex-session.js). */
+    _updateDrift(msg) {
+        this._lastDriftMs = null;
+        const serverSendSec = msg && msg.server_send_ts;
+        if (!serverSendSec) return;
+        const clientRecvSec = Date.now() / 1000;
+        if (!this._firstServerTs) {
+            this._firstServerTs = serverSendSec;
+            this._firstClientTs = clientRecvSec;
+        }
+        this._lastDriftMs = (clientRecvSec - serverSendSec
+            - (this._firstClientTs - this._firstServerTs)) * 1000;
+    }
+
     _applyFrameMetrics(msg) {
+        this._updateDrift(msg);
         if (msg && typeof msg.metrics === 'object' && msg.metrics !== null) {
             this._lastFrameMetrics = msg.metrics;
             return;

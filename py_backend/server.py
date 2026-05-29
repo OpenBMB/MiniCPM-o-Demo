@@ -171,6 +171,7 @@ class BackendProtocolSession:
 
     async def send(self, event_type: str, **fields: Any) -> None:
         data = {"type": event_type, **{k: v for k, v in fields.items() if v is not None}}
+        data["server_send_ts"] = time.time()
         await self.ws.send_json(data)
 
     async def send_output_delta(self, kind: str, **fields: Any) -> None:
