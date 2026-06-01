@@ -349,6 +349,10 @@ class CppWsBackendWorker:
     def _save_image_to_temp(self, image: Any, prefix: str) -> str:
         path = os.path.join(self._temp_dir, f"{prefix}_image.jpg")
         if hasattr(image, "save"):
+            # JPEG doesn't support alpha — convert RGBA → RGB
+            if hasattr(image, "mode") and image.mode == "RGBA":
+                from PIL import Image as PILImage
+                image = image.convert("RGB")
             image.save(path, "JPEG", quality=95)
         return path
 
@@ -532,8 +536,7 @@ class CppWsBackendWorker:
                 elif kind == "audio":
                     delta_b64 = event.get("delta", "")
                     if delta_b64:
-                        audio_data = base64.b64decode(delta_b64)
-                        yield StreamingChunk(chunk_index=chunk_idx, audio_data=audio_data, is_final=False)
+                        yield StreamingChunk(chunk_index=chunk_idx, audio_data=delta_b64, is_final=False)
                         chunk_idx += 1
                 elif kind == "listen":
                     yield StreamingChunk(chunk_index=chunk_idx, text_delta="", is_final=True)
@@ -541,8 +544,7 @@ class CppWsBackendWorker:
             elif etype == "response.done":
                 full_text = event.get("full_text") or "".join(texts)
                 audio_b64 = event.get("audio") or ""
-                audio_data = base64.b64decode(audio_b64) if audio_b64 else None
-                yield StreamingChunk(chunk_index=chunk_idx, text_delta=full_text, audio_data=audio_data, is_final=True)
+                yield StreamingChunk(chunk_index=chunk_idx, text_delta=full_text, audio_data=audio_b64 if audio_b64 else None, is_final=True)
                 return
             elif etype == "session.closed":
                 yield StreamingChunk(chunk_index=chunk_idx, text_delta="", is_final=True)
