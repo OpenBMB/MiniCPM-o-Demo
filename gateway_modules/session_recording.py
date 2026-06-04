@@ -66,8 +66,7 @@ class SessionRecorder:
         mode: str,
         *,
         data_dir: str,
-        client: Optional[Dict[str, Any]] = None,
-        source: Optional[Dict[str, Any]] = None,
+        identity: Optional[Dict[str, Any]] = None,
         worker: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.session_id = session_id
@@ -92,8 +91,9 @@ class SessionRecorder:
             "ended_at": None,
             "duration_s": None,
             "worker": worker or {},
-            "client": client or {},
-            "source": source or {},
+            # identity 直接整块存:client_id / page_session_id / page_route /
+            # client_surface / client_ip / user_agent / source_* 等,前端新增字段自动带入。
+            "identity": identity or {},
             "close_reason": None,
         }
         self._flush_meta()

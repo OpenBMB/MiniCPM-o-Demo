@@ -82,14 +82,18 @@ def _client_ip_from_ws(ws: WebSocket) -> Optional[str]:
     return ws.headers.get("x-real-ip") or (ws.client.host if ws.client else None)
 
 
-def _worker_identity_query(
+def _identity_dict(
     ws: WebSocket,
     *,
     session_id: str,
     source_channel: str,
     source_mode: Optional[str] = None,
-) -> str:
-    """Build query params passed to worker so recordings can be linked to clients/pages."""
+) -> Dict[str, Any]:
+    """Collect all client/page/source identity meta from the incoming WS.
+
+    单一数据源:既用于透传给 worker(urlencode),也直接作为录制 meta。
+    前端新增任何 identity 字段,只要在这里收集一次,即同时流入两处。
+    """
     client_id = (
         ws.query_params.get("client_id")
         or ws.headers.get("x-client-id")
@@ -100,7 +104,7 @@ def _worker_identity_query(
         or ws.headers.get("x-page-session-id")
         or ws.cookies.get("page_session_id")
     )
-    params = {
+    return {
         "session_id": session_id,
         "gateway_session_id": session_id,
         "client_id": client_id,
@@ -114,6 +118,19 @@ def _worker_identity_query(
         "page_route": ws.query_params.get("page_route"),
         "client_surface": ws.query_params.get("client_surface"),
     }
+
+
+def _worker_identity_query(
+    ws: WebSocket,
+    *,
+    session_id: str,
+    source_channel: str,
+    source_mode: Optional[str] = None,
+) -> str:
+    """Build query params passed to worker so recordings can be linked to clients/pages."""
+    params = _identity_dict(
+        ws, session_id=session_id, source_channel=source_channel, source_mode=source_mode
+    )
     return urlencode({k: v for k, v in params.items() if v})
 
 
@@ -376,12 +393,13 @@ async def _api_worker_passthrough_ws(
 
     try:
         import websockets
-        identity_qs = _worker_identity_query(
+        identity = _identity_dict(
             ws,
             session_id=session_id,
             source_channel=source_channel,
             source_mode=source_mode,
         )
+        identity_qs = urlencode({k: v for k, v in identity.items() if v})
 
         # ---- session 录制(旁路,fail-safe:任何异常都不影响转发主路径)----
         recorder = None
@@ -394,8 +412,7 @@ async def _api_worker_passthrough_ws(
                 recorder = SessionRecorder(
                     session_id, _mode,
                     data_dir=os.path.join(_BASE_DIR, _cfg.data_dir),
-                    client={"ip": _client_ip_from_ws(ws), "user_agent": ws.headers.get("user-agent")},
-                    source={"channel": source_channel, "mode": source_mode},
+                    identity=identity,
                     worker={"host": worker.host, "port": worker.port, "gpu_id": getattr(worker, "gpu_id", None)},
                 )
         except Exception:
