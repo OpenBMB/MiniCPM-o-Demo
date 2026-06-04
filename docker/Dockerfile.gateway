@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+#
+# gateway 镜像(torch-free 轻量控制面)。
+#
+# gateway 只做:/v1/realtime 公网入口、mode 分流、worker 池调度(FIFO 队列 + 负载感知)、
+# 协议转发、session 录制。它不加载模型、不依赖 torch/CUDA。
+#
+# 依赖核对(grep gateway.py + gateway_modules + runtime/):fastapi/uvicorn/httpx/
+# numpy/websockets/pydantic + markdown/pygments(docs 渲染)+ python-multipart。
+# 整个 runtime/ 已确认 torch-free,可安全打进轻镜像。
+#
+# 模型权重、torch 都不在本镜像——那是 worker-backend 镜像的事。
+# session 录制数据(data/)运行时以 volume 挂载,见 compose。
+
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app
+
+# 轻量系统依赖:curl 仅用于健康检查
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# gateway 的全部 Python 依赖(无 torch / transformers / minicpmo-utils)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+        "fastapi>=0.128.0" \
+        "uvicorn>=0.40.0" \
+        "httpx>=0.28.0" \
+        "websockets>=16.0" \
+        "pydantic>=2.11.0" \
+        "numpy>=2.2.0" \
+        "markdown>=3.6" \
+        "Pygments>=2.18.0" \
+        python-multipart
+
+# 代码放最后(最常变,前面依赖层全命中缓存)
+COPY . .
+
+RUN mkdir -p /app/data
+
+EXPOSE 8006
+
+# gateway 启动参数由 compose command 提供(--port / --workers / --http)
+ENTRYPOINT ["python", "gateway.py"]

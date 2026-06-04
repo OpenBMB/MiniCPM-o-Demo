@@ -1,20 +1,96 @@
+# MiniCPM-o 多 worker 单 gateway 部署(docker compose)
+#
+# 架构:
+#   gateway        ×1   :8006   torch-free 控制面;/v1/realtime 入口 + 调度 + 录制
+#   worker-backend ×N   每个独占 1 张 GPU;容器内 backend(:22500)+ worker(:22400,纯转发)
+#
+# 拓扑要点:
+#   - 每个 worker-backend 显式绑定一张特定 GPU(device_ids),不能用 --scale(会抢同一张卡)。
+#   - 容器内 GPU 永远是 0(GPU_ID=0):reservation 决定它看到宿主机哪张卡,容器内就叫 cuda:0。
+#   - gateway 用 compose 内部 DNS 静态寻址 worker(worker-backend-0:22400,...),无需服务发现。
+#   - worker-backend 挂模型(只读)、不挂 data(纯净);gateway 挂 data(录制持久化)、不要 GPU。
+#   - 模型权重不进镜像,运行时挂载;路径由 MODEL_HOST_PATH 指定。
+#
+# 增减 GPU = 增删 worker-backend-N service 并同步 gateway 的 --workers 列表。
+#
+# 用法:
+#   MODEL_HOST_PATH=/root/xubokai/MiniCPM-o-4_5 docker compose up -d --build
+#   docker compose logs -f gateway
+#   docker compose logs -f worker-backend-0
+
+x-worker-backend: &worker-backend-base
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.worker-backend
+  image: minicpm-wb:dev
+  environment:
+    GPU_ID: "0"            # 容器内恒为 0(见上)
+    BACKEND_PORT: "22500"
+    WORKER_PORT: "22400"
+    MODEL_PATH: /models/MiniCPM-o-4_5
+  restart: unless-stopped
+  healthcheck:
+    # 查 worker /health;转发模式下 backend 是否就绪由 entrypoint 门控保证
+    test: ["CMD", "curl", "-sf", "http://127.0.0.1:22400/health"]
+    interval: 15s
+    timeout: 5s
+    retries: 40          # 模型加载 ~90s,给足重试(40×15s=10min)
+    start_period: 120s
+  logging:
+    driver: json-file
+    options: {max-size: "50m", max-file: "3"}
+
 services:
-  minicpm-o:
-    build: .
-    image: minicpm-o-demo:latest
-    container_name: minicpm-o-demo
-    ports:
-      - "8006:8006"
+  worker-backend-0:
+    <<: *worker-backend-base
+    container_name: minicpm-wb-0
     volumes:
-      - ./workspace:/workspace
-    environment:
-      - GATEWAY_PROTO=http
-      # - CUDA_VISIBLE_DEVICES=0,1
+      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              device_ids: ["0"]
               capabilities: [gpu]
+
+  worker-backend-1:
+    <<: *worker-backend-base
+    container_name: minicpm-wb-1
+    volumes:
+      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    image: minicpm-gateway:dev
+    container_name: minicpm-gateway
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8006"
+      - "--http"
+      - "--workers"
+      - "worker-backend-0:22400,worker-backend-1:22400"
+    ports:
+      - "8006:8006"
+    volumes:
+      - ${DATA_HOST_PATH:-./data}:/app/data      # session 录制持久化到 host
+    depends_on:
+      worker-backend-0:
+        condition: service_healthy
+      worker-backend-1:
+        condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}
