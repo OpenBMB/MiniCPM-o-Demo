@@ -109,22 +109,6 @@ https://<SERVER_IP>:8006/health      # 健康检查
 
 > 自签证书:浏览器会警告不安全,点"高级 → 继续访问"。实时页面进入后需"允许使用麦克风"。
 
-### 对外暴露 / 反向代理约定(重要)
-
-本服务(含前端页面、WebSocket、API)以**根路径**对外提供:`/v1/realtime`、`/static/...`、
-`/omni`、`/api/...` 等都从 `/` 开始。请按以下约定对外暴露,否则前端会加载异常:
-
-- **独占一个域名或端口的根路径**,例如 `https://demo.example.com/` 或 `https://host:8006/`,
-  让本服务直接占据 `/`。
-- **反向代理请原样透传到 `/`,不要加路径前缀、不要做路径重写。** 例如**不要**把它挂到
-  `https://example.com/minicpm/` 这种子路径下——页面 HTML 引用的是绝对路径资源(`/static/...`),
-  子路径挂载会导致 CSS/JS/WebSocket 全部指错而失效。这是带前端的 Web 应用的通用要求,
-  与本服务无关。
-- 反代需**支持 WebSocket 升级**(`/v1/realtime` 是长连接 WS),且**空闲超时要足够长**
-  (full_duplex 会话静默时不能被中途掐断)。
-- 终结 TLS 后转发到容器:可让反代处理证书、以明文转发到 gateway(此时 gateway 可用 `--http`);
-  或保持 gateway 自身 HTTPS(默认)由反代透传 TCP。任选其一,不要双重 TLS。
-
 ### 环境变量
 
 | 变量 | 说明 | 默认 |
@@ -214,32 +198,50 @@ worker-backend-0b:
 
 ---
 
-## 亲和性 / 会话黏性(重要)
+## 编排成 K8s 服务的注意事项
 
-这是一个**有状态**服务,部署时必须理解它的会话亲和性约束:
+本服务是**有状态、长驻**的,跟无状态 Web 服务的部署假设不同。把它编排成 K8s(或其它平台)
+服务、或放到反向代理 / 网关后面时,以下几点必须满足,否则会出现连接错乱、前端加载失败或会话中断。
 
-### 1. 一个 Session 绑定一个 Worker,全程不迁移
+### 1. 根路径透传,不要加前缀 / 重写路径
 
-- 每个 backend **同时只服务一个 session**(并发上限 = worker-backend 实例数 = GPU 数)。
-- Gateway 为新 session 挑选一个空闲 worker 后,该 session 的**所有消息全程钉在这个 worker 上**,直到结束。
+本服务(前端页面、WebSocket、API)以**根路径**对外提供:`/v1/realtime`、`/static/...`、
+`/omni`、`/api/...` 都从 `/` 开始。
+
+- **让它独占一个域名或端口的根路径**(如 `https://demo.example.com/` 或 `https://host:8006/`)。
+- **Ingress / 反向代理原样透传到 `/`,不要加路径前缀、不要做路径重写。** 例如**不要**挂到
+  `https://example.com/minicpm/` 这种子路径——页面 HTML 引用的是绝对路径资源(`/static/...`),
+  子路径挂载会让 CSS/JS/WebSocket 全部指错而失效。(这是带前端的 Web 应用的通用要求,与本服务无关。)
+- 需**支持 WebSocket 升级**(`/v1/realtime` 是长连接 WS),且**空闲超时足够长**
+  (full_duplex 会话静默时不能被中途掐断)。
+- TLS 只终结一次:反代处理证书后明文转发到 gateway(gateway 用 `--http`),或反代透传 TCP、
+  由 gateway 自身 HTTPS(默认)。不要双重 TLS。
+
+### 2. 会话绑定单个 Worker,全程不迁移(亲和性)
+
+- 每个 backend **同时只服务一个 session**;Gateway 为新 session 选定一个空闲 worker 后,
+  该 session 的**所有消息全程钉在这个 worker 上**,直到结束。
 - 会话状态(KV cache 等)只存在那一个 backend 进程里,**无法迁移到其它实例**;断连即终止,不支持续传。
 
-### 2. Gateway 必须能逐一寻址每个 Worker —— 不要在中间再加负载均衡
+### 3. Gateway 必须能逐一寻址每个 Worker —— 中间不要再放负载均衡
 
-- Gateway 自己负责调度(选哪个 worker、FIFO 排队),并**亲自把 session 钉在选定的 worker** 上。
-- 因此 Gateway 必须能**直连到每一个具体的 worker 实例**(本部署用 Compose 内部 DNS:`worker-backend-0`、`worker-backend-1` …)。
-- ⚠️ **不要在 Gateway 与 worker 之间再插一层 L4/L7 负载均衡**:那会把 Gateway 已经定向的请求随机打散到别的 worker,导致会话状态错乱。
-- 若未来跨主机部署(Gateway 与 Worker 不同机),同理:每个 worker 需有**稳定且可被 Gateway 逐一寻址**的地址(如 K8s 的 Headless Service / StatefulSet,而非负载均衡的单一 Service VIP)。
+- Gateway 自己负责调度(选 worker、FIFO 排队)并把 session 钉在选定 worker 上,
+  因此它必须能**直连到每一个具体的 worker 实例**(本部署用 Compose 内部 DNS:`worker-backend-0` …)。
+- ⚠️ **不要在 Gateway 与 worker 之间插 L4/L7 负载均衡**:它会把 Gateway 已定向的请求随机打散到别的
+  worker,导致会话状态错乱。
+- 编排到 K8s 时,worker 需要**稳定且可被 Gateway 逐一寻址**的地址——用 **Headless Service /
+  StatefulSet**(每个 Pod 一个稳定 DNS 名),**而不是**负载均衡的单一 Service VIP。
 
-### 3. Gateway 是有状态单点
+### 4. Gateway 是有状态单点
 
 - worker 池、session→worker 映射都在 Gateway 内存里 → Gateway 单实例,不做多副本;挂掉则在途 session 全部丢失。
-- 这是本架构的有意取舍:**调度集中在 Gateway**,避免与外部编排设施的调度冲突。
+- 这是有意取舍:**调度集中在 Gateway**,避免与外部编排设施的调度冲突。不要试图水平扩 Gateway 副本。
 
-### 4. 实例是长驻的,不是 serverless
+### 5. 实例长驻,不是 serverless
 
-- worker-backend 实例**有状态、长期驻留**:模型常驻显存,会话状态(KV cache 等)驻留在进程内。
-- **不应像 serverless 那样按请求拉起 / 用完销毁**——每次重建都要重新加载模型(数十秒)、且会丢掉所有在途会话。实例应保持运行,由 Gateway 调度会话进出。
+- worker-backend **有状态、长期驻留**:模型常驻显存、会话状态在进程内。
+- **不应像 serverless 那样按请求拉起 / 用完销毁**——每次重建要重新加载模型(数十秒)且丢掉在途会话。
+  实例应保持运行,由 Gateway 调度会话进出;扩缩按"增减常驻实例"做,不是按请求弹性伸缩。
 
 ---
 
