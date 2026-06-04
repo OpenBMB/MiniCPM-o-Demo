@@ -371,6 +371,7 @@ async def _api_worker_passthrough_ws(
     worker.mark_busy(worker_status, request_type, session_id=session_id)
     task_start = datetime.now()
     worker_ws = None
+    recorder = None
     session_closed = asyncio.Event()
 
     try:
@@ -381,6 +382,25 @@ async def _api_worker_passthrough_ws(
             source_channel=source_channel,
             source_mode=source_mode,
         )
+
+        # ---- session 录制(旁路,fail-safe:任何异常都不影响转发主路径)----
+        recorder = None
+        try:
+            from config import get_config
+            _cfg = get_config()
+            if _cfg.recording.enabled:
+                from gateway_modules.session_recording import SessionRecorder
+                _mode = "turn_based" if request_type == "chat" else "full_duplex"
+                recorder = SessionRecorder(
+                    session_id, _mode,
+                    data_dir=os.path.join(_BASE_DIR, _cfg.data_dir),
+                    client={"ip": _client_ip_from_ws(ws), "user_agent": ws.headers.get("user-agent")},
+                    source={"channel": source_channel, "mode": source_mode},
+                    worker={"host": worker.host, "port": worker.port, "gpu_id": getattr(worker, "gpu_id", None)},
+                )
+        except Exception:
+            recorder = None
+
         ws_url = f"ws://{worker.host}:{worker.port}{worker_path}?{identity_qs}"
         worker_ws = await websockets.connect(ws_url, open_timeout=5, max_size=128 * 1024 * 1024)
 
@@ -388,6 +408,11 @@ async def _api_worker_passthrough_ws(
             try:
                 async for raw in ws.iter_text():
                     await worker_ws.send(raw)
+                    if recorder is not None:
+                        try:
+                            recorder.record("up", json.loads(raw))
+                        except Exception:
+                            pass
             except WebSocketDisconnect:
                 pass
 
@@ -396,6 +421,8 @@ async def _api_worker_passthrough_ws(
                 await ws.send_text(raw)
                 try:
                     msg = json.loads(raw)
+                    if recorder is not None:
+                        recorder.record("down", msg)
                     if msg.get("type") == "session.closed":
                         session_closed.set()
                         return
@@ -434,6 +461,11 @@ async def _api_worker_passthrough_ws(
         except Exception:
             pass
     finally:
+        if recorder is not None:
+            try:
+                recorder.close(reason="session_end" if session_closed.is_set() else "disconnected")
+            except Exception:
+                pass
         if worker_ws:
             try:
                 await worker_ws.close()
