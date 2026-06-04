@@ -110,6 +110,60 @@ https://<SERVER_IP>:8006/health      # 健康检查
 
 ---
 
+## 一张 GPU 跑多个 Worker(提并发)
+
+当单卡显存远大于一份模型(本模型约 21.8GB/份),可以在一张卡上放多个 worker-backend 实例
+来**提高并发 session 数**。做法:多个 service 的 `device_ids` 指向**同一张卡**。
+
+```yaml
+# GPU 0 上放两个实例
+worker-backend-0a:
+  <<: *worker-backend-base
+  container_name: minicpm-wb-0a
+  volumes:
+    - ${MODEL_HOST_PATH:?}:/models/MiniCPM-o-4_5:ro
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - {driver: nvidia, device_ids: ["0"], capabilities: [gpu]}
+
+worker-backend-0b:
+  <<: *worker-backend-base
+  container_name: minicpm-wb-0b
+  volumes:
+    - ${MODEL_HOST_PATH:?}:/models/MiniCPM-o-4_5:ro
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - {driver: nvidia, device_ids: ["0"], capabilities: [gpu]}   # ← 同样指 0
+```
+
+然后把全部实例加进 gateway 的 `--workers` 与 `depends_on`:
+`worker-backend-0a:22400,worker-backend-0b:22400,...`
+
+要点:
+- **端口不用手动错开**:每个实例是独立容器,容器内 backend(22500)/worker(22400)端口都用默认值,
+  容器间靠 compose 网络隔离,不会冲突。`environment` 全部继承 `*worker-backend-base`,无需改。
+- **显存核算**:每个实例独立加载一份模型(约 21.8GB,**不共享权重**)。一张 98GB 卡放
+  N 个 = N × 21.8GB,**建议每卡 2–3 个**,给运行时 KV cache 增长(单 session 峰值可达 27GB+)留余量,
+  不要顶满。
+
+### 代价(务必权衡)
+
+| 维度 | 影响 |
+|------|------|
+| **显存** | N 份**重复的**模型副本 —— 这是冗余;真正消除需 backend 层多 session 批处理(如 vLLM 式),compose 做不到 |
+| **算力** | 同卡多个 backend **共享 GPU 计算单元(SM)**;它们同时推理时算力被瓜分,每个 session 延迟变长 |
+| **适用场景** | 适合"并发数高但每个 session 不全程满载"(对话有思考间隙);不适合多个 session 同时持续高强度生成 |
+| **启动** | N 份模型同时加载会抢 GPU/IO,启动更慢 |
+
+> 一句话:一卡多 worker 是用"显存冗余 + 算力瓜分"换"更高并发"。卡的显存空、并发是瓶颈时值得;
+> 追求单请求低延迟时不要这么做。
+
+---
+
 ## 亲和性 / 会话黏性(重要)
 
 这是一个**有状态**服务,部署时必须理解它的会话亲和性约束:
