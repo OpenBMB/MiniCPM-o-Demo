@@ -54,6 +54,31 @@
 
 ### 启动
 
+镜像有两种来源,**二选一**:
+
+#### 方式 A:用已发布的现成镜像(免 build,推荐)
+
+镜像已发布到 Docker Hub,直接拉取并打成 compose 期望的本地 tag,即可跳过构建:
+
+```bash
+docker pull device0/minicpm-o-worker-backend:dev-20260603
+docker pull device0/minicpm-o-gateway:dev-20260603
+docker tag  device0/minicpm-o-worker-backend:dev-20260603 minicpm-wb:dev
+docker tag  device0/minicpm-o-gateway:dev-20260603        minicpm-gateway:dev
+```
+
+之后启动时**不要加 `--build`**(用上面打好 tag 的本地镜像):
+
+```bash
+mkdir -p certs && openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+    -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
+MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose up -d   # 无 --build
+```
+
+> worker-backend 镜像约 8GB(含 torch/CUDA);gateway 镜像很小。两者均不含模型权重(运行时挂载)。
+
+#### 方式 B:从源码自行 build
+
 ```bash
 # 1) 准备 TLS 证书(实时音视频页面需 HTTPS — 浏览器仅在 https/localhost 提供麦克风权限)
 #    自签即可(浏览器会提示不安全,点继续);也可换成你的真实域名证书。
@@ -70,6 +95,8 @@ docker compose logs -f worker-backend-0
 ```
 
 启动顺序由 Compose 健康门控保证:**worker-backend 各自加载模型 → healthy → gateway 才启动**(`depends_on: condition: service_healthy`)。单个 backend 加载模型约 30–90s。
+
+> 日志查看(两种方式通用):`docker compose logs -f gateway` / `docker compose logs -f worker-backend-0`
 
 ### 访问
 
