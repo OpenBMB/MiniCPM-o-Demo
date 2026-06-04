@@ -84,28 +84,18 @@ def _backend_server_url() -> Optional[str]:
     return str(value).rstrip("/") if value else None
 
 
-def _message_payload(message: Dict[str, Any]) -> Dict[str, Any]:
-    payload = message.get("payload")
-    if isinstance(payload, dict):
-        return payload
-    return message
-
-
 def _input_payload(message: Dict[str, Any]) -> Dict[str, Any]:
-    payload = _message_payload(message)
-    for key in ("input", "data"):
-        value = payload.get(key)
-        if isinstance(value, dict):
-            return value
-    return payload
+    value = message.get("input")
+    if isinstance(value, dict):
+        return value
+    raise RuntimeError("input.append must carry an object `input`")
 
 
 def _init_payload(message: Dict[str, Any]) -> Dict[str, Any]:
-    for key in ("payload", "params", "session"):
-        value = message.get(key)
-        if isinstance(value, dict):
-            return value
-    return message
+    value = message.get("payload")
+    if isinstance(value, dict):
+        return value
+    raise RuntimeError("session.init must carry an object `payload`")
 
 
 def _event_payload(event: Any) -> Dict[str, Any]:
@@ -114,30 +104,6 @@ def _event_payload(event: Any) -> Dict[str, Any]:
     if isinstance(raw_event, dict):
         return raw_event
     return payload
-
-
-def _legacy_realtime_init(message: Dict[str, Any]) -> Dict[str, Any]:
-    session_cfg = message.get("session") or {}
-    config = dict(session_cfg.get("voice_config") or {})
-    if session_cfg.get("max_slice_nums") is not None:
-        config["max_slice_nums"] = session_cfg.get("max_slice_nums")
-    return {
-        "system_prompt": session_cfg.get("instructions", "You are a helpful assistant."),
-        "config": config or None,
-        "voice": {
-            "ref_audio_base64": session_cfg.get("ref_audio"),
-            "tts_ref_audio_base64": session_cfg.get("tts_ref_audio"),
-        },
-    }
-
-
-def _legacy_realtime_input(message: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "audio": message.get("audio", ""),
-        "video_frames": message.get("video_frames"),
-        "force_listen": message.get("force_listen", False),
-        "max_slice_nums": message.get("max_slice_nums"),
-    }
 
 
 @asynccontextmanager
@@ -247,11 +213,9 @@ async def _handle_remote_backend_runtime_ws(
         first_type = str(first.get("type") or "")
         pending_input: Optional[Dict[str, Any]] = None
 
-        if first_type in {"session.init", "init", "backend.init"}:
+        if first_type == "session.init":
             init_params = _init_payload(first)
-        elif first_type == "session.update" and mode == "full_duplex":
-            init_params = _legacy_realtime_init(first)
-        elif first_type in {"chat.request", "input.append", "push", "input", "backend.push"}:
+        elif first_type == "input.append":
             init_params = {"mode": mode, "session_id": session_id}
             pending_input = _input_payload(first)
         else:
@@ -271,15 +235,11 @@ async def _handle_remote_backend_runtime_ws(
                 msg = json.loads(raw)
                 msg_type = str(msg.get("type") or "")
 
-                if msg_type in {"input.append", "push", "input", "backend.push", "chat.request"}:
+                if msg_type == "input.append":
                     await runtime.push(_input_payload(msg))
                     continue
 
-                if msg_type == "input_audio_buffer.append" and mode == "full_duplex":
-                    await runtime.push(_legacy_realtime_input(msg))
-                    continue
-
-                if msg_type in {"session.close", "close", "backend.close"}:
+                if msg_type == "session.close":
                     close_event = await runtime.unary("close", {"reason": str(msg.get("reason") or "client_closed")})
                     backend_closed = True
                     close_payload = _event_payload(close_event)
