@@ -73,18 +73,26 @@ services:
       dockerfile: docker/Dockerfile.gateway
     image: minicpm-gateway:dev
     container_name: minicpm-gateway
+    # HTTPS:实时音视频页面(omni/audio_duplex)需要 https —— 浏览器仅在 https/localhost
+    # 下提供 navigator.mediaDevices(麦克风)。证书从宿主机挂载(不进镜像),默认读 certs/cert.pem。
+    # 纯文字 /turnbased 不需要麦克风,http 也能用;要降级 http 把下面 --https 段换成 ["--http"]。
     command:
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "8006"
-      - "--http"
+      - "--https"
+      - "--ssl-certfile"
+      - "/app/certs/cert.pem"
+      - "--ssl-keyfile"
+      - "/app/certs/key.pem"
       - "--workers"
       - "worker-backend-0:22400,worker-backend-1:22400"
     ports:
       - "8006:8006"
     volumes:
       - ${DATA_HOST_PATH:-./data}:/app/data      # session 录制持久化到 host
+      - ${CERTS_HOST_PATH:-./certs}:/app/certs:ro # TLS 证书从宿主机挂载(只读),不进镜像
     depends_on:
       worker-backend-0:
         condition: service_healthy
