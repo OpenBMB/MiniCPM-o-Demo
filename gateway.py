@@ -928,13 +928,38 @@ async def get_session_meta(session_id: str):
 
 @app.get("/api/sessions/{session_id}/recording")
 async def get_session_recording(session_id: str):
-    """获取录制 timeline (recording.json)"""
+    """获取录制事件流 (stream.jsonl + meta.json)。
+
+    返回忠实事件流:{meta, events:[{seq, ts, dir, frame}, ...]}。
+    frame 为协议帧原样;音视频二进制以 "@blob/NNN.ext" 指针引用,前端去掉 '@'
+    后经 /assets/blob/NNN.ext 取实际文件。
+    """
     sdir = _session_dir(session_id)
-    rec_path = os.path.join(sdir, "recording.json")
-    if not os.path.exists(rec_path):
+    stream_path = os.path.join(sdir, "stream.jsonl")
+    meta_path = os.path.join(sdir, "meta.json")
+    if not os.path.exists(stream_path):
         raise HTTPException(status_code=404, detail=f"Recording not found for session: {session_id}")
-    with open(rec_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+
+    events = []
+    with open(stream_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                continue
+
+    meta = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+
+    return {"session_id": session_id, "meta": meta, "events": events}
 
 
 _MIME_MAP = {
