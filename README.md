@@ -27,11 +27,13 @@
 
 | 组件 | 镜像 | 内容 | GPU | 持久化挂载 |
 |------|------|------|-----|-----------|
-| **gateway** | `docker/Dockerfile.gateway` | torch-free 控制面:`/v1/realtime` 入口、调度(FIFO 队列 + 负载感知)、协议转发、session 录制 | ❌ 不需要 | `data/`(录制)、`certs/`(TLS) |
+| **gateway** | `docker/Dockerfile.gateway` | torch-free 控制面:`/v1/realtime` 入口、调度(FIFO 队列 + 负载感知)、转发、session 录制 | ❌ 不需要 | `data/`(录制)、`certs/`(TLS) |
 | **worker-backend** | `docker/Dockerfile.worker-backend` | 一个容器内 `backend`(加载模型,独占 1 GPU)+ `worker`(纯转发,经 localhost 连 backend) | ✅ 每实例 1 张 | 模型权重(只读) |
 
 - **Gateway** 不加载模型、不依赖 torch/CUDA,镜像轻量;通过 Compose 内部 DNS 静态寻址各 worker。
-- **Worker-Backend** 是一个 bundle:`worker` 退化为纯转发隔离层,真正的模型推理在同容器的 `backend` 进程(协议见 `docs/backend-protocol/`)。
+- **Worker-Backend** 是一个 bundle:`worker` 退化为纯转发隔离层,真正的模型推理在同容器的 `backend` 进程。
+  一个实例是**有状态的长驻进程**:客户端经 Gateway 与它建立一条**持久化 WebSocket 连接**,
+  在连接存活期间持续推送输入、流式接收输出(会话状态驻留在该实例,见下文「亲和性」)。
 - **模型权重不进镜像**(约 19GB),运行时以只读 volume 挂载。
 
 ---
@@ -192,30 +194,55 @@ worker-backend-0b:
 
 ---
 
-## 日志与数据
+## 日志与数据持久化
 
-- **日志**:`docker compose logs [-f] <service>`,按实例分流(gateway / worker-backend-0 / …)。已配置 json-file 滚动(单文件 50MB × 3)。
-- **录制**:每个 session 落盘到 `data/sessions/<session_id>/`:
-  - `meta.json` —— 会话元信息(client/page 来源、worker、时长等)
-  - `stream.jsonl` —— 忠实事件流(每行一个协议帧,音视频二进制以 `@blob/...` 指针引用)
-  - `blob/` —— 外置的音视频二进制(`.wav` / `.jpg`)
-- 录制开关:`config.json` 的 `recording.enabled`(默认开)。
+容器本身按"无状态"对待——**所有需要留存的东西都挂到宿主机 volume**,容器删除/重建不丢数据。
+
+### 日志
+
+- **按实例分流查看**:`docker compose logs [-f] <service>`(`gateway` / `worker-backend-0` / …),
+  每行带 service 名前缀,N 个实例不混淆。
+- **滚动**:已配置 json-file 驱动,单文件 50MB × 3,避免长跑撑爆磁盘。
+- 容器日志底层落在宿主机 `/var/lib/docker/containers/<id>/*.json.log`(由上面的滚动策略限大小)。
+- 如需把应用日志单独挂到宿主机目录,可给 service 加一个 `- ./logs/<name>:/app/logs` volume
+  (各实例挂**各自独立**的目录,避免互相覆盖)。
+
+### 录制数据(挂载到宿主机)
+
+Gateway 把每个 session 录制到容器内 `/app/data`,经 volume 持久化到宿主机(默认 `./data`,由
+`DATA_HOST_PATH` 指定)。容器重建后历史录制仍在。每个 session 落盘到 `data/sessions/<session_id>/`:
+
+- `meta.json` —— 会话元信息(client/page 来源、所属 worker、起止时间、时长等)
+- `stream.jsonl` —— 忠实事件流(每行一个事件,音视频二进制以 `@blob/...` 指针引用)
+- `blob/` —— 外置的音视频二进制(`.wav` / `.jpg`)
+
+录制开关:`config.json` 的 `recording.enabled`(默认开)。回看:浏览器打开 `https://<SERVER_IP>:8006/s/<session_id>`。
+
+### 挂载点小结
+
+| 宿主机 | 容器内 | 用途 | 谁挂 |
+|--------|--------|------|------|
+| `MODEL_HOST_PATH` | `/models/MiniCPM-o-4_5` (ro) | 模型权重(不进镜像) | worker-backend |
+| `DATA_HOST_PATH`(默认 `./data`) | `/app/data` | session 录制持久化 | gateway |
+| `CERTS_HOST_PATH`(默认 `./certs`) | `/app/certs` (ro) | TLS 证书 | gateway |
 
 ---
 
-## 协议与组件
+## 冒烟测试
 
-- backend 协议(worker↔backend 的 init/push/pull/unary 四原语)规范见 [`docs/backend-protocol/`](docs/backend-protocol/)。
-- 端到端冒烟测试:`PYTHONPATH=. python tests/e2e_realtime.py [chat|chat-stream|video]`(打到 Gateway 的 `/v1/realtime`,验证整条链)。
+`PYTHONPATH=. python tests/e2e_realtime.py [chat|chat-stream|video]` —— 打到 Gateway 的 `/v1/realtime`,
+跑通整条链(Gateway → Worker → Backend),验证服务可用。
 
 ---
 
 ## 停止 / 清理
 
 ```bash
-docker compose down               # 停止并移除容器(保留镜像与 data/)
+docker compose down               # 停止并移除容器(保留镜像与挂载的 data/)
 docker compose down --rmi local   # 连同本地镜像一起删
 ```
+
+> `data/`、`certs/` 在宿主机,`docker compose down` **不会删**它们;录制历史得手动清理。
 
 ---
 
