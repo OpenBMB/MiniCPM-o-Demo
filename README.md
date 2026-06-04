@@ -1,464 +1,174 @@
-# MiniCPM-o 4.5 PyTorch Simple Demo System
+# MiniCPM-o Demo —— 多 Worker 单 Gateway 部署
 
-[中文简介](README_zh.md) | [Documentation](https://minicpmo45.modelbest.cn/docs/en/) | [Realtime API Docs](https://minicpmo45.modelbest.cn/docs/en/realtime-api/overview/)
-
-[Ready-to-use Demo Website](https://minicpmo45.modelbest.cn/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
-
-This demo system is officially provided by the `MiniCPM-o 4.5` model training team. It uses a PyTorch + CUDA inference backend, combined with a lightweight frontend-backend design, aiming to demonstrate the full audio-video omnimodal full-duplex capabilities of MiniCPM-o 4.5 in a transparent, concise, and lossless manner.
-
-## About MiniCPM-o 4.5
-
-MiniCPM-o 4.5 is the latest and most capable model in the MiniCPM-o series. The model is built in an end-to-end fashion based on SigLip2, Whisper-medium, CosyVoice2, and Qwen3-8B with a total of 9B parameters. It exhibits a significant performance improvement, and introduces new features for full-duplex multimodal live streaming. Notable features of MiniCPM-o 4.5 include:
-
-- 🔥 **Leading Visual Capability.** MiniCPM-o 4.5 achieves an average score of 77.6 on OpenCompass, a comprehensive evaluation of 8 popular benchmarks. With only 9B parameters, it surpasses widely used proprietary models like GPT-4o, Gemini 2.0 Pro, and approaches Gemini 2.5 Flash for vision-language capabilities. It supports instruct and thinking modes in a single model, better covering efficiency and performance trade-offs in different user scenarios.
-
-- 🎙 **Strong Speech Capability.** MiniCPM-o 4.5 supports bilingual real-time speech conversation with configurable voices in English and Chinese. It features more natural, expressive and stable speech conversation. The model also allows for fun features such as voice cloning and role play via a simple reference audio clip, where the cloning performance surpasses strong TTS tools such as CosyVoice2.
-
-- 🎬 **New Full-Duplex and Proactive Multimodal Live Streaming Capability.** As a new feature, MiniCPM-o 4.5 can process real-time, continuous video and audio input streams simultaneously while generating concurrent text and speech output streams in an end-to-end fashion, without mutual blocking. This allows MiniCPM-o 4.5 to see, listen, and speak simultaneously, creating a fluid, real-time omnimodal conversation experience. Beyond reactive responses, the model can also perform proactive interaction, such as initiating reminders or comments based on its continuous understanding of the live scene.
-
-- 💪 **Strong OCR Capability, Efficiency and Others.** Advancing popular visual capabilities from MiniCPM-V series, MiniCPM-o 4.5 can process high-resolution images (up to 1.8 million pixels) and high-FPS videos (up to 10fps) in any aspect ratio efficiently. It achieves state-of-the-art performance for end-to-end English document parsing on OmniDocBench, outperforming proprietary models such as Gemini-3 Flash and GPT-5, and specialized tools such as DeepSeek-OCR 2. It also features trustworthy behaviors, matching Gemini 2.5 Flash on MMHal-Bench, and supports multilingual capabilities on more than 30 languages.
-
-- 💫 **Easy Usage.** MiniCPM-o 4.5 can be easily used in various ways: Basic usage, recommended for 100% precision: PyTorch inference with Nvidia GPU. Other end-side adaptation includes (1) llama.cpp and Ollama support for efficient CPU inference on local devices, (2) int4 and GGUF format quantized models in 16 sizes, (3) vLLM and SGLang support for high-throughput and memory-efficient inference, (4) FlagOS support for the unified multi-chip backend plugin. We also open-sourced web demos which enable the full-duplex multimodal live streaming experience on local devices such as GPUs, PCs (e.g., on a MacBook).
-
-<details>
-<summary><b>Model Architecture</b></summary>
-
-- **End-to-end Omni-modal Architecture.** The modality encoders/decoders and LLM are densely connected via hidden states in an end-to-end fashion. This enables better information flow and control, and also facilitates full exploitation of rich multimodal knowledge during training.
-
-- **Full-Duplex Omni-modal Live Streaming Mechanism.** (1) We turn the offline modality encoder/decoders into online and full-duplex ones for streaming inputs/outputs. The speech token decoder models text and speech tokens in an interleaved fashion to support full-duplex speech generation (i.e., sync timely with new input). This also facilitates more stable long speech generation (e.g., > 1min). (2) We sync all the input and output streams on timeline in milliseconds, which are jointly modeled by a time-division multiplexing (TDM) mechanism for omni-modality streaming processing in the LLM backbone. It divides parallel omni-modality streams into sequential info groups within small periodic time slices.
-
-- **Proactive Interaction Mechanism.** The LLM continuously monitors the input video and audio streams, and decides at a frequency of 1Hz to speak or not. This high decision-making frequency together with full-duplex nature are crucial to enable the proactive interaction capability.
-
-- **Configurable Speech Modeling Design.** We inherit the multimodal system prompt design of MiniCPM-o 2.6, which includes a traditional text system prompt, and a new audio system prompt to determine the assistant voice. This enables cloning new voices and role play in inference time for speech conversation.
-
-</details>
+基于 Docker Compose 的多实例推理服务部署:**一个 Gateway 统一出口 + N 个 Worker-Backend 各独占一张 GPU**。
 
 ---
 
-| Mode | Features | I/O Modalities | Paradigm
-|------|----------|------|------
-| **Turn-based Chat** | Low-latency streaming interaction; button-triggered responses; supports offline video/audio understanding and analysis; high response accuracy; strong basic capabilities | Audio + Text + Video input, Audio + Text output | Turn-based
-| **Half-Duplex Audio** | VAD auto-detects speech boundaries for hands-free voice conversation; higher TTS voice quality; more accurate responses; stronger user experience | Voice input, Text + Voice output | Half-duplex
-| **Omnimodal Full-Duplex** | Real-time omnimodal full-duplex interaction; visual and voice input with simultaneous voice output; model autonomously decides when to speak; powerful cutting-edge capabilities | Vision + Audio input, Text + Voice output | Full-duplex
-| **Audio Full-Duplex** | Real-time audio full-duplex interaction; voice input and voice output happen simultaneously; model autonomously decides when to speak; powerful cutting-edge capabilities | Audio input, Text + Voice output | Full-duplex
-
-The 4 currently supported modes share a single model instance with millisecond-level hot-switching (< 0.1ms).
-
-**Additional features:**
-
-- Customizable system prompts
-- Customizable reference audio
-- Simple and readable codebase for continual development
-- Serve as API backend for third-party applications
-
-![Demo Preview](assets/images/demo_preview.png)
-
-## Architecture
+## 架构
 
 ```
-Frontend (HTML/JS)
-    |  HTTPS / WSS
-Gateway (:8006, HTTPS)
-    |  HTTP / WS (internal)
-Worker Pool (:22400+)
-    +-- Worker 0 (GPU 0)
-    +-- Worker 1 (GPU 1)
-    +-- ...
+                       ┌─────────────────────────────────┐
+   前端/客户端 ──WSS──▶ │  Gateway (容器, torch-free)      │  :8006  /v1/realtime
+   (浏览器/移动端)      │  统一出口 · 调度 · session 录制   │
+                       └───────┬─────────────────┬────────┘
+                       compose DNS 静态寻址        compose DNS
+                  worker-backend-0:22400     worker-backend-1:22400
+                            ▼                       ▼
+                ┌────────────────────┐   ┌────────────────────┐
+                │ worker-backend-0   │   │ worker-backend-1   │
+                │  worker (转发)      │   │  worker (转发)      │
+                │    └─ backend       │   │    └─ backend       │
+                │       (加载模型)     │   │       (加载模型)     │
+                │  GPU 0              │   │  GPU 1              │
+                └────────────────────┘   └────────────────────┘
 ```
 
-- **Frontend** — Mode selection homepage, Turn-based Chat, Omni / Audio Duplex full-duplex interaction, Admin Dashboard
-- **Gateway** — Request routing and dispatching, WebSocket proxy, request queuing and session affinity
-- **Worker** — Each Worker occupies one GPU exclusively, supports Turn-based Chat / Duplex protocols, Duplex supports pause/resume (auto-release on timeout)
-
-
-## Quick Start
-
-### Check System Requirements
-1. Make sure you have an NVIDIA GPU with more than 28GB of VRAM.
-2. Make sure your machine is running a Linux operating system.
-
-### Install FFmpeg
-
-FFmpeg is required for video frame extraction and inference result visualization. For more information, visit the [official FFmpeg website](https://ffmpeg.org/).
-
-**macOS (Homebrew):**
-```bash
-brew install ffmpeg
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update && sudo apt install ffmpeg
-```
-
-**Verify installation:**
-```bash
-ffmpeg -version
-```
-
-### Deployment Steps
-**1. Install Python 3.10**
-
-We recommend using miniconda to install Python 3.10.
-
-```bash
-mkdir -p ./miniconda3_install_tmp
-
-# Download the miniconda3 installation script
-wget https://repo.anaconda.com/miniconda/Miniconda3-py310_25.11.1-1-Linux-x86_64.sh -O ./miniconda3_install_tmp/miniconda.sh 
-
-# Install miniconda3 into the project directory
-bash ./miniconda3_install_tmp/miniconda.sh -b -u -p ./miniconda3 
-```
-
-After installation, you will have an empty base environment. Activate this base environment, which uses Python 3.10 by default.
-
-```bash
-source ./miniconda3/bin/activate
-python --version # Should display 3.10.x
-```
-
-**2. Install Dependencies for MiniCPM-o 4.5**
-
-Using the `install.sh` script in the project directory is the fastest way. It creates a venv virtual environment named `base` under `.venv` in the project directory and installs all dependencies.
-
-```bash
-source ./miniconda3/bin/activate
-bash ./install.sh
-```
-
-If you have a good network connection, the entire installation process takes about 5 minutes. If you are in China, consider using a third-party PyPI mirror such as the Tsinghua mirror.
-
-<details>
-<summary>Click to expand manual installation steps</summary>
-
-You can also install dependencies manually in 2 steps:
-
-```bash
-# First, prepare an empty Python 3.10 environment
-source ./miniconda3/bin/activate
-python -m venv .venv/base
-source .venv/base/bin/activate
-
-# Install PyTorch
-pip install "torch==2.8.0" "torchaudio==2.8.0"
-
-# Install the remaining dependencies
-pip install -r requirements.txt
-```
-
-</details>
-
-**3. Create Configuration File**
-
-Copy `config.example.json` to `config.json` in the project directory.
-
-```bash
-cp config.example.json config.json
-```
-
-The model path (`model_path`) defaults to `openbmb/MiniCPM-o-4_5`. If you have access to Hugging Face, no modification is needed — the model will be automatically pulled from Hugging Face.
-
-<details>
-<summary>Click to expand detailed instructions about model path</summary>
-
-(Optional) If you prefer to download model weights to a fixed location, or cannot access Hugging Face, you can modify `model_path` to your local model path.
-```bash
-# Install huggingface cli
-pip install -U huggingface_hub
-
-# Download the model
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-
-```
-
-If you cannot access Hugging Face, you can use the following two methods to download the model in advance.
-
-- Download the model using hf-mirror
-
-```bash
-pip install -U huggingface_hub
-
-export HF_ENDPOINT=https://hf-mirror.com
-
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-```
-
-- Download the model using ModelScope
-
-```bash
-pip install modelscope
-
-modelscope download --model OpenBMB/MiniCPM-o-4_5 --local_dir /path/to/your/MiniCPM-o-4_5
-```
-
-
-</details>
-
-<br/>
-
-Modify `"gateway_port": 8006` to change the deployment port. The default is 8006.
-
-
-**4. Build the Mobile Frontend and Start the Service**
-
-`start_all.sh` automatically rebuilds `frontend/mobile` and publishes it to `static/mobile/` before starting workers and the gateway. This keeps the `/mobile` entry in sync with the latest React/Vite code.
-
-If this is your first time building the mobile frontend, install its npm dependencies once:
-
-```bash
-cd frontend/mobile
-bun install
-cd ../..
-```
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
-
-For manual deployment, always run `cd frontend/mobile && bun run build:static` before starting the gateway. Only set `SKIP_MOBILE_BUILD=1` for backend-only debugging.
-
-After the service starts, visit https://localhost:8006. The self-signed certificate will trigger a browser warning — click "Advanced" → "Proceed" to continue.
-
-**5. torch.compile Acceleration**
-
-On older-generation GPUs such as A100 and RTX 4090, the per-unit computation time in Omni Full-Duplex mode is approximately 0.9s, approaching the 1-second real-time threshold and causing noticeable stuttering. `torch.compile` uses Triton to compile core sub-modules into optimized GPU kernels, reducing computation time to approximately **0.5s** — meeting real-time requirements for smooth, stutter-free interaction.
-
-Three steps to enable:
-
-**5a.** Enable compilation in `config.json`:
-
-```json
-{ "service": { "compile": true } }
-```
-
-**5b.** Run the pre-compilation script (one-time, ~15 min):
-
-```bash
-CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_CACHE_DIR=./torch_compile_cache .venv/base/bin/python precompile.py
-```
-
-Pre-compilation generates optimized Triton kernels and saves them to the `./torch_compile_cache` directory (`start_all.sh` reads the compilation cache from `TORCHINDUCTOR_CACHE_DIR`). The cache persists on disk and is automatically loaded on all subsequent starts (including process restarts), with no need to recompile.
-
-**5c.** Start the service:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
-
-Workers automatically load the cached kernels from `./torch_compile_cache`. Loading takes approximately 5 minutes when the cache is available.
-
-<details>
-<summary>Click to expand other startup options</summary>
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 bash start_all.sh          # Specify GPUs
-bash start_all.sh --http                             # Downgrade to HTTP (not recommended, mic/camera APIs require HTTPS)
-```
-
-**Manual Startup (step by step):**
-```bash
-# Worker (one per GPU)
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python worker.py --worker-index 0 --gpu-id 0
-
-# Gateway
-PYTHONPATH=. .venv/base/bin/python gateway.py --port 10024 --workers localhost:22400
-```
-</details>
-
-**5. Stop the Service:**
-```bash
-pkill -f "gateway.py|worker.py"
-```
-
-<br/>
-
-### Docker Deployment
-
-You can also run the service inside Docker. This approach packages all dependencies into a single image — just mount one workspace directory and you're good to go.
-
-**Prerequisites:**
-- Docker Engine 19.03+
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (`nvidia-docker`)
-- NVIDIA GPU with > 28 GB VRAM
-
-**1. Build the image:**
-
-```bash
-docker build -t minicpm-o-demo .
-```
-
-**2. Prepare the workspace directory:**
-
-Create a single workspace directory with your model weights and optional config:
-
-```bash
-mkdir -p my-workspace/models
-
-# Copy or symlink model weights
-ln -s /path/to/MiniCPM-o-4_5 my-workspace/models/MiniCPM-o-4_5
-
-# (Optional) Custom config — model_path should point to /workspace/models/MiniCPM-o-4_5
-cp config.example.json my-workspace/config.json
-```
-
-The workspace directory layout:
-```
-my-workspace/
-├── models/MiniCPM-o-4_5/   # Model weights (required)
-├── config.json              # Custom config (optional, fallback to defaults)
-├── certs/                   # TLS certs (optional, for HTTPS)
-├── data/                    # Auto-created: persistent session data
-└── torch_compile_cache/     # Auto-created: compilation cache
-```
-
-**3. Run with `docker run`:**
-
-```bash
-docker run --gpus all -p 8006:8006 \
-    -v $(pwd)/my-workspace:/workspace \
-    minicpm-o-demo
-```
-
-**3 (alternative). Run with Docker Compose:**
-
-Edit `docker-compose.yml` to set the workspace volume path, then:
-
-```bash
-docker compose up -d
-```
-
-**Environment variables supported by the container:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GATEWAY_PROTO` | `http` | `http` or `https` |
-| `GATEWAY_PORT` | from config (8006) | Gateway listen port |
-| `CUDA_VISIBLE_DEVICES` | all GPUs | Comma-separated GPU indices |
-
-<br/>
-<br/>
-
-
-## C++ Backend (llama.cpp)
-
-This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling you to run MiniCPM-o 4.5 on lower-spec consumer hardware. See the [Comni branch](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/Comni) for setup instructions and details.
-
-### Desktop App (Windows & macOS)
-
-Ready-to-use desktop installers are available for Windows and macOS. Download from [llama.cpp-omni Releases](https://github.com/tc-mb/llama.cpp-omni/releases/).
+### 两类镜像、各司其职
+
+| 组件 | 镜像 | 内容 | GPU | 持久化挂载 |
+|------|------|------|-----|-----------|
+| **gateway** | `docker/Dockerfile.gateway` | torch-free 控制面:`/v1/realtime` 入口、调度(FIFO 队列 + 负载感知)、协议转发、session 录制 | ❌ 不需要 | `data/`(录制)、`certs/`(TLS) |
+| **worker-backend** | `docker/Dockerfile.worker-backend` | 一个容器内 `backend`(加载模型,独占 1 GPU)+ `worker`(纯转发,经 localhost 连 backend) | ✅ 每实例 1 张 | 模型权重(只读) |
+
+- **Gateway** 不加载模型、不依赖 torch/CUDA,镜像轻量;通过 Compose 内部 DNS 静态寻址各 worker。
+- **Worker-Backend** 是一个 bundle:`worker` 退化为纯转发隔离层,真正的模型推理在同容器的 `backend` 进程(协议见 `docs/backend-protocol/`)。
+- **模型权重不进镜像**(约 19GB),运行时以只读 volume 挂载。
 
 ---
 
-## Known Issues and Improvement Plans
+## 快速开始(Docker Compose)
 
-- In Turn-based Chat mode, image input is temporarily unavailable — only audio and text input are supported. An image Q&A mode will be split out soon.
-- Half-duplex voice call (no button required to trigger responses) is under development and will be merged soon.
-- In Audio Full-Duplex mode, echo cancellation currently has issues affecting interruption success rate. Using headphones is recommended. A fix is coming soon.
-- In voice mode, due to the model's training strategy, Chinese and English calls require corresponding language system prompts.
+### 前置条件
 
-<br/>
+- Docker(含 `docker compose` v2 插件)+ `nvidia-container-toolkit`(让容器能用 GPU)
+- NVIDIA 驱动支持 CUDA 12.8(镜像内 torch 为 `+cu128`,自带 CUDA 用户态库;宿主机只需驱动,不需装 CUDA Toolkit)
+- 至少 N 张 GPU(每张约 22GB+ 显存供一个 backend 加载模型)
+- 模型权重目录(HuggingFace 格式的 `MiniCPM-o-4_5`)
 
-## Project Structure
-
-**Project Code Structure**
-```
-minicpmo45_service/
-├── config.json               # Service config (copied from config.example.json, gitignored)
-├── config.example.json       # Config example (full fields + defaults)
-├── config.py                 # Config loading logic (Pydantic definition + JSON loading)
-├── requirements.txt          # Python dependencies
-├── start_all.sh              # One-click startup script
-│
-├── gateway.py                # Gateway (routing, queuing, WS proxy)
-├── worker.py                 # Worker (inference service)
-├── gateway_modules/          # Gateway business modules
-│
-├── core/                     # Core encapsulation
-│   ├── schemas/              # Pydantic schemas (request/response)
-│   └── processors/           # Inference processors (UnifiedProcessor)
-│
-├── MiniCPMO45/               # Model core inference code
-├── static/                   # Frontend pages
-├── resources/                # Resource files (reference audio, etc.)
-├── tests/                    # Tests
-└── tmp/                      # Runtime logs and PID files
-```
-
-**Frontend Routes**
-
-| Page | URL |
-|------|-----|
-| Turn-based Chat | https://localhost:8006 |
-| Half-Duplex Audio | https://localhost:8006/half_duplex |
-| Omnimodal Full-Duplex | https://localhost:8006/omni |
-| Audio Full-Duplex | https://localhost:8006/audio_duplex |
-| Dashboard | https://localhost:8006/admin |
-| Docs / Realtime API Docs | https://localhost:8006/docs |
-
-<br/>
-<br/>
-
-## Configuration
-
-### config.json — Unified Configuration File
-
-All configurations are centralized in `config.json` (copied from `config.example.json`).
-`config.json` is gitignored and will not be committed.
-
-**Configuration Priority**: CLI arguments > config.json > Pydantic defaults
-
-| Group | Field | Default | Description |
-|-------|-------|---------|-------------|
-| **model** | `model_path` | _(required)_ | HuggingFace format model directory |
-| model | `pt_path` | null | Additional .pt weight override |
-| model | `attn_implementation` | `"auto"` | Attention implementation: `"auto"`/`"flash_attention_2"`/`"sdpa"`/`"eager"` |
-| **audio** | `ref_audio_path` | `assets/ref_audio/ref_minicpm_signature.wav` | Default TTS reference audio |
-| audio | `playback_delay_ms` | 200 | Frontend audio playback delay (ms); higher = smoother but more latency |
-| audio | `chat_vocoder` | `"token2wav"` | Chat mode vocoder: `"token2wav"` (default) or `"cosyvoice2"` |
-| **service** | `gateway_port` | 8006 | Gateway port |
-| service | `worker_base_port` | 22400 | Worker base port |
-| service | `max_queue_size` | 100 | Maximum queued requests |
-| service | `request_timeout` | 300.0 | Request timeout (seconds) |
-| service | `compile` | false | torch.compile acceleration |
-| service | `data_dir` | "data" | Data directory |
-| **duplex** | `pause_timeout` | 60.0 | Duplex pause timeout (seconds) |
-
-**Minimal Configuration** (only model path required):
-```json
-{"model": {"model_path": "/path/to/model"}}
-```
-
-## CLI Argument Overrides
+### 启动
 
 ```bash
-# Worker
-python worker.py --model-path /alt/model --pt-path /alt/weights.pt --ref-audio-path /alt/ref.wav
+# 1) 准备 TLS 证书(实时音视频页面需 HTTPS — 浏览器仅在 https/localhost 提供麦克风权限)
+#    自签即可(浏览器会提示不安全,点继续);也可换成你的真实域名证书。
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+    -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
 
-# Gateway
-python gateway.py --port 10025 --workers localhost:22400,localhost:22401 --http
+# 2) 指定宿主机上的模型权重路径,一键起全栈(首次会 build 镜像)
+MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose up -d --build
+
+# 3) 看日志(按实例分流)
+docker compose logs -f gateway
+docker compose logs -f worker-backend-0
 ```
 
+启动顺序由 Compose 健康门控保证:**worker-backend 各自加载模型 → healthy → gateway 才启动**(`depends_on: condition: service_healthy`)。单个 backend 加载模型约 30–90s。
 
-## Resource Consumption
+### 访问
 
-| Resource | Token2Wav (default) | + torch.compile |
-|----------|---------------------|-----------------|
-| VRAM (per Worker, after initialization) | ~21.5 GB | ~21.5 GB |
-| Model loading time | ~16s | ~16s + ~5 min (warm) / ~15 min (cold) |
-| Mode switching latency | < 0.1ms | < 0.1ms |
-| Omni Full-Duplex per-unit latency (A100) | ~0.9s | **~0.5s** |
+```
+https://<SERVER_IP>:8006/            # 入口
+https://<SERVER_IP>:8006/omni        # 实时音视频(需麦克风,必须 https)
+https://<SERVER_IP>:8006/turnbased   # 纯文字对话(不需麦克风)
+https://<SERVER_IP>:8006/health      # 健康检查
+```
 
-## Testing
+> 自签证书:浏览器会警告不安全,点"高级 → 继续访问"。实时页面进入后需"允许使用麦克风"。
+
+### 环境变量
+
+| 变量 | 说明 | 默认 |
+|------|------|------|
+| `MODEL_HOST_PATH` | 宿主机模型权重目录(必填) | — |
+| `DATA_HOST_PATH` | session 录制落盘目录 | `./data` |
+| `CERTS_HOST_PATH` | TLS 证书目录 | `./certs` |
+
+---
+
+## 增减 GPU / 扩缩实例
+
+实例是**显式声明**的(不能用 `docker compose --scale` —— scale 出的副本会争抢同一张 GPU)。
+增加一个 GPU 实例,在 `docker-compose.yml` 里:
+
+1. 复制一个 `worker-backend-N` service(继承 `x-worker-backend` 锚点),把 `device_ids` 指向新 GPU 编号:
+   ```yaml
+   worker-backend-2:
+     <<: *worker-backend-base
+     container_name: minicpm-wb-2
+     volumes:
+       - ${MODEL_HOST_PATH:?}:/models/MiniCPM-o-4_5:ro
+     deploy:
+       resources:
+         reservations:
+           devices:
+             - {driver: nvidia, device_ids: ["2"], capabilities: [gpu]}
+   ```
+2. 把新实例加进 gateway 的 `--workers` 列表:`worker-backend-0:22400,worker-backend-1:22400,worker-backend-2:22400`
+3. 在 gateway 的 `depends_on` 加上 `worker-backend-2: {condition: service_healthy}`
+
+> 容器内 GPU 永远是 `cuda:0`:`device_ids` 决定容器看到宿主机哪张卡,容器内部一律编号 0(故 `GPU_ID=0` 不变)。
+
+---
+
+## 亲和性 / 会话黏性(重要)
+
+这是一个**有状态**服务,部署时必须理解它的会话亲和性约束:
+
+### 1. 一个 Session 绑定一个 Worker,全程不迁移
+
+- 每个 backend **同时只服务一个 session**(并发上限 = worker-backend 实例数 = GPU 数)。
+- Gateway 为新 session 挑选一个空闲 worker 后,该 session 的**所有消息全程钉在这个 worker 上**,直到结束。
+- 会话状态(KV cache 等)只存在那一个 backend 进程里,**无法迁移到其它实例**;断连即终止,不支持续传。
+
+### 2. Gateway 必须能逐一寻址每个 Worker —— 不要在中间再加负载均衡
+
+- Gateway 自己负责调度(选哪个 worker、FIFO 排队),并**亲自把 session 钉在选定的 worker** 上。
+- 因此 Gateway 必须能**直连到每一个具体的 worker 实例**(本部署用 Compose 内部 DNS:`worker-backend-0`、`worker-backend-1` …)。
+- ⚠️ **不要在 Gateway 与 worker 之间再插一层 L4/L7 负载均衡**:那会把 Gateway 已经定向的请求随机打散到别的 worker,导致会话状态错乱。
+- 若未来跨主机部署(Gateway 与 Worker 不同机),同理:每个 worker 需有**稳定且可被 Gateway 逐一寻址**的地址(如 K8s 的 Headless Service / StatefulSet,而非负载均衡的单一 Service VIP)。
+
+### 3. Gateway 是有状态单点
+
+- worker 池、session→worker 映射都在 Gateway 内存里 → Gateway 单实例,不做多副本;挂掉则在途 session 全部丢失。
+- 这是本架构的有意取舍:**调度集中在 Gateway**,避免与外部编排设施的调度冲突。
+
+### 4. 容量 = GPU 数
+
+- N 张 GPU = N 个 worker-backend = 最多 N 个并发 session。超出的请求在 Gateway 侧 FIFO 排队(队列满则拒绝)。
+
+---
+
+## 日志与数据
+
+- **日志**:`docker compose logs [-f] <service>`,按实例分流(gateway / worker-backend-0 / …)。已配置 json-file 滚动(单文件 50MB × 3)。
+- **录制**:每个 session 落盘到 `data/sessions/<session_id>/`:
+  - `meta.json` —— 会话元信息(client/page 来源、worker、时长等)
+  - `stream.jsonl` —— 忠实事件流(每行一个协议帧,音视频二进制以 `@blob/...` 指针引用)
+  - `blob/` —— 外置的音视频二进制(`.wav` / `.jpg`)
+- 录制开关:`config.json` 的 `recording.enabled`(默认开)。
+
+---
+
+## 协议与组件
+
+- backend 协议(worker↔backend 的 init/push/pull/unary 四原语)规范见 [`docs/backend-protocol/`](docs/backend-protocol/)。
+- 端到端冒烟测试:`PYTHONPATH=. python tests/e2e_realtime.py [chat|chat-stream|video]`(打到 Gateway 的 `/v1/realtime`,验证整条链)。
+
+---
+
+## 停止 / 清理
 
 ```bash
-
-# Schema unit tests (no GPU required)
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_schemas.py -v
-
-# Processor tests (GPU required)
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_chat.py tests/test_streaming.py tests/test_duplex.py -v -s
-
-# API integration tests (service must be running)
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_api.py -v -s
+docker compose down               # 停止并移除容器(保留镜像与 data/)
+docker compose down --rmi local   # 连同本地镜像一起删
 ```
+
+---
+
+## 配置说明
+
+`config.json` 完全可选(所有字段有默认值,文件缺失则全走默认):
+
+- **Gateway / Worker** 的服务参数主要走命令行(端口、`--workers` 等),`config.json` 仅作默认值兜底。
+- **Backend** 加载模型需要 `model.model_path`,但本部署由 entrypoint 通过 `--model-path` 指向挂载点,无需写进 `config.json`。
+- 即 gateway/worker 无 `config.json` 也能启动;backend 缺模型路径会明确报错。
