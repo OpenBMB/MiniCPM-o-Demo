@@ -12,11 +12,13 @@
 # 模型权重、torch 都不在本镜像——那是 worker-backend 镜像的事。
 # session 录制数据(data/)运行时以 volume 挂载,见 compose。
 #
-# 多阶段:前端移动端(frontend/mobile, Vite/React)在构建器阶段用 bun 现 build,
-# 产物拷进最终镜像的 static/mobile/——产物【不进 git 仓库】、最终镜像【无 bun/node】。
+# 多阶段:需要现 build 的前端在构建器阶段用 bun 编译,产物拷进最终镜像——
+# 产物【不进 git 仓库】、最终镜像【无 bun/node】:
+#   - frontend/mobile (Vite/React)        → static/mobile
+#   - docs-app (Next.js static export)     → static/docs
 # (static/ 下其它页面如 omni/turnbased/mobile-omni 是已提交的静态文件,随 COPY . . 带入。)
 
-# ---- 阶段 1:前端构建器(临时,不进最终镜像)----
+# ---- 阶段 1a:移动端构建器(临时,不进最终镜像)----
 FROM oven/bun:1-slim AS mobile-builder
 WORKDIR /src/frontend/mobile
 # 只拷构建移动端需要的源码,最大化缓存
@@ -27,6 +29,16 @@ COPY frontend/mobile/ ./
 # publish 目标是仓库根的 static/mobile,需要该目录存在
 RUN mkdir -p /src/static && bun run build:static
 # 产物现在位于 /src/static/mobile
+
+# ---- 阶段 1b:文档站构建器(Next.js static export,临时)----
+FROM oven/bun:1-slim AS docs-builder
+WORKDIR /src/docs-app
+COPY docs-app/package.json docs-app/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY docs-app/ ./
+# build = next build(output:export → out/)+ publish-static.mjs(把 out/ 拷到 ../static/docs)
+RUN mkdir -p /src/static && bun run build
+# 产物现在位于 /src/static/docs
 
 # ---- 阶段 2:最终 gateway 镜像(torch-free,无 bun)----
 FROM python:3.12-slim-bookworm
@@ -58,8 +70,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # 代码放最后(最常变,前面依赖层全命中缓存)
 COPY . .
 
-# 把构建器产出的移动端静态产物拷进来(不经 git 仓库)
+# 把构建器产出的静态产物拷进来(均不经 git 仓库)
 COPY --from=mobile-builder /src/static/mobile ./static/mobile
+COPY --from=docs-builder   /src/static/docs   ./static/docs
 
 RUN mkdir -p /app/data
 
