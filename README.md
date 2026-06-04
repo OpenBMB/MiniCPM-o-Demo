@@ -220,9 +220,10 @@ worker-backend-0b:
 - worker 池、session→worker 映射都在 Gateway 内存里 → Gateway 单实例,不做多副本;挂掉则在途 session 全部丢失。
 - 这是本架构的有意取舍:**调度集中在 Gateway**,避免与外部编排设施的调度冲突。
 
-### 4. 容量 = GPU 数
+### 4. 实例是长驻的,不是 serverless
 
-- N 张 GPU = N 个 worker-backend = 最多 N 个并发 session。超出的请求在 Gateway 侧 FIFO 排队(队列满则拒绝)。
+- worker-backend 实例**有状态、长期驻留**:模型常驻显存,会话状态(KV cache 等)驻留在进程内。
+- **不应像 serverless 那样按请求拉起 / 用完销毁**——每次重建都要重新加载模型(数十秒)、且会丢掉所有在途会话。实例应保持运行,由 Gateway 调度会话进出。
 
 ---
 
