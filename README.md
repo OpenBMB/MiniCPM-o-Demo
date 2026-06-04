@@ -2,6 +2,11 @@
 
 基于 Docker Compose 的多实例推理服务部署:**一个 Gateway 统一出口 + N 个 Worker-Backend 各独占一张 GPU**。
 
+> ⚠️ **本文档(README.md)是当前部署架构的唯一准确说明。** 仓库内其它文档(`README_zh.md`、
+> `docs/`、`install.sh` 等)描述的是重构前的旧单体架构(`start_all.sh` 进程内多 worker 那套),
+> **均已过时(legacy),请勿参考**。需要了解实现细节时,直接看代码(`gateway.py` / `worker.py` /
+> `py_backend/` / `runtime/` / `docker/`)。
+
 ---
 
 ## 架构
