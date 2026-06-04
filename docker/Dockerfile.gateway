@@ -3,7 +3,7 @@
 # gateway 镜像(torch-free 轻量控制面)。
 #
 # gateway 只做:/v1/realtime 公网入口、mode 分流、worker 池调度(FIFO 队列 + 负载感知)、
-# 协议转发、session 录制。它不加载模型、不依赖 torch/CUDA。
+# 转发、session 录制。它不加载模型、不依赖 torch/CUDA。
 #
 # 依赖核对(grep gateway.py + gateway_modules + runtime/):fastapi/uvicorn/httpx/
 # numpy/websockets/pydantic + markdown/pygments(docs 渲染)+ python-multipart。
@@ -11,7 +11,24 @@
 #
 # 模型权重、torch 都不在本镜像——那是 worker-backend 镜像的事。
 # session 录制数据(data/)运行时以 volume 挂载,见 compose。
+#
+# 多阶段:前端移动端(frontend/mobile, Vite/React)在构建器阶段用 bun 现 build,
+# 产物拷进最终镜像的 static/mobile/——产物【不进 git 仓库】、最终镜像【无 bun/node】。
+# (static/ 下其它页面如 omni/turnbased/mobile-omni 是已提交的静态文件,随 COPY . . 带入。)
 
+# ---- 阶段 1:前端构建器(临时,不进最终镜像)----
+FROM oven/bun:1-slim AS mobile-builder
+WORKDIR /src/frontend/mobile
+# 只拷构建移动端需要的源码,最大化缓存
+COPY frontend/mobile/package.json frontend/mobile/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY frontend/mobile/ ./
+# build:static = tsc + vite build + publish-static.mjs(把 dist/ 拷到 ../../static/mobile)
+# publish 目标是仓库根的 static/mobile,需要该目录存在
+RUN mkdir -p /src/static && bun run build:static
+# 产物现在位于 /src/static/mobile
+
+# ---- 阶段 2:最终 gateway 镜像(torch-free,无 bun)----
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
@@ -41,9 +58,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # 代码放最后(最常变,前面依赖层全命中缓存)
 COPY . .
 
+# 把构建器产出的移动端静态产物拷进来(不经 git 仓库)
+COPY --from=mobile-builder /src/static/mobile ./static/mobile
+
 RUN mkdir -p /app/data
 
 EXPOSE 8006
 
-# gateway 启动参数由 compose command 提供(--port / --workers / --http)
+# gateway 启动参数由 compose command 提供(--port / --workers / --https|--http)
 ENTRYPOINT ["python", "gateway.py"]
