@@ -632,8 +632,15 @@ def main() -> None:
     parser.add_argument("--duplex-pause-timeout", type=float, default=None)
     args = parser.parse_args()
 
+    model_path = args.model_path or cfg.model.model_path
+    if not model_path:
+        parser.error(
+            "model path is required for the backend: pass --model-path <dir> "
+            "or set model.model_path in config.json"
+        )
+
     SERVER_CONFIG.update({
-        "model_path": args.model_path or cfg.model.model_path,
+        "model_path": model_path,
         "gpu_id": args.gpu_id,
         "pt_path": args.pt_path or cfg.model.pt_path,
         "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
