@@ -65,7 +65,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "numpy>=2.2.0" \
         "markdown>=3.6" \
         "Pygments>=2.18.0" \
-        python-multipart
+        python-multipart \
+        "PyYAML>=6.0" \
+        "librosa>=0.10.2" \
+        "soundfile>=0.12.1"
+        # 以上 yaml/librosa/soundfile:gateway 读 preset(yaml)与参考音频(librosa/soundfile)需要。
+        # 单体架构下它们靠 minicpmo-utils[all] 传递依赖隐式提供;轻镜像不装 minicpmo-utils,
+        # 故须显式声明。librosa 必须 >=0.10.2 —— 0.9.x 在新 setuptools 下因缺 pkg_resources 崩。
 
 # 代码放最后(最常变,前面依赖层全命中缓存)
 COPY . .

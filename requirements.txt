@@ -20,6 +20,14 @@ python-multipart
 markdown>=3.6
 Pygments>=2.18.0
 
+# Audio / Preset (gateway 也直接用:读 preset YAML、加载参考音频)
+# 这些过去靠 minicpmo-utils[all] 传递依赖隐式提供,未显式声明;gateway 轻镜像不装
+# minicpmo-utils,故在此显式列出。librosa 必须 >=0.10.2 —— 0.9.x 在新 setuptools 下
+# 因缺 pkg_resources 导入即崩(见历史故障:preset 加载失败 → sys-prompt 入口消失)。
+PyYAML>=6.0
+librosa>=0.10.2
+soundfile>=0.12.1
+
 # Data / Schema
 pydantic>=2.11.0
 numpy>=2.2.0
