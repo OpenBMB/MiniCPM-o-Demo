@@ -66,7 +66,7 @@ input.committed
 response.started
 response.text.delta
 response.audio.delta
-response.listen
+response.output.delta(kind=listen)
 response.speak
 response.done
 metrics.snapshot

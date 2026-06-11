@@ -71,7 +71,7 @@ BackendEventType = Literal[
     "response.started",
     "response.text.delta",
     "response.audio.delta",
-    "response.listen",
+    "response.output.delta",
     "response.speak",
     "response.done",
     "metrics.snapshot",
@@ -433,7 +433,7 @@ pull() -> input.committed(input_id: string, metrics?: BackendMetrics)
 pull() -> response.started(response_id: string, input_id?: string)
 pull() -> response.text.delta(response_id: string, text: string)
 pull() -> response.audio.delta(response_id: string, audio: bytes | string, format: string, sample_rate: int)
-pull() -> response.listen(reason?: string)
+pull() -> response.output.delta(kind=listen, reason?: string)
 pull() -> response.speak(reason?: string)
 pull() -> response.done(response_id: string, reason: ResponseDoneReason, usage?: Usage)
 
@@ -597,7 +597,7 @@ Backend event 使用统一 envelope：
 | `response.started` | `response_id`, `input_id` | 开始产生 response |
 | `response.text.delta` | `text` | 文本增量 |
 | `response.audio.delta` | `audio`, `format`, `sample_rate` | 音频增量 |
-| `response.listen` | `reason` | 模型选择继续听 |
+| `response.output.delta` | `kind=listen`, `reason` | 模型选择继续听 |
 | `response.speak` | `reason` | 模型进入说话状态 |
 | `response.done` | `reason`, `usage` | response 结束 |
 
@@ -765,7 +765,7 @@ Full-duplex mode 适用于持续输入和模型 listen/speak 切换。它复用 
 init(mode=full_duplex, defaults={system_prompt, voice, tts_voice, vision}, duplex={generation, tts, timing})
 push(input: audio + frames)
 push(input: audio + frames)
-  -> response.listen
+  -> response.output.delta(kind=listen)
 push(input: audio + frames)
   -> response.started
   -> response.text.delta*
@@ -786,7 +786,7 @@ Full-duplex backend 可以内部实现 prefill/decode pipeline、listen/speak �
 - `push(close)` 最终产生 `backend.closed`。
 - 同一 response 的 delta 事件早于 `response.done`。
 - terminal error 必须通过 `error.terminal=true` 或 `backend.closed` 表达。
-- full-duplex mode 支持 `response.listen` 或等价 listen 状态事件。
+- full-duplex mode 支持 `response.output.delta(kind=listen)` 或等价 listen 状态事件。
 - turn-based mode 支持 `response.done` 作为一次 response 的完成事件。
 
 ### 1.13 Design Rule

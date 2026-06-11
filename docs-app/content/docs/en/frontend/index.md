@@ -39,10 +39,10 @@ static/
 
 | Document | Content |
 |----------|---------|
-| [Pages & Routing](/en/frontend/pages/) | Detailed page functionality, routing system, Turn-based Chat state management |
-| [Audio Processing](/en/frontend/audio/) | AudioWorklet capture, AudioPlayer playback, LUFS measurement, mixer |
-| [Duplex Session](/en/frontend/duplex-session/) | DuplexSession class, WebSocket protocol, state machine, recording system |
-| [UI Components](/en/frontend/components/) | Shared component library, content editors, preset selector, navigation system |
+| [Pages & Routing](./pages/) | Detailed page functionality, routing system, Turn-based Chat state management |
+| [Audio Processing](./audio/) | AudioWorklet capture, AudioPlayer playback, LUFS measurement, mixer |
+| [Duplex Session](./duplex-session/) | DuplexSession class, WebSocket protocol, state machine, recording system |
+| [UI Components](./components/) | Shared component library, content editors, preset selector, navigation system |
 
 ## Page Routes
 

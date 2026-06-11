@@ -39,10 +39,10 @@ static/
 
 | 文档 | 内容 |
 |------|------|
-| [页面与路由](/zh/frontend/pages/) | 各页面功能详解、路由系统、Turn-based Chat 状态管理 |
-| [音频处理](/zh/frontend/audio/) | AudioWorklet 采集、AudioPlayer 播放、LUFS 测量、混音器 |
-| [双工会话](/zh/frontend/duplex-session/) | DuplexSession 类、WebSocket 协议、状态机、录制系统 |
-| [UI 组件](/zh/frontend/components/) | 共享组件库、内容编辑器、预设选择器、导航系统 |
+| [页面与路由](./pages/) | 各页面功能详解、路由系统、Turn-based Chat 状态管理 |
+| [音频处理](./audio/) | AudioWorklet 采集、AudioPlayer 播放、LUFS 测量、混音器 |
+| [双工会话](./duplex-session/) | DuplexSession 类、WebSocket 协议、状态机、录制系统 |
+| [UI 组件](./components/) | 共享组件库、内容编辑器、预设选择器、导航系统 |
 
 ## 页面路由
 

@@ -1,53 +1,70 @@
 # MiniCPM-o Realtime API 协议
 
-MiniCPM-o 提供两种全双工实时对话模式，通过 WebSocket 协议通信。
-
-## API Host
-
-```
-https://minicpmo45.modelbest.cn
-```
+本文记录当前 Docker 分支实际实现的 Realtime API。公开文档源位于
+`docs-app/content/docs/zh/realtime-api/`，Docker gateway 会把该目录构建到 `/docs`。
 
 ## 连接端点
 
-```
-wss://host/v1/realtime?mode={video|audio}
+```text
+wss://host/v1/realtime?mode={chat|video|audio}
 ```
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
-| `mode` | 否 | `video`（默认）或 `audio`，决定会话时长和推荐的输入模态 |
+| `mode` | 否 | 默认 `video`；可选 `chat`、`video`、`audio` |
 
-`session_id` 由**服务端**在连接建立后自动生成（格式 `rt_{timestamp_ms}`），通过 `session.created` 事件返回给客户端。客户端不需要也不应该在 URL 中传入 `session_id`。
+`session_id` 由服务端生成并通过事件返回。客户端不在 URL 中传入，也不应假设它的格式。
 
-## 两种模式
+## 模式
 
-| 模式 | 端点示例 | 上行数据 | 会话时长 | 有效对话 |
-|------|---------|---------|---------|---------|
-| **视频双工** | `wss://host/v1/realtime?mode=video` | 音频 + 视频帧 | 5 分钟 | ~90 秒 |
-| **音频双工** | `wss://host/v1/realtime?mode=audio` | 仅音频 | 10 分钟 | ~8 分钟 |
+| 模式 | 上行输入 | 下行输出 | 说明 |
+|------|----------|----------|------|
+| `chat` | 一次 turn 的 `messages` | 文本增量、可选音频、`response.done` | 支持 streaming 和 non-streaming |
+| `video` | 连续音频，可携带视频帧 | `listen`、文本增量、音频增量 | 会话总时长 300 秒 |
+| `audio` | 连续音频 | `listen`、文本增量、音频增量 | 会话总时长 600 秒 |
 
-两种模式共享相同的事件命名和消息结构，区别在于：
-- **视频双工**：`input_audio_buffer.append` 建议携带 `video_frames`
-- **音频双工**：`input_audio_buffer.append` 不建议携带 `video_frames`（携带时行为未定义）
+## 事件模型
 
-模式选择后整个会话期间不能切换。
+客户端事件：
 
-## 协议文档
+- `session.init`：初始化 session，消息必须包含对象类型的 `payload` 字段。
+- `input.append`：提交模型输入，消息必须包含对象类型的 `input` 字段。
+- `session.close`：关闭 session。
 
-- [视频双工协议](video-duplex-protocol.md) — 含视频帧的全双工对话
-- [音频双工协议](audio-duplex-protocol.md) — 纯音频的全双工对话
-- [JSON Schema](realtime-protocol-schema.json) — 机器可读的消息格式定义
+服务端事件：
 
-## 示例代码
+- `session.queued` / `session.queue_update` / `session.queue_done`：排队与 worker 分配状态。
+- `session.created`：初始化完成。
+- `response.output.delta`：统一输出事件，通过 `kind` 区分 `listen`、`text`、`audio`。
+- `response.done`：仅 chat 模式使用，表示一次 turn 输出完成。
+- `session.closed`：session 已关闭。
+- `error`：错误事件。
 
-完整的客户端实现示例请参考本仓库的全双工 demo 页面，它们直接使用 Realtime API 协议：
+## 基本时序
 
-| 页面 | 说明 |
-|------|------|
-| [`static/omni/`](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol/static/omni) | 视频双工 — 实时音视频对话 |
-| [`static/audio-duplex/`](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol/static/audio-duplex) | 音频双工 — 实时纯音频对话 |
+```text
+Client connects
+  <- session.queued / session.queue_update   optional
+  <- session.queue_done
+  -> session.init
+  <- session.created
+  -> input.append
+  <- response.output.delta / response.done
+  -> session.close
+  <- session.closed
+```
 
-核心协议封装库：[`static/duplex/lib/realtime-session.js`](https://github.com/OpenBMB/MiniCPM-o-Demo/blob/realtime-protocol/static/duplex/lib/realtime-session.js)
+客户端应等到 `session.queue_done` 后再发送 `session.init`。如果没有排队，服务端也会立即发送
+`session.queue_done`。
 
-> 仓库地址：<https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol>
+## 输出分支
+
+一个 `response.output.delta` 只表达一种输出分支：
+
+| `kind` | 字段 | 说明 |
+|--------|------|------|
+| `listen` | `metrics` | 模型继续听用户输入 |
+| `text` | `text` | 文本增量 |
+| `audio` | `audio` | 24 kHz 单声道 float32 PCM，base64 编码 |
+
+文本和音频是独立 delta，不保证一一对应。客户端应按接收顺序更新字幕和播放音频。
