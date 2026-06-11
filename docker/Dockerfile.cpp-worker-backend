@@ -47,6 +47,7 @@ RUN cmake -S . -B build -G Ninja \
         -DLLAMA_BUILD_SERVER=ON \
         -DLLAMA_BUILD_TESTS=OFF \
         -DLLAMA_BUILD_EXAMPLES=OFF \
+        -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined \
         -DCMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES}" \
     && cmake --build build --target llama-server -j "$(nproc)" \
     && mkdir -p /opt/llama.cpp-omni/bin \
