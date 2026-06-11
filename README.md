@@ -34,12 +34,15 @@
 |------|------|------|-----|-----------|
 | **gateway** | `docker/Dockerfile.gateway` | torch-free 控制面:`/v1/realtime` 入口、调度(FIFO 队列 + 负载感知)、转发、session 录制 | ❌ 不需要 | `data/`(录制)、`certs/`(TLS) |
 | **worker-backend** | `docker/Dockerfile.worker-backend` | 一个容器内 `backend`(加载模型,独占 1 GPU)+ `worker`(纯转发,经 localhost 连 backend) | ✅ 每实例 1 张 | 模型权重(只读) |
+| **cpp-worker-backend** | `docker/Dockerfile.cpp-worker-backend` | 可选替代实现:一个容器内 C++ `llama-server` backend + Python `worker` 转发层 | ✅ 每实例 1 张 | GGUF 模型目录(只读) |
 
 - **Gateway** 不加载模型、不依赖 torch/CUDA,镜像轻量;通过 Compose 内部 DNS 静态寻址各 worker。
 - **Worker-Backend** 是一个 bundle:`worker` 退化为纯转发隔离层,真正的模型推理在同容器的 `backend` 进程。
   一个实例是**有状态的长驻进程**:客户端经 Gateway 与它建立一条**持久化 WebSocket 连接**,
   在连接存活期间持续推送输入、流式接收输出(会话状态驻留在该实例,见下文「亲和性」)。
 - **模型权重不进镜像**(约 19GB),运行时以只读 volume 挂载。
+- **C++ Worker-Backend** 使用 GGUF 权重,不是 HuggingFace/PyTorch 权重;它构建时固定拉取
+  `tc-mb/llama.cpp-omni` PR #54 的 commit `bd96e8b4a4b01a26de144a61bdb5acba64075f62`。
 
 ---
 
@@ -97,6 +100,70 @@ docker compose logs -f worker-backend-0
 启动顺序由 Compose 健康门控保证:**worker-backend 各自加载模型 → healthy → gateway 才启动**(`depends_on: condition: service_healthy`)。单个 backend 加载模型约 30–90s。
 
 > 日志查看(两种方式通用):`docker compose logs -f gateway` / `docker compose logs -f worker-backend-0`
+
+### 可选:C++ backend 镜像
+
+如果要验证或部署 C++ `llama.cpp-omni` backend,使用独立镜像:
+
+```bash
+DOCKER_BUILDKIT=1 docker build \
+  -f docker/Dockerfile.cpp-worker-backend \
+  -t minicpm-cpp-worker-backend:dev .
+```
+
+该镜像构建时会 clone 固定的 `llama.cpp-omni` commit:
+
+```text
+bd96e8b4a4b01a26de144a61bdb5acba64075f62
+```
+
+运行时需要挂载 GGUF 根目录。目录必须包含主模型和子模型:
+
+```text
+MiniCPM-o-4_5-Q4_K_M.gguf
+vision/MiniCPM-o-4_5-vision-F16.gguf
+audio/MiniCPM-o-4_5-audio-F16.gguf
+tts/MiniCPM-o-4_5-tts-F16.gguf
+tts/MiniCPM-o-4_5-projector-F16.gguf
+token2wav-gguf/encoder.gguf
+token2wav-gguf/flow_extra.gguf
+token2wav-gguf/flow_matching.gguf
+token2wav-gguf/hifigan2.gguf
+token2wav-gguf/prompt_cache.gguf
+```
+
+可直接从 Hugging Face 下载:
+
+```bash
+huggingface-cli download openbmb/MiniCPM-o-4_5-gguf \
+  --local-dir /path/to/MiniCPM-o-4_5-gguf \
+  --include \
+    MiniCPM-o-4_5-Q4_K_M.gguf \
+    vision/MiniCPM-o-4_5-vision-F16.gguf \
+    audio/MiniCPM-o-4_5-audio-F16.gguf \
+    tts/MiniCPM-o-4_5-tts-F16.gguf \
+    tts/MiniCPM-o-4_5-projector-F16.gguf \
+    'token2wav-gguf/*.gguf'
+```
+
+单容器 smoke test:
+
+```bash
+docker run --rm --gpus '"device=0"' \
+  -p 23400:22400 \
+  -e GGUF_MODEL=/models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q4_K_M.gguf \
+  -v /path/to/MiniCPM-o-4_5-gguf:/models/MiniCPM-o-4_5-gguf:ro \
+  minicpm-cpp-worker-backend:dev
+```
+
+健康检查:
+
+```bash
+curl http://127.0.0.1:23400/health
+```
+
+期望返回 `status=healthy`、`model_loaded=true`。Gateway 仍然连接 worker 端口,不要直接把浏览器流量打到
+C++ backend 端口。
 
 ### 访问
 
