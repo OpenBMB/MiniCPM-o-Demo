@@ -30,7 +30,6 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from worker_state import WorkerState, WorkerStatus
-from core.processors.backend_factory import create_backend
 from runtime.protocol import DEFAULT_WORKER_CAPABILITIES
 from runtime.session import BackendRuntimeSession
 
@@ -120,6 +119,8 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Worker running as backend-server runtime host: %s", backend_server_url)
     else:
+        from core.processors.backend_factory import create_backend
+
         worker = create_backend(config)
 
         # 模型加载是同步操作（~15s），在线程中执行避免阻塞
