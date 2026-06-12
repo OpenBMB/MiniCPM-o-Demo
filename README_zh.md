@@ -203,141 +203,99 @@ modelscope download --model OpenBMB/MiniCPM-o-4_5 --local_dir /path/to/your/Mini
 修改 `"gateway_port": 8006` 即可改变部署的端口，默认为 8006。
 
 
-**4. 构建移动端前端并启动服务**
+**4. 部署架构**
 
-`start_all.sh` 会在启动 Worker 和 Gateway 前，自动重新构建 `frontend/mobile`，并发布到 `static/mobile/`。这样 `/mobile` 入口会始终使用最新的 React/Vite 代码。
+当前部署拆成三个运行角色：
 
-第一次构建移动端前端时，需要先安装一次 bun 依赖：
-
-```bash
-cd frontend/mobile
-bun install
-cd ../..
+```text
+Browser -> Gateway -> Python Worker -> Backend
 ```
 
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
+- **Gateway** 是对外的 HTTPS/WebSocket 入口，不加载模型，负责路由、排队、session 录制和 worker 健康检查。
+- **Python Worker** 暴露 worker WebSocket/health API，维护 worker 状态，并把 runtime protocol 消息转发给 backend server。
+- **Backend** 负责实际模型推理。Backend 可以是 PyTorch 实现（`py_backend/server.py`），也可以是 C++ 实现（`llama.cpp-omni` 的 `llama-omni-server`）。
 
-如果手动部署，一定要先执行 `cd frontend/mobile && bun run build:static`，再启动 gateway。只有在纯后端调试时才建议设置 `SKIP_MOBILE_BUILD=1` 跳过移动端构建。
+**5. Docker 部署（推荐）**
 
-服务启动后访问 https://localhost:8006 即可。自签名证书会触发浏览器警告，点"高级"→"继续访问"。
-
-**5. torch.compile 加速**
-
-在 A100、RTX 4090 等上一代 GPU 上，全模态全双工（Omni Full-Duplex）模式的单 unit 计算耗时约 0.9s，接近了 1 秒的实时阈值，会出现明显卡顿。`torch.compile` 通过 Triton 将核心子模块编译为优化后的 GPU kernel，可将计算耗时降至约 **0.5s**，满足实时要求，实现无卡顿的流畅交互。
-
-开启方式分为三步：
-
-**5a.** 在 `config.json` 中启用编译：
-
-```json
-{ "service": { "compile": true } }
-```
-
-**5b.** 运行预编译脚本（一次性，约 15 分钟）：
-
-```bash
-CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_CACHE_DIR=./torch_compile_cache .venv/base/bin/python precompile.py
-```
-
-预编译会生成优化后的 Triton kernel 并保存到 `./torch_compile_cache` 目录（`start_all.sh` 会从 `TORCHINDUCTOR_CACHE_DIR` 读取编译缓存）。该缓存持久存储在磁盘上，后续所有启动（包括进程重启）都会自动加载，无需重复编译。
-
-**5c.** 启动服务：
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
-
-Worker 启动时自动从 `./torch_compile_cache` 加载已缓存的 kernel。有缓存时加载约需 5 分钟。
-
-<details>
-<summary>点击展开其他启动选项</summary>
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 bash start_all.sh          # 指定 GPU
-bash start_all.sh --http                             # 降级 HTTP（不推荐，麦克风/摄像头 API 需要 HTTPS）
-```
-
-**手动启动（分步）:**
-```bash
-# Worker（每张 GPU 一个）
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python worker.py --worker-index 0 --gpu-id 0
-
-# Gateway
-PYTHONPATH=. .venv/base/bin/python gateway.py --port 10024 --workers localhost:22400
-```
-</details>
-
-**5. 停止服务**：
-```bash
-pkill -f "gateway.py|worker.py"
-```
-
-<br/>
-
-### Docker 部署
-
-你也可以通过 Docker 运行本服务。这种方式将所有依赖打包在一个镜像中，只需挂载一个工作目录即可启动。
+Docker 是当前仓库的部署权威来源。Dockerfile 和 entrypoint 定义了受支持的进程拓扑、依赖版本、端口、健康检查、模型挂载和 backend 启动参数。裸机部署只建议作为高级调试方式，并应与 Dockerfile / entrypoint 保持等价。
 
 **前置条件：**
-- Docker Engine 19.03+
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)（`nvidia-docker`）
-- 显存大于 28 GB 的 NVIDIA GPU
+- Docker 和 Compose v2 插件
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- 每个 worker-backend 实例独占一张 NVIDIA GPU
+- 模型权重从宿主机挂载，镜像内不包含模型权重
 
-**1. 构建镜像：**
-
-```bash
-docker build -t minicpm-o-demo .
-```
-
-**2. 准备工作目录：**
-
-创建一个工作目录，放入模型权重和可选的配置文件：
+**PyTorch backend（Compose）：**
 
 ```bash
-mkdir -p my-workspace/models
+mkdir -p certs data
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
 
-# 复制或软链接模型权重
-ln -s /path/to/MiniCPM-o-4_5 my-workspace/models/MiniCPM-o-4_5
-
-# （可选）自定义配置 —— model_path 应指向 /workspace/models/MiniCPM-o-4_5
-cp config.example.json my-workspace/config.json
+MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose up -d --build
+docker compose logs -f gateway
+docker compose logs -f worker-backend-0
 ```
 
-工作目录结构：
-```
-my-workspace/
-├── models/MiniCPM-o-4_5/   # 模型权重（必需）
-├── config.json              # 自定义配置（可选，不提供则使用默认值）
-├── certs/                   # TLS 证书（可选，用于 HTTPS）
-├── data/                    # 自动创建：持久化会话数据
-└── torch_compile_cache/     # 自动创建：编译缓存
-```
+`docker-compose.yml` 默认启动一个 gateway 和两个绑定 GPU 0 / GPU 1 的 `worker-backend` 容器。请按机器 GPU 数量显式增删 worker service，并同步修改 gateway 的 `--workers` 列表。如果确实需要单张 GPU 跑多个 worker 实例，可以参考 `docker-compose.multi.yml`。
 
-**3. 使用 `docker run` 运行：**
+**C++ backend（Docker）：**
 
 ```bash
-docker run --gpus all -p 8006:8006 \
-    -v $(pwd)/my-workspace:/workspace \
-    minicpm-o-demo
+DOCKER_BUILDKIT=1 docker build \
+  -f docker/Dockerfile.cpp-worker-backend \
+  -t minicpm-cpp-worker-backend:dev .
+
+DOCKER_BUILDKIT=1 docker build \
+  -f docker/Dockerfile.gateway \
+  -t minicpm-gateway:dev .
+
+docker network create minicpm-cpp || true
+
+docker run -d \
+  --name minicpm-cpp-worker \
+  --network minicpm-cpp \
+  --gpus '"device=0"' \
+  -e GGUF_MODEL=/models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q4_K_M.gguf \
+  -e LLAMA_SERVER_EXTRA_ARGS="-c 8192" \
+  -v /path/to/MiniCPM-o-4_5-gguf:/models/MiniCPM-o-4_5-gguf:ro \
+  minicpm-cpp-worker-backend:dev
+
+docker run -d \
+  --name minicpm-cpp-gateway \
+  --network minicpm-cpp \
+  -p 8006:8006 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/certs:/app/certs:ro \
+  minicpm-gateway:dev \
+  --host 0.0.0.0 \
+  --port 8006 \
+  --https \
+  --ssl-certfile /app/certs/cert.pem \
+  --ssl-keyfile /app/certs/key.pem \
+  --workers minicpm-cpp-worker:22400
 ```
 
-**3（替代方案）. 使用 Docker Compose 运行：**
+C++ backend 镜像默认构建 `tc-mb/llama.cpp-omni` 的 `master` 分支；如果需要固定上游版本，可以在构建时传入 `LLAMA_OMNI_REF=<commit-sha>`。示例通过 `LLAMA_SERVER_EXTRA_ARGS` 给 `llama-omni-server` 显式传入 `-c 8192`，用于设置 backend context size。
 
-编辑 `docker-compose.yml` 设置工作目录路径，然后：
+**裸机部署：**
+
+裸机命令不是当前主安装路径，因为不同机器的 CUDA、Python、编译器和模型目录差异很大。如果需要裸机调试，请以 Dockerfile 和 entrypoint 作为参考实现：
+
+- `docker/Dockerfile.gateway`
+- `docker/Dockerfile.worker-backend`
+- `docker/entrypoint-worker-backend.sh`
+- `docker/Dockerfile.cpp-worker-backend`
+- `docker/entrypoint-cpp-worker-backend.sh`
+
+请保持同样的运行拓扑：Gateway -> Python Worker -> Backend。C++ backend 的 backend 进程是 `llama-omni-server`；PyTorch backend 的 backend 进程是 `py_backend/server.py`。
+
+**停止 Docker 服务：**
 
 ```bash
-docker compose up -d
+docker compose down
+docker rm -f minicpm-cpp-gateway minicpm-cpp-worker 2>/dev/null || true
 ```
-
-**容器支持的环境变量：**
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `GATEWAY_PROTO` | `http` | `http` 或 `https` |
-| `GATEWAY_PORT` | 来自 config（8006） | Gateway 监听端口 |
-| `CUDA_VISIBLE_DEVICES` | 所有 GPU | 逗号分隔的 GPU 索引 |
 
 <br/>
 <br/>
@@ -345,9 +303,7 @@ docker compose up -d
 
 ## C++ 后端（llama.cpp）
 
-本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以在更低配置的消费级设备上运行 MiniCPM-o 4.5。当前分支已经包含 gateway/worker 协议集成；C++ worker Docker 镜像会基于 `tc-mb/llama.cpp-omni` 的 `master` 分支构建，该分支包含匹配的 realtime backend protocol。
-
-如需容器化部署，请使用 `docker/Dockerfile.cpp-worker-backend`，并在运行时挂载 GGUF 模型目录。镜像默认使用 `llama.cpp-omni` 的 `master` 分支；如果需要固定上游版本，可以在构建时传入 `LLAMA_OMNI_REF=<commit-sha>`。
+本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以通过 `llama-omni-server` 运行 MiniCPM-o 4.5。请以上方 Docker 部署章节作为权威安装路径；该路径会构建 `tc-mb/llama.cpp-omni` 的 `master` 分支，并按 Gateway -> Python Worker -> C++ Backend 拓扑接入匹配的 realtime backend protocol。
 
 ### 桌面端应用（Windows & macOS）
 
@@ -373,11 +329,15 @@ minicpmo45_service/
 ├── config.example.json       # 配置示例（完整字段 + 默认值）
 ├── config.py                 # 配置加载逻辑（Pydantic 定义 + JSON 加载）
 ├── requirements.txt          # Python 依赖
-├── start_all.sh              # 一键启动脚本
+├── docker-compose.yml        # 推荐的 PyTorch backend 部署
+├── docker-compose.multi.yml  # 单卡多 worker 部署变体
+├── docker/                   # Dockerfile 和容器 entrypoint
 │
 ├── gateway.py                # Gateway（路由、排队、WS 代理）
-├── worker.py                 # Worker（推理服务）
+├── worker.py                 # Worker（runtime protocol 转发层）
 ├── gateway_modules/          # Gateway 业务模块
+├── py_backend/               # PyTorch backend server
+├── runtime/                  # Backend protocol client/session 层
 │
 ├── core/                     # 核心封装
 │   ├── schemas/              # Pydantic Schema（请求/响应）

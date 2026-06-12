@@ -200,141 +200,99 @@ modelscope download --model OpenBMB/MiniCPM-o-4_5 --local_dir /path/to/your/Mini
 Modify `"gateway_port": 8006` to change the deployment port. The default is 8006.
 
 
-**4. Build the Mobile Frontend and Start the Service**
+**4. Deployment Architecture**
 
-`start_all.sh` automatically rebuilds `frontend/mobile` and publishes it to `static/mobile/` before starting workers and the gateway. This keeps the `/mobile` entry in sync with the latest React/Vite code.
+The current deployment is split into three runtime roles:
 
-If this is your first time building the mobile frontend, install its npm dependencies once:
-
-```bash
-cd frontend/mobile
-bun install
-cd ../..
+```text
+Browser -> Gateway -> Python Worker -> Backend
 ```
 
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
+- **Gateway** is the public HTTPS/WebSocket entrypoint. It does not load the model; it handles routing, queueing, session recording, and worker health checks.
+- **Python Worker** exposes the worker WebSocket/health API, owns worker state, and forwards runtime protocol messages to a backend server.
+- **Backend** runs the model. The backend can be the PyTorch implementation (`py_backend/server.py`) or the C++ implementation (`llama-omni-server` from `llama.cpp-omni`).
 
-For manual deployment, always run `cd frontend/mobile && bun run build:static` before starting the gateway. Only set `SKIP_MOBILE_BUILD=1` for backend-only debugging.
+**5. Docker Deployment (Recommended)**
 
-After the service starts, visit https://localhost:8006. The self-signed certificate will trigger a browser warning — click "Advanced" → "Proceed" to continue.
-
-**5. torch.compile Acceleration**
-
-On older-generation GPUs such as A100 and RTX 4090, the per-unit computation time in Omni Full-Duplex mode is approximately 0.9s, approaching the 1-second real-time threshold and causing noticeable stuttering. `torch.compile` uses Triton to compile core sub-modules into optimized GPU kernels, reducing computation time to approximately **0.5s** — meeting real-time requirements for smooth, stutter-free interaction.
-
-Three steps to enable:
-
-**5a.** Enable compilation in `config.json`:
-
-```json
-{ "service": { "compile": true } }
-```
-
-**5b.** Run the pre-compilation script (one-time, ~15 min):
-
-```bash
-CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_CACHE_DIR=./torch_compile_cache .venv/base/bin/python precompile.py
-```
-
-Pre-compilation generates optimized Triton kernels and saves them to the `./torch_compile_cache` directory (`start_all.sh` reads the compilation cache from `TORCHINDUCTOR_CACHE_DIR`). The cache persists on disk and is automatically loaded on all subsequent starts (including process restarts), with no need to recompile.
-
-**5c.** Start the service:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
-
-Workers automatically load the cached kernels from `./torch_compile_cache`. Loading takes approximately 5 minutes when the cache is available.
-
-<details>
-<summary>Click to expand other startup options</summary>
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 bash start_all.sh          # Specify GPUs
-bash start_all.sh --http                             # Downgrade to HTTP (not recommended, mic/camera APIs require HTTPS)
-```
-
-**Manual Startup (step by step):**
-```bash
-# Worker (one per GPU)
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python worker.py --worker-index 0 --gpu-id 0
-
-# Gateway
-PYTHONPATH=. .venv/base/bin/python gateway.py --port 10024 --workers localhost:22400
-```
-</details>
-
-**5. Stop the Service:**
-```bash
-pkill -f "gateway.py|worker.py"
-```
-
-<br/>
-
-### Docker Deployment
-
-You can also run the service inside Docker. This approach packages all dependencies into a single image — just mount one workspace directory and you're good to go.
+Docker is the deployment source of truth for this repository. The Dockerfiles and entrypoints define the supported process layout, package versions, ports, health checks, model mounts, and backend startup parameters. Bare-metal deployments should be treated as advanced/debug setups and should match the Dockerfiles and entrypoints.
 
 **Prerequisites:**
-- Docker Engine 19.03+
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (`nvidia-docker`)
-- NVIDIA GPU with > 28 GB VRAM
+- Docker with the Compose v2 plugin
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- One NVIDIA GPU per worker-backend instance
+- Model weights mounted from the host; weights are not baked into images
 
-**1. Build the image:**
-
-```bash
-docker build -t minicpm-o-demo .
-```
-
-**2. Prepare the workspace directory:**
-
-Create a single workspace directory with your model weights and optional config:
+**PyTorch backend via Compose:**
 
 ```bash
-mkdir -p my-workspace/models
+mkdir -p certs data
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
 
-# Copy or symlink model weights
-ln -s /path/to/MiniCPM-o-4_5 my-workspace/models/MiniCPM-o-4_5
-
-# (Optional) Custom config — model_path should point to /workspace/models/MiniCPM-o-4_5
-cp config.example.json my-workspace/config.json
+MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose up -d --build
+docker compose logs -f gateway
+docker compose logs -f worker-backend-0
 ```
 
-The workspace directory layout:
-```
-my-workspace/
-├── models/MiniCPM-o-4_5/   # Model weights (required)
-├── config.json              # Custom config (optional, fallback to defaults)
-├── certs/                   # TLS certs (optional, for HTTPS)
-├── data/                    # Auto-created: persistent session data
-└── torch_compile_cache/     # Auto-created: compilation cache
-```
+`docker-compose.yml` starts one gateway and two `worker-backend` containers bound to GPU 0 and GPU 1. Edit the explicit worker services and the gateway `--workers` list to match your GPU count. Use `docker-compose.multi.yml` if you intentionally want multiple worker instances per GPU.
 
-**3. Run with `docker run`:**
+**C++ backend via Docker:**
 
 ```bash
-docker run --gpus all -p 8006:8006 \
-    -v $(pwd)/my-workspace:/workspace \
-    minicpm-o-demo
+DOCKER_BUILDKIT=1 docker build \
+  -f docker/Dockerfile.cpp-worker-backend \
+  -t minicpm-cpp-worker-backend:dev .
+
+DOCKER_BUILDKIT=1 docker build \
+  -f docker/Dockerfile.gateway \
+  -t minicpm-gateway:dev .
+
+docker network create minicpm-cpp || true
+
+docker run -d \
+  --name minicpm-cpp-worker \
+  --network minicpm-cpp \
+  --gpus '"device=0"' \
+  -e GGUF_MODEL=/models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q4_K_M.gguf \
+  -e LLAMA_SERVER_EXTRA_ARGS="-c 8192" \
+  -v /path/to/MiniCPM-o-4_5-gguf:/models/MiniCPM-o-4_5-gguf:ro \
+  minicpm-cpp-worker-backend:dev
+
+docker run -d \
+  --name minicpm-cpp-gateway \
+  --network minicpm-cpp \
+  -p 8006:8006 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/certs:/app/certs:ro \
+  minicpm-gateway:dev \
+  --host 0.0.0.0 \
+  --port 8006 \
+  --https \
+  --ssl-certfile /app/certs/cert.pem \
+  --ssl-keyfile /app/certs/key.pem \
+  --workers minicpm-cpp-worker:22400
 ```
 
-**3 (alternative). Run with Docker Compose:**
+For the C++ backend, `docker/Dockerfile.cpp-worker-backend` builds `tc-mb/llama.cpp-omni` `master` by default. Pass `LLAMA_OMNI_REF=<commit-sha>` during build if you need to pin a specific upstream revision. The example passes `-c 8192` to `llama-omni-server` through `LLAMA_SERVER_EXTRA_ARGS` to set the backend context size explicitly.
 
-Edit `docker-compose.yml` to set the workspace volume path, then:
+**Bare-metal deployment:**
+
+Bare-metal commands are not maintained as the primary installation path because host CUDA, Python, compiler, and model layouts vary. If you need bare-metal deployment for debugging, use the Dockerfiles and entrypoints as the reference implementation:
+
+- `docker/Dockerfile.gateway`
+- `docker/Dockerfile.worker-backend`
+- `docker/entrypoint-worker-backend.sh`
+- `docker/Dockerfile.cpp-worker-backend`
+- `docker/entrypoint-cpp-worker-backend.sh`
+
+Keep the same runtime topology: Gateway -> Python Worker -> Backend. For the C++ backend, the backend process is `llama-omni-server`; for the PyTorch backend, it is `py_backend/server.py`.
+
+**Stop Docker services:**
 
 ```bash
-docker compose up -d
+docker compose down
+docker rm -f minicpm-cpp-gateway minicpm-cpp-worker 2>/dev/null || true
 ```
-
-**Environment variables supported by the container:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GATEWAY_PROTO` | `http` | `http` or `https` |
-| `GATEWAY_PORT` | from config (8006) | Gateway listen port |
-| `CUDA_VISIBLE_DEVICES` | all GPUs | Comma-separated GPU indices |
 
 <br/>
 <br/>
@@ -342,9 +300,7 @@ docker compose up -d
 
 ## C++ Backend (llama.cpp)
 
-This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling you to run MiniCPM-o 4.5 on lower-spec consumer hardware. The current branch contains the gateway/worker protocol integration; the C++ worker Docker image builds against `tc-mb/llama.cpp-omni` `master`, which includes the matching realtime backend protocol.
-
-For container deployment, use `docker/Dockerfile.cpp-worker-backend` with a GGUF model directory mounted at runtime. The image defaults to `llama.cpp-omni` `master`; pass `LLAMA_OMNI_REF=<commit-sha>` during build if you need to pin a specific upstream revision.
+This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling MiniCPM-o 4.5 to run through `llama-omni-server`. Use the Docker deployment section above as the authoritative setup path; it builds `tc-mb/llama.cpp-omni` `master` and wires Gateway -> Python Worker -> C++ Backend with the matching realtime backend protocol.
 
 ### Desktop App (Windows & macOS)
 
@@ -370,11 +326,15 @@ minicpmo45_service/
 ├── config.example.json       # Config example (full fields + defaults)
 ├── config.py                 # Config loading logic (Pydantic definition + JSON loading)
 ├── requirements.txt          # Python dependencies
-├── start_all.sh              # One-click startup script
+├── docker-compose.yml        # Recommended PyTorch backend deployment
+├── docker-compose.multi.yml  # Multi-worker-per-GPU deployment variant
+├── docker/                   # Dockerfiles and container entrypoints
 │
 ├── gateway.py                # Gateway (routing, queuing, WS proxy)
-├── worker.py                 # Worker (inference service)
+├── worker.py                 # Worker (runtime protocol proxy)
 ├── gateway_modules/          # Gateway business modules
+├── py_backend/               # PyTorch backend server
+├── runtime/                  # Backend protocol client/session layer
 │
 ├── core/                     # Core encapsulation
 │   ├── schemas/              # Pydantic schemas (request/response)
