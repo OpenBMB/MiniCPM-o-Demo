@@ -34,15 +34,15 @@
 |------|------|------|-----|-----------|
 | **gateway** | `docker/Dockerfile.gateway` | torch-free 控制面:`/v1/realtime` 入口、调度(FIFO 队列 + 负载感知)、转发、session 录制 | ❌ 不需要 | `data/`(录制)、`certs/`(TLS) |
 | **worker-backend** | `docker/Dockerfile.worker-backend` | 一个容器内 `backend`(加载模型,独占 1 GPU)+ `worker`(纯转发,经 localhost 连 backend) | ✅ 每实例 1 张 | 模型权重(只读) |
-| **cpp-worker-backend** | `docker/Dockerfile.cpp-worker-backend` | 可选替代实现:一个容器内 C++ `llama-server` backend + Python `worker` 转发层 | ✅ 每实例 1 张 | GGUF 模型目录(只读) |
+| **cpp-worker-backend** | `docker/Dockerfile.cpp-worker-backend` | 可选替代实现:一个容器内 C++ `llama-omni-server` backend + Python `worker` 转发层 | ✅ 每实例 1 张 | GGUF 模型目录(只读) |
 
 - **Gateway** 不加载模型、不依赖 torch/CUDA,镜像轻量;通过 Compose 内部 DNS 静态寻址各 worker。
 - **Worker-Backend** 是一个 bundle:`worker` 退化为纯转发隔离层,真正的模型推理在同容器的 `backend` 进程。
   一个实例是**有状态的长驻进程**:客户端经 Gateway 与它建立一条**持久化 WebSocket 连接**,
   在连接存活期间持续推送输入、流式接收输出(会话状态驻留在该实例,见下文「亲和性」)。
 - **模型权重不进镜像**(约 19GB),运行时以只读 volume 挂载。
-- **C++ Worker-Backend** 使用 GGUF 权重,不是 HuggingFace/PyTorch 权重;它构建时固定拉取
-  `tc-mb/llama.cpp-omni` PR #54 的 commit `bd96e8b4a4b01a26de144a61bdb5acba64075f62`。
+- **C++ Worker-Backend** 使用 GGUF 权重,不是 HuggingFace/PyTorch 权重;它构建时默认拉取
+  `tc-mb/llama.cpp-omni` 的 `master` 分支,该分支已集成 Realtime backend protocol。
 
 ---
 
@@ -111,10 +111,15 @@ DOCKER_BUILDKIT=1 docker build \
   -t minicpm-cpp-worker-backend:dev .
 ```
 
-该镜像构建时会 clone 固定的 `llama.cpp-omni` commit:
+该镜像构建时默认 clone `tc-mb/llama.cpp-omni` 的 `master` 分支。需要复现某个固定版本时,
+可以用 build arg 指定 refspec 和 commit:
 
-```text
-bd96e8b4a4b01a26de144a61bdb5acba64075f62
+```bash
+DOCKER_BUILDKIT=1 docker build \
+  -f docker/Dockerfile.cpp-worker-backend \
+  --build-arg LLAMA_OMNI_REFSPEC=master \
+  --build-arg LLAMA_OMNI_REF=<commit-sha> \
+  -t minicpm-cpp-worker-backend:<tag> .
 ```
 
 运行时需要挂载 GGUF 根目录。目录必须包含主模型和子模型:

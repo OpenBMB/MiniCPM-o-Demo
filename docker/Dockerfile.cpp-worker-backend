@@ -3,7 +3,7 @@
 # C++ worker + backend bundle image.
 #
 # One container runs:
-#   - llama.cpp-omni llama-server on 127.0.0.1:${BACKEND_PORT:-22500}
+#   - llama.cpp-omni llama-omni-server on 127.0.0.1:${BACKEND_PORT:-22500}
 #   - worker.py on 0.0.0.0:${WORKER_PORT:-22400}, forwarding to the local backend
 #
 # Model weights are mounted at runtime; they are not baked into the image.
@@ -14,8 +14,10 @@ ARG UBUNTU_VERSION=22.04
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS cpp-build
 
 ARG LLAMA_OMNI_REPO=https://github.com/tc-mb/llama.cpp-omni.git
-ARG LLAMA_OMNI_REFSPEC=+refs/pull/54/head:refs/remotes/pr/54/head
-ARG LLAMA_OMNI_REF=bd96e8b4a4b01a26de144a61bdb5acba64075f62
+ARG LLAMA_OMNI_REFSPEC=master
+ARG LLAMA_OMNI_REF=origin/master
+ARG LLAMA_OMNI_SERVER_TARGET=llama-omni-server
+ARG LLAMA_OMNI_SERVER_BIN=llama-omni-server
 ARG CMAKE_CUDA_ARCHITECTURES=80;120
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,7 +37,7 @@ RUN git init llama.cpp-omni \
     && git remote add origin "${LLAMA_OMNI_REPO}" \
     && git fetch --depth=1 origin "${LLAMA_OMNI_REFSPEC}" \
     && git checkout --detach "${LLAMA_OMNI_REF}" \
-    && test "$(git rev-parse HEAD)" = "${LLAMA_OMNI_REF}"
+    && git rev-parse HEAD
 
 WORKDIR /src/llama.cpp-omni
 
@@ -49,9 +51,9 @@ RUN cmake -S . -B build -G Ninja \
         -DLLAMA_BUILD_EXAMPLES=OFF \
         -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined \
         -DCMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES}" \
-    && cmake --build build --target llama-server -j "$(nproc)" \
+    && cmake --build build --target "${LLAMA_OMNI_SERVER_TARGET}" -j "$(nproc)" \
     && mkdir -p /opt/llama.cpp-omni/bin \
-    && cp build/bin/llama-server build/bin/*.so /opt/llama.cpp-omni/bin/
+    && cp -a "build/bin/${LLAMA_OMNI_SERVER_BIN}" build/bin/*.so* /opt/llama.cpp-omni/bin/
 
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
 

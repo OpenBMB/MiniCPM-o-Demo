@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/opt/llama.cpp-omni/bin/llama-server}"
+LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/opt/llama.cpp-omni/bin/llama-omni-server}"
 GGUF_MODEL="${GGUF_MODEL:-/models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q4_K_M.gguf}"
 BACKEND_BIND_HOST="${BACKEND_BIND_HOST:-127.0.0.1}"
 BACKEND_PORT="${BACKEND_PORT:-22500}"
@@ -12,7 +12,7 @@ READY_TIMEOUT_S="${READY_TIMEOUT_S:-1200}"
 CHECK_MODEL_LAYOUT="${CHECK_MODEL_LAYOUT:-1}"
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
 LOG_DIR="${LOG_DIR:-/app/logs}"
-LLAMA_LOG_FILE="${LLAMA_LOG_FILE:-${LOG_DIR}/llama-server.log}"
+LLAMA_LOG_FILE="${LLAMA_LOG_FILE:-${LOG_DIR}/llama-omni-server.log}"
 
 cd /app
 mkdir -p "$LOG_DIR"
@@ -39,7 +39,7 @@ fi
 
 echo "=================================================="
 echo "  C++ worker-backend bundle"
-echo "  llama-server = $LLAMA_SERVER_BIN"
+echo "  llama server = $LLAMA_SERVER_BIN"
 echo "  GGUF_MODEL   = $GGUF_MODEL"
 echo "  backend      = ${BACKEND_BIND_HOST}:${BACKEND_PORT}"
 echo "  worker       = 0.0.0.0:${WORKER_PORT} -> ${BACKEND_URL}"
@@ -78,7 +78,7 @@ if [ -n "${LLAMA_SERVER_EXTRA_ARGS:-}" ]; then
     llama_args+=( "${extra_args[@]}" )
 fi
 
-echo "[entrypoint] starting llama-server..."
+echo "[entrypoint] starting llama server..."
 "$LLAMA_SERVER_BIN" "${llama_args[@]}" >> "$LLAMA_LOG_FILE" 2>&1 &
 backend_pid=$!
 
@@ -90,7 +90,7 @@ fi
 
 for i in $(seq 1 "$max_retries"); do
     if ! kill -0 "$backend_pid" 2>/dev/null; then
-        echo "[entrypoint] llama-server exited while loading" >&2
+        echo "[entrypoint] llama server exited while loading" >&2
         tail -50 "$LLAMA_LOG_FILE" >&2 || true
         cleanup
     fi
@@ -125,7 +125,7 @@ echo "[entrypoint] running. backend pid=${backend_pid} worker pid=${worker_pid}"
 
 while true; do
     if ! kill -0 "$backend_pid" 2>/dev/null; then
-        echo "[entrypoint] llama-server exited" >&2
+        echo "[entrypoint] llama server exited" >&2
         cleanup
     fi
     if ! kill -0 "$worker_pid" 2>/dev/null; then
