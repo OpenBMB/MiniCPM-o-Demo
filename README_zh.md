@@ -345,7 +345,9 @@ docker compose up -d
 
 ## C++ 后端（llama.cpp）
 
-本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以在更低配置的消费级设备上运行 MiniCPM-o 4.5。详见 [Comni 分支](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/Comni)。
+本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以在更低配置的消费级设备上运行 MiniCPM-o 4.5。当前分支已经包含 gateway/worker 协议集成；C++ worker Docker 镜像会基于 `tc-mb/llama.cpp-omni` 的 `master` 分支构建，该分支包含匹配的 realtime backend protocol。
+
+如需容器化部署，请使用 `docker/Dockerfile.cpp-worker-backend`，并在运行时挂载 GGUF 模型目录。镜像默认使用 `llama.cpp-omni` 的 `master` 分支；如果需要固定上游版本，可以在构建时传入 `LLAMA_OMNI_REF=<commit-sha>`。
 
 ### 桌面端应用（Windows & macOS）
 
