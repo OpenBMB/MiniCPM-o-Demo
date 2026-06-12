@@ -239,44 +239,23 @@ docker compose logs -f worker-backend-0
 
 `docker-compose.yml` 默认启动一个 gateway 和两个绑定 GPU 0 / GPU 1 的 `worker-backend` 容器。请按机器 GPU 数量显式增删 worker service，并同步修改 gateway 的 `--workers` 列表。如果确实需要单张 GPU 跑多个 worker 实例，可以参考 `docker-compose.multi.yml`。
 
-**C++ backend（Docker）：**
+**C++ backend（Compose）：**
 
 ```bash
-DOCKER_BUILDKIT=1 docker build \
-  -f docker/Dockerfile.cpp-worker-backend \
-  -t minicpm-cpp-worker-backend:dev .
+mkdir -p certs data
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
 
-DOCKER_BUILDKIT=1 docker build \
-  -f docker/Dockerfile.gateway \
-  -t minicpm-gateway:dev .
+GGUF_MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5-gguf \
+GATEWAY_HOST_PORT=8006 \
+CPP_GPU_ID=0 \
+docker compose -f docker-compose.cpp.yml up -d --build
 
-docker network create minicpm-cpp || true
-
-docker run -d \
-  --name minicpm-cpp-worker \
-  --network minicpm-cpp \
-  --gpus '"device=0"' \
-  -e GGUF_MODEL=/models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q4_K_M.gguf \
-  -e LLAMA_SERVER_EXTRA_ARGS="-c 8192" \
-  -v /path/to/MiniCPM-o-4_5-gguf:/models/MiniCPM-o-4_5-gguf:ro \
-  minicpm-cpp-worker-backend:dev
-
-docker run -d \
-  --name minicpm-cpp-gateway \
-  --network minicpm-cpp \
-  -p 8006:8006 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/certs:/app/certs:ro \
-  minicpm-gateway:dev \
-  --host 0.0.0.0 \
-  --port 8006 \
-  --https \
-  --ssl-certfile /app/certs/cert.pem \
-  --ssl-keyfile /app/certs/key.pem \
-  --workers minicpm-cpp-worker:22400
+docker compose -f docker-compose.cpp.yml logs -f gateway
+docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
 ```
 
-C++ backend 镜像默认构建 `tc-mb/llama.cpp-omni` 的 `master` 分支；如果需要固定上游版本，可以在构建时传入 `LLAMA_OMNI_REF=<commit-sha>`。示例通过 `LLAMA_SERVER_EXTRA_ARGS` 给 `llama-omni-server` 显式传入 `-c 8192`，用于设置 backend context size。
+`docker-compose.cpp.yml` 默认启动一个 gateway 和一个 `cpp-worker-backend` 容器。C++ worker-backend 容器内部同时运行 `llama-omni-server` 和 `worker.py`；gateway 通过 Compose 网络访问 worker。C++ 镜像默认构建 `tc-mb/llama.cpp-omni` 的 `master` 分支；如果需要固定上游版本，可以在构建时传入 `LLAMA_OMNI_REFSPEC=<branch-or-ref>` 和 `LLAMA_OMNI_REF=<ref-or-commit>`。compose 文件默认通过 `LLAMA_SERVER_EXTRA_ARGS` 给 `llama-omni-server` 传入 `-c 8192`，用于显式设置 backend context size；只有在确认目标 context 配置时才建议覆盖 `LLAMA_SERVER_EXTRA_ARGS`。
 
 **裸机部署：**
 
@@ -293,8 +272,8 @@ C++ backend 镜像默认构建 `tc-mb/llama.cpp-omni` 的 `master` 分支；如�
 **停止 Docker 服务：**
 
 ```bash
-docker compose down
-docker rm -f minicpm-cpp-gateway minicpm-cpp-worker 2>/dev/null || true
+docker compose down                      # PyTorch backend compose
+docker compose -f docker-compose.cpp.yml down  # C++ backend compose
 ```
 
 <br/>
@@ -330,6 +309,7 @@ minicpmo45_service/
 ├── config.py                 # 配置加载逻辑（Pydantic 定义 + JSON 加载）
 ├── requirements.txt          # Python 依赖
 ├── docker-compose.yml        # 推荐的 PyTorch backend 部署
+├── docker-compose.cpp.yml    # 推荐的 C++ backend 部署
 ├── docker-compose.multi.yml  # 单卡多 worker 部署变体
 ├── docker/                   # Dockerfile 和容器 entrypoint
 │

@@ -236,44 +236,23 @@ docker compose logs -f worker-backend-0
 
 `docker-compose.yml` starts one gateway and two `worker-backend` containers bound to GPU 0 and GPU 1. Edit the explicit worker services and the gateway `--workers` list to match your GPU count. Use `docker-compose.multi.yml` if you intentionally want multiple worker instances per GPU.
 
-**C++ backend via Docker:**
+**C++ backend via Compose:**
 
 ```bash
-DOCKER_BUILDKIT=1 docker build \
-  -f docker/Dockerfile.cpp-worker-backend \
-  -t minicpm-cpp-worker-backend:dev .
+mkdir -p certs data
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
 
-DOCKER_BUILDKIT=1 docker build \
-  -f docker/Dockerfile.gateway \
-  -t minicpm-gateway:dev .
+GGUF_MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5-gguf \
+GATEWAY_HOST_PORT=8006 \
+CPP_GPU_ID=0 \
+docker compose -f docker-compose.cpp.yml up -d --build
 
-docker network create minicpm-cpp || true
-
-docker run -d \
-  --name minicpm-cpp-worker \
-  --network minicpm-cpp \
-  --gpus '"device=0"' \
-  -e GGUF_MODEL=/models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q4_K_M.gguf \
-  -e LLAMA_SERVER_EXTRA_ARGS="-c 8192" \
-  -v /path/to/MiniCPM-o-4_5-gguf:/models/MiniCPM-o-4_5-gguf:ro \
-  minicpm-cpp-worker-backend:dev
-
-docker run -d \
-  --name minicpm-cpp-gateway \
-  --network minicpm-cpp \
-  -p 8006:8006 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/certs:/app/certs:ro \
-  minicpm-gateway:dev \
-  --host 0.0.0.0 \
-  --port 8006 \
-  --https \
-  --ssl-certfile /app/certs/cert.pem \
-  --ssl-keyfile /app/certs/key.pem \
-  --workers minicpm-cpp-worker:22400
+docker compose -f docker-compose.cpp.yml logs -f gateway
+docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
 ```
 
-For the C++ backend, `docker/Dockerfile.cpp-worker-backend` builds `tc-mb/llama.cpp-omni` `master` by default. Pass `LLAMA_OMNI_REF=<commit-sha>` during build if you need to pin a specific upstream revision. The example passes `-c 8192` to `llama-omni-server` through `LLAMA_SERVER_EXTRA_ARGS` to set the backend context size explicitly.
+`docker-compose.cpp.yml` starts one gateway and one `cpp-worker-backend` container. The C++ worker-backend container runs both `llama-omni-server` and `worker.py`; the gateway talks to the worker over the Compose network. The C++ image builds `tc-mb/llama.cpp-omni` `master` by default. Set `LLAMA_OMNI_REFSPEC=<branch-or-ref>` and `LLAMA_OMNI_REF=<ref-or-commit>` during build if you need to pin a specific upstream revision. The compose file passes `-c 8192` to `llama-omni-server` through `LLAMA_SERVER_EXTRA_ARGS` by default to set the backend context size explicitly; override `LLAMA_SERVER_EXTRA_ARGS` only if you know the target context configuration.
 
 **Bare-metal deployment:**
 
@@ -290,8 +269,8 @@ Keep the same runtime topology: Gateway -> Python Worker -> Backend. For the C++
 **Stop Docker services:**
 
 ```bash
-docker compose down
-docker rm -f minicpm-cpp-gateway minicpm-cpp-worker 2>/dev/null || true
+docker compose down                      # PyTorch backend compose
+docker compose -f docker-compose.cpp.yml down  # C++ backend compose
 ```
 
 <br/>
@@ -327,6 +306,7 @@ minicpmo45_service/
 ├── config.py                 # Config loading logic (Pydantic definition + JSON loading)
 ├── requirements.txt          # Python dependencies
 ├── docker-compose.yml        # Recommended PyTorch backend deployment
+├── docker-compose.cpp.yml    # Recommended C++ backend deployment
 ├── docker-compose.multi.yml  # Multi-worker-per-GPU deployment variant
 ├── docker/                   # Dockerfiles and container entrypoints
 │
