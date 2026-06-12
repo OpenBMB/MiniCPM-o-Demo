@@ -212,16 +212,18 @@ async def sender(
             await asyncio.sleep(sleep_s)
 
         msg = {
-            "type": "input_audio_buffer.append",
-            "audio": b64_float32(chunk),
-            "video_frames": [frame],
-            "force_listen": False,
-            "max_slice_nums": max_slice_nums,
+            "type": "input.append",
+            "input": {
+                "audio": b64_float32(chunk),
+                "video_frames": [frame],
+                "force_listen": False,
+                "max_slice_nums": max_slice_nums,
+            },
         }
         await ws.send(json.dumps(msg))
         state.input_chunks_sent += 1
         state.input_frames_sent += 1
-        state.event("client.input_audio_buffer.append", chunk_idx=idx + 1)
+        state.event("client.input.append", chunk_idx=idx + 1)
 
         idx += 1
         next_send += chunk_ms / 1000.0
@@ -265,13 +267,12 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
 
                     if msg_type in ("session.queue_done", "queue_done") and sender_task is None:
                         await ws.send(json.dumps({
-                            "type": "session.update",
-                            "session": {
-                                "instructions": args.instructions,
-                                "max_slice_nums": args.max_slice_nums,
+                            "type": "session.init",
+                            "payload": {
+                                "system_prompt": args.instructions,
                             },
                         }))
-                        state.event("client.session.update")
+                        state.event("client.session.init")
 
                     elif msg_type == "session.created":
                         state.session_id = msg.get("session_id", "")
@@ -283,23 +284,35 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
                         )
                         state.event("client.sender_started", audio_chunks=len(audio_chunks), frames=len(frames))
 
-                    elif msg_type == "response.listen":
+                    elif msg_type == "response.output.delta" and msg.get("kind") == "listen":
                         state.listen_events += 1
+                        if msg.get("metrics"):
+                            state.event("server.response.output.delta.listen", metrics=msg.get("metrics"))
+                        if args.stop_on_end_of_turn and (state.text_chunks or state.output_chunk_times_s):
+                            break
 
-                    elif msg_type == "response.output_audio.delta":
+                    elif msg_type == "response.output.delta" and msg.get("kind") == "text":
                         recv_s = now()
                         text = msg.get("text") or ""
                         if text:
                             if state.first_text_s is None:
                                 state.first_text_s = recv_s
                             state.text_chunks.append(text)
+
+                    elif msg_type == "response.output.delta" and msg.get("kind") == "audio":
+                        recv_s = now()
                         if msg.get("audio"):
                             if state.first_audio_s is None:
                                 state.first_audio_s = recv_s
                             state.output_chunk_times_s.append(recv_s)
                             state.output_chunk_durations_ms.append(decode_audio_duration_ms(msg["audio"]))
-                            state.output_chunk_eot.append(bool(msg.get("end_of_turn")))
-                        if msg.get("end_of_turn") and args.stop_on_end_of_turn:
+                            state.output_chunk_eot.append(False)
+
+                    elif msg_type == "response.done":
+                        text = msg.get("text") or ""
+                        if text and not state.text_chunks:
+                            state.text_chunks.append(text)
+                        if args.stop_on_end_of_turn:
                             break
 
                     elif msg_type == "session.closed":

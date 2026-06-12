@@ -342,7 +342,9 @@ docker compose up -d
 
 ## C++ Backend (llama.cpp)
 
-This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling you to run MiniCPM-o 4.5 on lower-spec consumer hardware. See the [Comni branch](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/Comni) for setup instructions and details.
+This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling you to run MiniCPM-o 4.5 on lower-spec consumer hardware. The current branch contains the gateway/worker protocol integration; the C++ worker Docker image builds against `tc-mb/llama.cpp-omni` `master`, which includes the matching realtime backend protocol.
+
+For container deployment, use `docker/Dockerfile.cpp-worker-backend` with a GGUF model directory mounted at runtime. The image defaults to `llama.cpp-omni` `master`; pass `LLAMA_OMNI_REF=<commit-sha>` during build if you need to pin a specific upstream revision.
 
 ### Desktop App (Windows & macOS)
 

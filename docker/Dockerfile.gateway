@@ -1,0 +1,88 @@
+# syntax=docker/dockerfile:1
+#
+# gateway 镜像(torch-free 轻量控制面)。
+#
+# gateway 只做:/v1/realtime 公网入口、mode 分流、worker 池调度(FIFO 队列 + 负载感知)、
+# 转发、session 录制。它不加载模型、不依赖 torch/CUDA。
+#
+# 依赖核对(grep gateway.py + gateway_modules + runtime/):fastapi/uvicorn/httpx/
+# numpy/websockets/pydantic + markdown/pygments(docs 渲染)+ python-multipart。
+# 整个 runtime/ 已确认 torch-free,可安全打进轻镜像。
+#
+# 模型权重、torch 都不在本镜像——那是 worker-backend 镜像的事。
+# session 录制数据(data/)运行时以 volume 挂载,见 compose。
+#
+# 多阶段:需要现 build 的前端在构建器阶段用 bun 编译,产物拷进最终镜像——
+# 产物【不进 git 仓库】、最终镜像【无 bun/node】:
+#   - frontend/mobile (Vite/React)        → static/mobile
+#   - docs-app (Next.js static export)     → static/docs
+# (static/ 下其它页面如 omni/turnbased/mobile-omni 是已提交的静态文件,随 COPY . . 带入。)
+
+# ---- 阶段 1a:移动端构建器(临时,不进最终镜像)----
+FROM oven/bun:1-slim AS mobile-builder
+WORKDIR /src/frontend/mobile
+# 只拷构建移动端需要的源码,最大化缓存
+COPY frontend/mobile/package.json frontend/mobile/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY frontend/mobile/ ./
+# build:static = tsc + vite build + publish-static.mjs(把 dist/ 拷到 ../../static/mobile)
+# publish 目标是仓库根的 static/mobile,需要该目录存在
+RUN mkdir -p /src/static && bun run build:static
+# 产物现在位于 /src/static/mobile
+
+# ---- 阶段 1b:文档站构建器(Next.js static export,临时)----
+FROM oven/bun:1-slim AS docs-builder
+WORKDIR /src/docs-app
+COPY docs-app/package.json docs-app/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY docs-app/ ./
+# build = next build(output:export → out/)+ publish-static.mjs(把 out/ 拷到 ../static/docs)
+RUN mkdir -p /src/static && bun run build
+# 产物现在位于 /src/static/docs
+
+# ---- 阶段 2:最终 gateway 镜像(torch-free,无 bun)----
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app
+
+# 轻量系统依赖:curl 仅用于健康检查
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# gateway 的全部 Python 依赖(无 torch / transformers / minicpmo-utils)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+        "fastapi>=0.128.0" \
+        "uvicorn>=0.40.0" \
+        "httpx>=0.28.0" \
+        "websockets>=16.0" \
+        "pydantic>=2.11.0" \
+        "numpy>=2.2.0" \
+        "markdown>=3.6" \
+        "Pygments>=2.18.0" \
+        python-multipart \
+        "PyYAML>=6.0" \
+        "librosa>=0.10.2" \
+        "soundfile>=0.12.1"
+        # 以上 yaml/librosa/soundfile:gateway 读 preset(yaml)与参考音频(librosa/soundfile)需要。
+        # 单体架构下它们靠 minicpmo-utils[all] 传递依赖隐式提供;轻镜像不装 minicpmo-utils,
+        # 故须显式声明。librosa 必须 >=0.10.2 —— 0.9.x 在新 setuptools 下因缺 pkg_resources 崩。
+
+# 代码放最后(最常变,前面依赖层全命中缓存)
+COPY . .
+
+# 把构建器产出的静态产物拷进来(均不经 git 仓库)
+COPY --from=mobile-builder /src/static/mobile ./static/mobile
+COPY --from=docs-builder   /src/static/docs   ./static/docs
+
+RUN mkdir -p /app/data
+
+EXPOSE 8006
+
+# gateway 启动参数由 compose command 提供(--port / --workers / --https|--http)
+ENTRYPOINT ["python", "gateway.py"]

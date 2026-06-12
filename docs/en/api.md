@@ -122,7 +122,7 @@ Update ETA configuration. Request body uses the same fields as the GET response.
 
 ### KV Cache
 
-#### GET /api/cache
+#### GET /cache
 
 Query the KV Cache status of all Workers.
 
@@ -207,14 +207,13 @@ Get the list of enabled apps (for frontend use).
 
 Get the list of all apps including enabled status (for Admin use).
 
-#### PUT /api/admin/apps
+#### PUT /api/admin/apps/{app_id}
 
 Toggle app enabled status.
 
 **Request Body**:
 ```json
 {
-  "app_id": "omni",
   "enabled": false
 }
 ```

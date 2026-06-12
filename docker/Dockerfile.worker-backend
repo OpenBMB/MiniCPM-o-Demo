@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+#
+# worker + backend bundle 镜像（新链路）。
+#
+# 一个容器内同时跑：
+#   - py_backend.server   （协议服务端，加载模型，独占 1 GPU）
+#   - worker.py           （纯转发隔离层，--backend-server-url 指向 localhost backend）
+# gateway 不在本镜像内（它 torch-free，单独进程跑）。
+#
+# base 用普通 python，不用 nvidia/cuda 镜像：torch 的 +cu128 wheel 自带 CUDA 用户态库
+#（libcudart/cudnn/cublas/nccl 等），driver 由宿主机 nvidia runtime 注入。
+#
+# 模型权重不进镜像（19G），运行时以 volume 挂载，见 entrypoint。
+
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app \
+    TORCHINDUCTOR_CACHE_DIR=/app/torch_compile_cache
+
+# ---- 系统依赖（很少变，放最上层）----
+# ffmpeg: 音视频解码（media.py / moviepy / decord 运行期需要）
+# libsndfile1: soundfile 读写音频
+# curl: entrypoint 健康检查
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libsndfile1 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ---- ① torch 栈：单独一层、写死版本，极少变 → 缓存命中率最高 ----
+# 6.3G 大头（torch+nvidia+triton），用 BuildKit 缓存挂载，跨 build 复用已下载 wheel。
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+        --index-url https://download.pytorch.org/whl/cu128 \
+        torch==2.8.0 torchaudio==2.8.0
+
+# ---- ② 其余轻依赖（~1G），requirements 变才重跑 ----
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# ---- ③ 代码放最后：最常变，但只影响这一层；前两层全命中缓存 ----
+COPY . .
+
+RUN chmod +x docker/entrypoint-worker-backend.sh \
+    && mkdir -p /app/data /app/tmp /app/torch_compile_cache
+
+# backend 协议端口（容器内 worker 走 localhost 连它，不必对外暴露）
+EXPOSE 22500
+# worker 转发端口（gateway 连这个）
+EXPOSE 22400
+
+ENTRYPOINT ["docker/entrypoint-worker-backend.sh"]

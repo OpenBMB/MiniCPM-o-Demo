@@ -25,8 +25,9 @@ ffmpeg -version
 
 ## 音频探测
 
-音频探测脚本会连接 `wss://host/v1/realtime?mode=audio`，按 chunk 发送
-16 kHz 单声道 float32 PCM 音频，并输出客户端侧观测到的流式延迟与平滑度指标。
+音频探测脚本会连接 `wss://host/v1/realtime?mode=audio`，等待
+`session.queue_done` 后发送 `session.init`，再按 chunk 发送 `input.append`
+事件。音频为 16 kHz 单声道 float32 PCM。
 
 ```bash
 python audio_probe.py \
@@ -41,7 +42,7 @@ python audio_probe.py \
 ## 视频探测
 
 视频探测脚本会用 `ffmpeg` 从 MP4 中提取 16 kHz 单声道音频和 JPEG 帧，然后发送携带
-`video_frames` 的 `input_audio_buffer.append` 事件。
+`input.video_frames` 的 `input.append` 事件。
 
 ```bash
 python video_probe.py \

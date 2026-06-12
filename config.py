@@ -38,8 +38,16 @@ _EXAMPLE_PATH = os.path.join(os.path.dirname(__file__), "config.example.json")
 class ModelConfig(BaseModel):
     """模型加载配置"""
 
+    model_config = {"protected_namespaces": ()}
+
     model_path: str = Field(
-        description="基础模型路径（HuggingFace 格式目录）。必填，无默认值。",
+        default="",
+        description=(
+            "基础模型路径（HuggingFace 格式目录）。"
+            "仅加载模型的 backend 进程必需；gateway/worker 不读此字段。"
+            "为空时 load_config 不报错（便于无模型的 gateway 启动），"
+            "由 backend 在构造模型时校验非空。"
+        ),
     )
     pt_path: Optional[str] = Field(
         default=None,
@@ -174,7 +182,8 @@ class ServiceConfig(BaseModel):
     """
 
     model: ModelConfig = Field(
-        description="模型加载配置",
+        default_factory=ModelConfig,
+        description="模型加载配置（gateway/worker 可省略；backend 需 model_path）",
     )
     audio: AudioConfig = Field(
         default_factory=AudioConfig,
@@ -287,7 +296,11 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
     """从 config.json 加载服务配置
 
     config.json 支持部分覆盖：只需写需要修改的字段，其余走 Pydantic 默认值。
-    最小配置只需 {"model": {"model_path": "/path/to/model"}}
+    所有字段都有默认值，文件可以完全不存在（此时全走默认）——这让无模型的
+    gateway / worker 进程无需 config.json 即可启动。
+
+    唯一对内容有要求的是 `model.model_path`，但它只对加载模型的 backend 进程必需，
+    且该校验下沉到 backend 构造模型时执行（见 py_backend/server.py），这里不强制。
 
     Args:
         path: config.json 的路径
@@ -296,36 +309,22 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
         ServiceConfig 实例
 
     Raises:
-        FileNotFoundError: 配置文件不存在（提示用户从 example 复制）
-        ValueError: 配置文件格式错误
+        ValueError: 配置文件存在但格式错误（JSON 解析失败 / 字段类型非法）
     """
     if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"配置文件不存在: {path}\n"
-            f"请从示例文件创建：\n"
-            f"  cp {_EXAMPLE_PATH} {path}\n"
-            f"然后修改 model.model_path 为实际模型路径。\n"
-            f"\n"
-            f"最小配置：\n"
-            f'{{"model": {{"model_path": "/path/to/your/model"}}}}'
+        logger.warning(
+            "config.json 不存在 (%s)，使用全部默认值。"
+            "加载模型的进程请通过 --model-path 或 config.json 提供 model.model_path。",
+            path,
         )
+        return ServiceConfig()
 
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # 检查必填字段：model.model_path
-    model_section = data.get("model")
-    if not model_section or not model_section.get("model_path"):
-        raise ValueError(
-            f"config.json 缺少必填字段 model.model_path\n"
-            f"请编辑 {path}，设置模型路径：\n"
-            f'\n'
-            f'{{"model": {{"model_path": "/path/to/your/model"}}}}'
-        )
-
     config = ServiceConfig(**data)
     logger.info(
-        f"配置已加载: model={config.model.model_path}, "
+        f"配置已加载: model={config.model.model_path or '(未设置)'}, "
         f"attn_implementation={config.attn_implementation}, "
         f"gateway_port={config.gateway_port}, "
         f"playback_delay_ms={config.playback_delay_ms}, "

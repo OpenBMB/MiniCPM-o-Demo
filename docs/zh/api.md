@@ -122,7 +122,7 @@ ETA（预计等待时间）为每种请求类型的基准值，运行时通过�
 
 ### KV Cache
 
-#### GET /api/cache
+#### GET /cache
 
 查询所有 Worker 的 KV Cache 状态。
 
@@ -207,14 +207,13 @@ ETA（预计等待时间）为每种请求类型的基准值，运行时通过�
 
 获取所有应用列表，包含启用状态（Admin 用）。
 
-#### PUT /api/admin/apps
+#### PUT /api/admin/apps/{app_id}
 
 切换应用启用状态。
 
 **请求体**：
 ```json
 {
-  "app_id": "omni",
   "enabled": false
 }
 ```

@@ -1,0 +1,109 @@
+# 一卡多 worker 变体:每张 GPU 放 2 个 worker-backend(共 4 个并发)。
+#
+# 与主 docker-compose.yml 的唯一区别:GPU0 上放 0a/0b 两个实例、GPU1 上放 1a/1b 两个,
+# device_ids 成对指向同一张卡。端口无需错开(各自独立容器,容器内端口默认即可)。
+#
+# 显存:每实例独立加载一份模型(~21.8GB),每卡 2 份 ≈ 43.6GB,98GB 卡轻松。
+# 代价见 README "一张 GPU 跑多个 Worker":N 份重复权重 + 同卡算力瓜分。
+#
+# 用法:
+#   MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose -f docker-compose.multi.yml up -d --build
+
+x-worker-backend: &worker-backend-base
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.worker-backend
+  image: minicpm-wb:dev
+  environment:
+    GPU_ID: "0"
+    BACKEND_PORT: "22500"
+    WORKER_PORT: "22400"
+    MODEL_PATH: /models/MiniCPM-o-4_5
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-sf", "http://127.0.0.1:22400/health"]
+    interval: 15s
+    timeout: 5s
+    retries: 40
+    start_period: 120s
+  logging:
+    driver: json-file
+    options: {max-size: "50m", max-file: "3"}
+
+services:
+  worker-backend-0a:
+    <<: *worker-backend-base
+    container_name: minicpm-wb-0a
+    volumes:
+      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - {driver: nvidia, device_ids: ["0"], capabilities: [gpu]}
+
+  worker-backend-0b:
+    <<: *worker-backend-base
+    container_name: minicpm-wb-0b
+    volumes:
+      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - {driver: nvidia, device_ids: ["0"], capabilities: [gpu]}
+
+  worker-backend-1a:
+    <<: *worker-backend-base
+    container_name: minicpm-wb-1a
+    volumes:
+      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - {driver: nvidia, device_ids: ["1"], capabilities: [gpu]}
+
+  worker-backend-1b:
+    <<: *worker-backend-base
+    container_name: minicpm-wb-1b
+    volumes:
+      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - {driver: nvidia, device_ids: ["1"], capabilities: [gpu]}
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    image: minicpm-gateway:dev
+    container_name: minicpm-gateway
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8006"
+      - "--https"
+      - "--ssl-certfile"
+      - "/app/certs/cert.pem"
+      - "--ssl-keyfile"
+      - "/app/certs/key.pem"
+      - "--workers"
+      - "worker-backend-0a:22400,worker-backend-0b:22400,worker-backend-1a:22400,worker-backend-1b:22400"
+    ports:
+      - "8006:8006"
+    volumes:
+      - ${DATA_HOST_PATH:-./data}:/app/data
+      - ${CERTS_HOST_PATH:-./certs}:/app/certs:ro
+    depends_on:
+      worker-backend-0a: {condition: service_healthy}
+      worker-backend-0b: {condition: service_healthy}
+      worker-backend-1a: {condition: service_healthy}
+      worker-backend-1b: {condition: service_healthy}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}

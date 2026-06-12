@@ -37,6 +37,7 @@ class WorkerInfo(BaseModel):
     last_heartbeat: Optional[datetime] = None
     current_request_type: Optional[str] = None
     task_started_at: Optional[datetime] = None
+    capabilities: List[str] = Field(default_factory=list)
 
 
 # ============ 队列模型 ============

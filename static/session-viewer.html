@@ -205,6 +205,35 @@
         .center-msg { text-align: center; padding: 60px 20px; font-size: 15px; color: #999; }
         .error-msg { color: #ef4444; }
 
+        /* Event-stream timeline */
+        .evstream { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; }
+        .ev {
+            display: grid;
+            grid-template-columns: 48px 64px 130px 1fr;
+            align-items: start;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            border-left: 3px solid transparent;
+        }
+        .ev-up   { background: #f0f6ff; border-left-color: #3b82f6; }  /* client → backend */
+        .ev-down { background: #f6fff0; border-left-color: #22c55e; }  /* backend → client */
+        .ev-seq  { color: #9ca3af; font-variant-numeric: tabular-nums; }
+        .ev-ts   { color: #9ca3af; font-variant-numeric: tabular-nums; }
+        .ev-label { font-weight: 600; color: #374151; }
+        .ev-body { min-width: 0; word-break: break-word; }
+        .ev-text { white-space: pre-wrap; color: #111827; }
+        .ev-sub  { color: #6b7280; font-size: 12px; }
+        .ev-json { margin: 0; font-size: 11.5px; color: #6b7280; white-space: pre-wrap; word-break: break-all; background: rgba(0,0,0,0.03); padding: 4px 6px; border-radius: 4px; }
+        .ev-frame { max-height: 72px; border-radius: 4px; margin: 4px 4px 0 0; vertical-align: top; }
+        .ev-audio { margin-top: 4px; }
+        .ev-audio .ev-sub { display: block; margin-bottom: 2px; }
+        @media (max-width: 640px) {
+            .ev { grid-template-columns: 36px 1fr; }
+            .ev-ts, .ev-label { grid-column: 2; }
+        }
+
         /* User comment block (optional, only rendered when present) */
         .user-comment {
             margin: 12px auto 0; padding: 12px 14px;
@@ -259,244 +288,25 @@
         try { return (await fetch(aUrl(rel), {method:'HEAD'})).ok; } catch { return false; }
     }
 
-    /* ── Multi-track playback engine (must be defined before try block to avoid TDZ) ── */
-    let _mtPlayer = null;
-
-    class MTPlayer {
-        constructor(chunks) {
-            this.chunks = chunks;
-            this.idx = -1;
-            this.playing = false;
-            this._gen = 0;
-            this._ctx = null;
-            this._source = null;
-            this._buf = null;
-            this._segs = [];
-            this._t0 = 0;
-            this._off = 0;
-            this._dur = 0;
-            this._raf = null;
-            this._ok = false;
-        }
-        async _build() {
-            if (this._ok) return;
-            if (!this._ctx) this._ctx = new (window.AudioContext || window.webkitAudioContext)();
-            const ctx = this._ctx;
-            if (!this._elStatus) this._cacheEls();
-            if (this._elStatus) this._elStatus.textContent = 'Loading audio chunks…';
-
-            const decA = async (rel) => {
-                if (!rel) return null;
-                try {
-                    const r = await fetch(aUrl(rel));
-                    if (!r.ok) return null;
-                    return await ctx.decodeAudioData(await r.arrayBuffer());
-                } catch { return null; }
-            };
-
-            let done = 0;
-            const decoded = await Promise.all(this.chunks.map(async (c) => {
-                const res = c.result || {};
-                const [uBuf, aBuf] = await Promise.all([decA(c.user_audio), decA(res.ai_audio)]);
-                if (this._elStatus) this._elStatus.textContent = `Loading ${++done}/${this.chunks.length}…`;
-                return { uBuf, aBuf };
-            }));
-
-            const sr = ctx.sampleRate;
-            let total = 0;
-            const lens = decoded.map(({ uBuf, aBuf }) => {
-                const n = Math.max(uBuf ? uBuf.length : 0, aBuf ? aBuf.length : 0, 1);
-                total += n;
-                return n;
-            });
-
-            const buf = ctx.createBuffer(2, total, sr);
-            const L = buf.getChannelData(0), R = buf.getChannelData(1);
-            let off = 0;
-            this._segs = [];
-            for (let i = 0; i < decoded.length; i++) {
-                const { uBuf, aBuf } = decoded[i];
-                const n = lens[i];
-                if (uBuf) { const d = uBuf.getChannelData(0); L.set(d.subarray(0, Math.min(d.length, n)), off); }
-                if (aBuf) { const d = aBuf.getChannelData(0); R.set(d.subarray(0, Math.min(d.length, n)), off); }
-                this._segs.push({ s: off / sr, e: (off + n) / sr, ai: i });
-                off += n;
-            }
-
-            this._buf = buf;
-            this._dur = buf.duration;
-            this._ok = true;
-            if (this._elStatus) this._elStatus.textContent = 'Ready';
-        }
-        async play() {
-            if (this.playing) return;
-            await this._build();
-            if (!this._buf) return;
-            if (this.idx < 0 || this.idx >= this.chunks.length) { this.idx = 0; this._off = 0; }
-            if (this._off >= this._dur) this._off = 0;
-            this.playing = true;
-            this._go();
-            this._ui();
-        }
-        pause() {
-            if (!this.playing) return;
-            this._off = this._now();
-            this.playing = false;
-            this._halt();
-            this._ui();
-        }
-        jumpTo(ci) {
-            const ai = this.chunks.findIndex(c => c.index === ci);
-            if (ai < 0) return;
-            const was = this.playing;
-            if (was) this._halt();
-            this.idx = ai;
-            const seg = this._segs.find(s => s.ai === ai);
-            this._off = seg ? seg.s : 0;
-            this._hl(ci); this._scroll(ci); this._ui();
-            if (was && this._ok) { this.playing = true; this._go(); }
-        }
-        seekTo(frac) {
-            if (!this._ok) return;
-            const sec = Math.max(0, Math.min(frac * this._dur, this._dur));
-            const was = this.playing;
-            if (was) this._halt();
-            this._off = sec;
-            for (let i = this._segs.length - 1; i >= 0; i--) {
-                if (sec >= this._segs[i].s - 0.01) { this.idx = this._segs[i].ai; break; }
-            }
-            const ci = this.chunks[this.idx]?.index;
-            if (ci != null) { this._hl(ci); this._scroll(ci); }
-            this._ui();
-            if (was) { this.playing = true; this._go(); }
-        }
-        _go() {
-            this._ctx.resume();
-            const src = this._ctx.createBufferSource();
-            src.buffer = this._buf;
-            src.connect(this._ctx.destination);
-            src.onended = () => {
-                if (this._source === src && this.playing) {
-                    this.playing = false; this.idx = this.chunks.length - 1;
-                    this._off = this._dur; this._stopRaf(); this._ui();
-                }
-            };
-            this._source = src;
-            this._t0 = this._ctx.currentTime;
-            src.start(0, this._off);
-            this._startRaf();
-        }
-        _halt() {
-            if (this._source) { try { this._source.stop(); } catch {} this._source = null; }
-            this._stopRaf();
-        }
-        _now() {
-            if (!this.playing || !this._ctx) return this._off;
-            return Math.min(this._off + (this._ctx.currentTime - this._t0), this._dur);
-        }
-        _cacheEls() {
-            this._elFill = document.getElementById('mt-prog-fill');
-            this._elTime = document.getElementById('mt-time');
-            this._elStatus = document.getElementById('mt-status');
-            this._elBtn = document.getElementById('mt-pbtn');
-            this._elScroll = document.getElementById('mt-scroll');
-        }
-        _startRaf() {
-            const gen = ++this._gen;
-            let lastCi = -1, segHint = 0;
-            if (!this._elFill) this._cacheEls();
-            const tick = () => {
-                if (gen !== this._gen) return;
-                const t = this._now();
-                let found = -1;
-                for (let i = segHint; i < this._segs.length; i++) {
-                    if (t < this._segs[i].e) { found = i; break; }
-                }
-                if (found < 0) found = this._segs.length - 1;
-                segHint = Math.max(0, found - 1);
-                const seg = this._segs[found];
-                if (seg) {
-                    const ai = seg.ai, ci = this.chunks[ai]?.index ?? -1;
-                    if (ci !== lastCi) { lastCi = ci; this.idx = ai; this._hl(ci); this._scroll(ci); }
-                }
-                if (this._elFill) this._elFill.style.transform = `scaleX(${this._dur > 0 ? t / this._dur : 0})`;
-                if (this._elTime) this._elTime.textContent = `${fmt(t)} / ${fmt(this._dur)}`;
-                if (this._elStatus) {
-                    const ci2 = this.idx >= 0 && this.idx < this.chunks.length ? this.chunks[this.idx].index : '—';
-                    this._elStatus.textContent = `Chunk ${ci2} / ${this.chunks.length}`;
-                }
-                this._raf = requestAnimationFrame(tick);
-            };
-            this._raf = requestAnimationFrame(tick);
-        }
-        _stopRaf() { this._gen++; if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; } }
-        _hl(ci) {
-            if (this._prevActive) this._prevActive.forEach(e => e.classList.remove('active'));
-            const cells = document.querySelectorAll(`.mt-c[data-ci="${ci}"]`);
-            cells.forEach(e => e.classList.add('active'));
-            this._prevActive = cells;
-        }
-        _scroll(ci) {
-            const cell = document.querySelector(`.mt-c[data-ci="${ci}"]`);
-            if (!cell) return;
-            const scr = this._elScroll;
-            if (!scr) return;
-            scr.scrollLeft = cell.offsetLeft - scr.clientWidth / 2 + cell.offsetWidth / 2;
-        }
-        _ui() {
-            if (!this._elBtn) this._cacheEls();
-            if (this._elBtn) this._elBtn.textContent = this.playing ? '⏸' : '▶';
-            if (!this.playing) {
-                const t = this._now();
-                if (this._elFill) this._elFill.style.transform = `scaleX(${this._dur > 0 ? t / this._dur : 0})`;
-                if (this._elTime) this._elTime.textContent = `${fmt(t)} / ${fmt(this._dur)}`;
-                if (this._elStatus) {
-                    const ci = this.idx >= 0 && this.idx < this.chunks.length ? this.chunks[this.idx].index : '—';
-                    this._elStatus.textContent = `Chunk ${ci} / ${this.chunks.length}`;
-                }
-            }
-        }
-    }
-
-    window.mtTogglePlay = function() {
-        if (!_mtPlayer) return;
-        _mtPlayer.playing ? _mtPlayer.pause() : _mtPlayer.play();
-    };
-
-    let _miniAud = null, _miniBtn = null;
-    window.mtMiniPlay = function(btn) {
-        const src = btn.dataset.asrc;
-        if (!src) return;
-        if (_miniBtn === btn) {
-            if (_miniAud && !_miniAud.paused) { _miniAud.pause(); btn.textContent='▶'; btn.classList.remove('on'); }
-            else if (_miniAud) { _miniAud.play(); btn.textContent='⏸'; btn.classList.add('on'); }
-            return;
-        }
-        if (_miniBtn) { _miniBtn.textContent='▶'; _miniBtn.classList.remove('on'); }
-        if (!_miniAud) _miniAud = new Audio();
-        _miniAud.src = src;
-        _miniAud.play().catch(()=>{});
-        btn.textContent = '⏸'; btn.classList.add('on');
-        _miniBtn = btn;
-        _miniAud.onended = () => { btn.textContent='▶'; btn.classList.remove('on'); _miniBtn=null; };
-    };
-
     /* ── Fetch data ── */
     try {
-        const [metaR, recR] = await Promise.all([
-            fetch(`/api/sessions/${SID}`),
-            fetch(`/api/sessions/${SID}/recording`),
-        ]);
-        if (!metaR.ok) { showError(`Session not found: ${SID} (${metaR.status})`); return; }
-        const meta = await metaR.json();
-        const rec  = recR.ok ? await recR.json() : null;
+        const recR = await fetch(`/api/sessions/${SID}/recording`);
+        // /recording 返回 {session_id, meta, events};meta 也可单独 GET /api/sessions/{id}
+        let rec = recR.ok ? await recR.json() : null;
+        let meta = (rec && rec.meta) ? rec.meta : null;
+        if (!meta) {
+            const metaR = await fetch(`/api/sessions/${SID}`);
+            if (metaR.ok) meta = await metaR.json();
+        }
+        if (!meta && !rec) { showError(`Session not found: ${SID} (${recR.status})`); return; }
+        meta = meta || {};
 
         $load.style.display='none';
         $content.style.display='block';
         document.title = `${meta.title||SID} — Session Viewer`;
 
         renderInfo(meta);
-        // Render optional user comment (forward-compat: missing comment.txt → empty → nothing rendered).
+        // 用户评语(可选,缺失则不渲染)
         try {
             const cr = await fetch(`/api/sessions/${SID}/comment`);
             if (cr.ok) {
@@ -507,34 +317,38 @@
                     host.innerHTML = `<div class="user-comment"><span class="uc-label">用户评语</span>${esc(txt)}</div>`;
                 }
             }
-        } catch { /* silent — comment is optional */ }
+        } catch { /* silent */ }
 
-        if (rec) {
-            if (rec.mode === 'duplex') {
-                await renderBackendReplay(rec);
-                await renderFrontendReplay();
-                renderMultitrack(rec);
-            } else {
-                renderTurnBased(rec);
-            }
+        if (rec && Array.isArray(rec.events) && rec.events.length) {
+            renderEventStream(rec.events);
         } else {
             document.getElementById('timeline').innerHTML =
-                '<div class="center-msg">Recording data not available (session may still be active)</div>';
+                '<div class="center-msg">No recorded events (session may still be active)</div>';
         }
     } catch(e) { showError(`Failed to load: ${e.message}`); }
 
+    /* blob 指针(@blob/NNN.ext)→ assets URL;其它相对路径同样可用 */
+    function blobUrl(ref) {
+        if (typeof ref !== 'string' || !ref) return null;
+        return aUrl(ref.startsWith('@') ? ref.slice(1) : ref);
+    }
+
     /* ══════════════ Area 1: Session info ══════════════ */
     function renderInfo(m) {
-        const t = m.app_type||'unknown';
-        const bc = t.includes('duplex')?'badge-duplex': t==='streaming'?'badge-streaming':'badge-chat';
-        const cr = m.created_at ? new Date(m.created_at).toLocaleString() : '-';
+        const ident = m.identity || {};
+        const t = m.mode || m.app_type || 'unknown';
+        const bc = String(t).includes('duplex')||t==='full_duplex' ? 'badge-duplex' : 'badge-chat';
+        const cr = m.created_at ? new Date(m.created_at*1000).toLocaleString() : '-';
         const dur = m.duration_s!=null ? `${m.duration_s}s` : 'active';
-        const cfg = m.config ? JSON.stringify(m.config,null,2) : '{}';
+        const surface = ident.client_surface || ident.source_channel || '-';
+        const route = ident.page_route || ident.source_path || '-';
+        const wk = m.worker || {};
+        const metaJson = JSON.stringify(m, null, 2);
         document.getElementById('session-info').innerHTML = `
             <div class="si-top">
                 <span class="si-title">${esc(m.title||SID)}</span>
                 <div class="si-actions">
-                    <span class="badge ${bc}">${t}</span>
+                    <span class="badge ${bc}">${esc(String(t))}</span>
                     <a class="dl-btn" href="/api/sessions/${SID}/download">⬇ Download</a>
                 </div>
             </div>
@@ -542,209 +356,83 @@
                 <span><strong>ID:</strong> ${SID}</span>
                 <span><strong>Created:</strong> ${cr}</span>
                 <span><strong>Duration:</strong> ${dur}</span>
-                <span><strong>Worker:</strong> GPU ${m.worker_id??'-'}</span>
+                <span><strong>Worker:</strong> ${esc(wk.host||'-')} (GPU ${wk.gpu_id??'-'})</span>
+                <span><strong>Surface:</strong> ${esc(surface)}</span>
+                <span><strong>Route:</strong> ${esc(route)}</span>
             </div>
-            <button class="cfg-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▸ Config</button>
-            <div class="cfg-body">${esc(cfg)}</div>`;
+            <button class="cfg-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▸ Meta</button>
+            <div class="cfg-body">${esc(metaJson)}</div>`;
     }
 
-    /* ══════════════ Area 2: Backend merged replay ══════════════ */
-    async function renderBackendReplay(rec) {
-        const el = document.getElementById('area-backend');
-        const videoRel = rec.merged_replay_video;
-        const audioRel = rec.merged_replay;
-        if (!videoRel && !audioRel) {
-            el.innerHTML = '<div class="area-sec"><div class="area-hd">Backend Replay <span class="sub">not available</span></div></div>';
-            return;
+    /* ══════════════ Event-stream renderer ══════════════
+       忠实事件流:每个协议帧一行,按 dir(up/down)+ type/kind 分样式。
+       text 拼显示、audio/frame 给内联播放/预览、blob 指针转 assets URL。   */
+    function renderEventStream(events) {
+        const el = document.getElementById('timeline');
+        const rows = [];
+        const t0 = events.length ? events[0].ts : 0;
+        for (const ev of events) {
+            const f = ev.frame || {};
+            const type = f.type || '';
+            const kind = f.kind || '';
+            const dir = ev.dir || '';
+            const rel = t0 ? `+${((ev.ts - t0)).toFixed(2)}s` : '';
+            const dirCls = dir === 'up' ? 'ev-up' : 'ev-down';
+
+            let label, body = '';
+            if (type === 'session.init')      { label = 'session.init';  body = miniJson(f.payload); }
+            else if (type === 'session.created') { label = 'session.created'; body = `<code>${esc(f.session_id||'')}</code> <span class="ev-sub">${esc(f.mode||'')}</span>`; }
+            else if (type === 'session.closed')  { label = 'session.closed'; body = `<span class="ev-sub">${esc(f.reason||'')}</span>`; }
+            else if (type === 'input.append') {
+                label = 'input ▲';
+                const inp = f.input || {};
+                if (inp.messages) body += `<div class="ev-text">${esc(summarizeMessages(inp.messages))}</div>`;
+                if (inp.audio)  body += audioChip(blobUrl(inp.audio), 'user audio');
+                if (Array.isArray(inp.video_frames)) {
+                    for (const fr of inp.video_frames) { const u = blobUrl(fr); if (u) body += `<img class="ev-frame" src="${u}" loading="lazy">`; }
+                }
+            }
+            else if (type === 'response.output.delta') {
+                if (kind === 'text')  { label = 'text ▼';  body = `<span class="ev-text">${esc(f.text||'')}</span>`; }
+                else if (kind === 'audio') { label = 'audio ▼'; body = audioChip(blobUrl(f.audio), 'ai audio'); }
+                else if (kind === 'listen') { label = 'listen ▼'; body = '<span class="ev-sub">model listening</span>'; }
+                else { label = 'delta ▼'; body = miniJson(f); }
+            }
+            else if (type === 'response.done') {
+                label = 'response.done ▼';
+                body = `<span class="ev-text">${esc(f.text||'')}</span>`;
+                if (f.audio) body += audioChip(blobUrl(f.audio), 'ai audio');
+            }
+            else { label = type || '(unknown)'; body = miniJson(f); }
+
+            rows.push(`<div class="ev ${dirCls}">
+                <span class="ev-seq">#${ev.seq}</span>
+                <span class="ev-ts">${rel}</span>
+                <span class="ev-label">${esc(label)}</span>
+                <div class="ev-body">${body}</div>
+            </div>`);
         }
-        let inner = '<div class="area-hd">Backend Replay <span class="sub">auto-stitched from chunks</span></div>';
-        if (videoRel && await assetExists(videoRel)) {
-            inner += `<video controls preload="metadata" src="${aUrl(videoRel)}"></video>`;
-        } else if (audioRel && await assetExists(audioRel)) {
-            inner += `<div class="area-hd sub" style="margin-top:0;margin-bottom:4px;">Stereo: L=User R=AI</div>`;
-            inner += makeAudioCtrl(aUrl(audioRel));
-        }
-        el.innerHTML = `<div class="area-sec">${inner}</div>`;
+        el.innerHTML = `<div class="evstream">${rows.join('')}</div>`;
         initAudioCtrls(el);
     }
 
-    /* ══════════════ Area 3: Frontend recorded replay ══════════════ */
-    async function renderFrontendReplay() {
-        const el = document.getElementById('area-frontend');
-        const candidates = ['frontend_replay.webm','frontend_replay.mp4','frontend_replay.wav'];
-        for (const name of candidates) {
-            if (await assetExists(name)) {
-                const url = aUrl(name);
-                const isVideo = name.endsWith('.webm') || name.endsWith('.mp4');
-                let inner = '<div class="area-hd">Frontend Recording <span class="sub">uploaded by user</span></div>';
-                if (isVideo) {
-                    inner += `<video controls preload="auto" src="${url}"></video>`;
-                } else {
-                    inner += makeAudioCtrl(url);
-                }
-                el.innerHTML = `<div class="area-sec">${inner}</div>`;
-                if (isVideo) {
-                    const vid = el.querySelector('video');
-                    if (vid) fixWebmDuration(vid);
-                }
-                initAudioCtrls(el);
-                return;
-            }
-        }
+    function audioChip(url, label) {
+        if (!url) return '';
+        return `<div class="ev-audio"><span class="ev-sub">${esc(label||'audio')}</span>${makeAudioCtrl(url)}</div>`;
     }
-
-    function fixWebmDuration(video) {
-        video.addEventListener('loadedmetadata', () => {
-            if (!isFinite(video.duration)) {
-                video.currentTime = 1e10;
-                video.addEventListener('timeupdate', function once() {
-                    video.removeEventListener('timeupdate', once);
-                    video.currentTime = 0;
-                });
-            }
-        });
+    function miniJson(o) {
+        if (o == null) return '';
+        try { return `<pre class="ev-json">${esc(JSON.stringify(o))}</pre>`; } catch { return ''; }
     }
-
-    /* ══════════════ Area 4: Multi-track timeline ══════════════ */
-    function renderMultitrack(rec) {
-        const el = document.getElementById('timeline');
-        const chunks = rec.chunks || [];
-        if (!chunks.length) { el.innerHTML='<div class="center-msg">No audio chunks recorded</div>'; return; }
-
-        const isOmni = chunks.some(c => c.user_frame);
-        const colW = 108;
-        const rowH_idx = 22;
-        const rowH_vid = isOmni ? 60 : 0;
-        const rowH_ua  = 36;
-        const rowH_txt = 44;
-        const rowH_aa  = 36;
-        const rows = isOmni
-            ? `${rowH_idx}px ${rowH_vid}px ${rowH_ua}px ${rowH_txt}px ${rowH_aa}px`
-            : `${rowH_idx}px ${rowH_ua}px ${rowH_txt}px ${rowH_aa}px`;
-
-        let labelsHtml = `<div class="mt-lbl-cell" style="height:${rowH_idx}px">#</div>`;
-        if (isOmni) labelsHtml += `<div class="mt-lbl-cell" style="height:${rowH_vid}px">User Video</div>`;
-        labelsHtml += `<div class="mt-lbl-cell" style="height:${rowH_ua}px">User Audio</div>`;
-        labelsHtml += `<div class="mt-lbl-cell" style="height:${rowH_txt}px">AI Text</div>`;
-        labelsHtml += `<div class="mt-lbl-cell" style="height:${rowH_aa}px">AI Audio</div>`;
-
-        let gridHtml = '';
-        for (const c of chunks) {
-            const r = c.result || {};
-            const mode = (r.mode||'LISTEN').toLowerCase();
-            const isSpeak = mode === 'speak';
-            const ci = c.index;
-
-            // Index row
-            gridHtml += `<div class="mt-c mt-idx" data-ci="${ci}">${ci}</div>`;
-
-            // User Video (Omni only)
-            if (isOmni) {
-                if (c.user_frame) {
-                    gridHtml += `<div class="mt-c" data-ci="${ci}"><img class="mt-thumb" src="${aUrl(c.user_frame)}" loading="lazy"></div>`;
-                } else {
-                    gridHtml += `<div class="mt-c" data-ci="${ci}"><span class="mt-dash">—</span></div>`;
-                }
-            }
-
-            // User Audio
-            if (c.user_audio) {
-                gridHtml += `<div class="mt-c" data-ci="${ci}">
-                    <div class="mt-mp"><button class="b" data-asrc="${aUrl(c.user_audio)}" onclick="mtMiniPlay(this)">▶</button><span>1.0s</span></div></div>`;
-            } else {
-                gridHtml += `<div class="mt-c" data-ci="${ci}"><span class="mt-dash">—</span></div>`;
-            }
-
-            // AI Text
-            gridHtml += `<div class="mt-c mt-tc" data-ci="${ci}">
-                <span class="mt-m ${mode}">${r.mode||'LISTEN'}${r.end_of_turn?' ⏎':''}</span>
-                ${isSpeak && r.text ? `<span class="mt-sn">${esc(r.text)}</span>` : ''}
-            </div>`;
-
-            // AI Audio
-            if (isSpeak && r.ai_audio) {
-                const durMs = r.ai_audio_duration_ms;
-                const durStr = durMs ? `${(durMs/1000).toFixed(1)}s` : '';
-                gridHtml += `<div class="mt-c" data-ci="${ci}">
-                    <div class="mt-mp"><button class="b" data-asrc="${aUrl(r.ai_audio)}" onclick="mtMiniPlay(this)">▶</button><span>${durStr}</span></div></div>`;
-            } else {
-                gridHtml += `<div class="mt-c" data-ci="${ci}"><span class="mt-dash">—</span></div>`;
-            }
-        }
-
-        el.innerHTML = `
-        <div class="mt-wrap">
-            <div class="mt-ctrl">
-                <button class="mt-pbtn" id="mt-pbtn" onclick="mtTogglePlay()">▶</button>
-                <span class="mt-time" id="mt-time">0:00 / 0:00</span>
-                <div class="mt-prog" id="mt-prog"><div class="mt-prog-fill" id="mt-prog-fill"></div></div>
-                <span class="mt-status" id="mt-status">Chunk — / ${chunks.length}</span>
-                <span class="mt-heading">Chunk-level Timeline</span>
-            </div>
-            <div class="mt-body">
-                <div class="mt-lbl">${labelsHtml}</div>
-                <div class="mt-scroll" id="mt-scroll">
-                    <div class="mt-grid" id="mt-grid"
-                         style="grid-template-columns:repeat(${chunks.length},${colW}px);grid-template-rows:${rows};">
-                        ${gridHtml}
-                    </div>
-                </div>
-            </div>
-        </div>`;
-
-        // Click chunk column to jump
-        document.querySelectorAll('.mt-c[data-ci]').forEach(cell => {
-            cell.addEventListener('click', (e) => {
-                if (e.target.closest('.b')) return; // mini play button handled separately
-                const idx = parseInt(cell.dataset.ci);
-                if (isFinite(idx)) _mtPlayer.jumpTo(idx);
-            });
-        });
-
-        _mtPlayer = new MTPlayer(chunks);
-
-        document.getElementById('mt-prog')?.addEventListener('click', e => {
-            if (!_mtPlayer || !_mtPlayer._ok) return;
-            const r = e.currentTarget.getBoundingClientRect();
-            _mtPlayer.seekTo((e.clientX - r.left) / r.width);
-        });
-    }
-
-    /* ══════════════ Turn-based renderer ══════════════ */
-    function renderTurnBased(rec) {
-        const el = document.getElementById('timeline');
-        const turns = rec.turns || [];
-        if (!turns.length) { el.innerHTML='<div class="center-msg">No turns recorded</div>'; return; }
-        let html = '';
-        for (const t of turns) {
-            const inp = t.input||{}, out = t.output||{}, tm = t.timing||{};
-            let uInner = '';
-            if (inp.text) uInner += `<div>${esc(inp.text)}</div>`;
-            if (inp.images?.length) {
-                uInner += '<div class="msg-images">';
-                for (const img of inp.images) uInner += `<img src="${aUrl(img)}" loading="lazy">`;
-                uInner += '</div>';
-            }
-            if (inp.audio) uInner += makeAudioCtrl(aUrl(inp.audio));
-            if (inp.videos?.length) {
-                for (const vid of inp.videos) uInner += `<video src="${aUrl(vid)}" controls style="width:100%;max-height:300px;border-radius:8px;margin-top:6px;background:#000;"></video>`;
-            }
-            if (!uInner && inp.summary) uInner = `<div style="color:#999">${esc(JSON.stringify(inp.summary))}</div>`;
-            html += `<div class="message user"><div class="avatar">U</div><div class="msg-body"><div class="content">${uInner}</div></div></div>`;
-
-            let aInner = out.text ? esc(out.text) : '';
-            const aAud = out.audio ? makeAudioCtrl(aUrl(out.audio)) : '';
-            const parts = [];
-            if (tm.elapsed_ms!=null) parts.push(`${tm.elapsed_ms.toFixed(0)}ms`);
-            if (tm.tokens!=null) parts.push(`${tm.tokens} tokens`);
-            if (out.audio_duration_ms!=null) parts.push(`audio ${(out.audio_duration_ms/1000).toFixed(1)}s`);
-            html += `<div class="message assistant"><div class="avatar">M</div><div class="msg-body">
-                <div class="content">${aInner}</div>${aAud}
-                ${parts.length?`<div class="meta">${parts.join(' · ')}</div>`:''}
-            </div></div>`;
-        }
-        el.innerHTML = `<div class="messages">${html}</div>`;
-        initAudioCtrls(el);
+    function summarizeMessages(messages) {
+        try {
+            return messages.map(m => {
+                const c = m.content;
+                if (typeof c === 'string') return `${m.role}: ${c}`;
+                if (Array.isArray(c)) return `${m.role}: ` + c.map(x => x.text || `[${x.type}]`).join(' ');
+                return `${m.role}: …`;
+            }).join('\n');
+        } catch { return JSON.stringify(messages); }
     }
 
     /* ══════════════ Audio control helpers ══════════════ */

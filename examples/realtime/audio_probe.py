@@ -222,9 +222,11 @@ async def sender(
         if sleep_s > 0:
             await asyncio.sleep(sleep_s)
         await ws.send(json.dumps({
-            "type": "input_audio_buffer.append",
-            "audio": b64_float32(chunk),
-            "force_listen": False,
+            "type": "input.append",
+            "input": {
+                "audio": b64_float32(chunk),
+                "force_listen": False,
+            },
         }))
         next_send += chunk_ms / 1000.0
 
@@ -287,12 +289,12 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
 
             if msg_type in ("session.queue_done", "queue_done") and not session_created:
                 await ws.send(json.dumps({
-                    "type": "session.update",
-                    "session": {
-                        "instructions": args.instructions,
+                    "type": "session.init",
+                    "payload": {
+                        "system_prompt": args.instructions,
                     },
                 }))
-                state.event("client.session.update")
+                state.event("client.session.init")
 
             elif msg_type == "session.created":
                 session_created = True
@@ -302,17 +304,20 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     state.event("client.audio_sender_started", chunks=len(chunks))
 
-            elif msg_type == "response.output_audio.delta" and msg.get("audio"):
+            elif msg_type == "response.output.delta" and msg.get("kind") == "text":
                 recv_s = now()
                 text = msg.get("text") or ""
                 if text:
                     if state.first_text_s is None:
                         state.first_text_s = recv_s
                     state.text_chunks.append(text)
+
+            elif msg_type == "response.output.delta" and msg.get("kind") == "audio" and msg.get("audio"):
+                recv_s = now()
                 if state.first_audio_s is None:
                     state.first_audio_s = recv_s
                 duration_ms = decode_audio_duration_ms(msg["audio"])
-                end_of_turn = bool(msg.get("end_of_turn"))
+                end_of_turn = False
                 ahead_ms = playback.on_audio(recv_s, duration_ms, end_of_turn)
                 state.output_chunk_times_s.append(recv_s)
                 state.output_chunk_durations_ms.append(duration_ms)
@@ -321,10 +326,19 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
                     "client.audio_chunk_received",
                     duration_ms=duration_ms,
                     ahead_ms=ahead_ms,
-                    text_chars=len(text),
+                    text_chars=0,
                     end_of_turn=end_of_turn,
                 )
-                if end_of_turn and args.stop_on_end_of_turn:
+
+            elif msg_type == "response.output.delta" and msg.get("kind") == "listen":
+                if args.stop_on_end_of_turn and state.output_chunk_times_s:
+                    break
+
+            elif msg_type == "response.done":
+                text = msg.get("text") or ""
+                if text and not state.text_chunks:
+                    state.text_chunks.append(text)
+                if args.stop_on_end_of_turn:
                     break
 
             elif msg_type == "session.closed":
