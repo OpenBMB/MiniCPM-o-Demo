@@ -97,110 +97,9 @@ ffmpeg -version
 ```
 
 ### Deployment Steps
-**1. Install Python 3.10**
+Use the Docker Compose files below for normal deployment. The old bare-metal Python setup is not the recommended path; if you need it for debugging, mirror the Dockerfiles and entrypoints instead of treating README commands as the source of truth.
 
-We recommend using miniconda to install Python 3.10.
-
-```bash
-mkdir -p ./miniconda3_install_tmp
-
-# Download the miniconda3 installation script
-wget https://repo.anaconda.com/miniconda/Miniconda3-py310_25.11.1-1-Linux-x86_64.sh -O ./miniconda3_install_tmp/miniconda.sh 
-
-# Install miniconda3 into the project directory
-bash ./miniconda3_install_tmp/miniconda.sh -b -u -p ./miniconda3 
-```
-
-After installation, you will have an empty base environment. Activate this base environment, which uses Python 3.10 by default.
-
-```bash
-source ./miniconda3/bin/activate
-python --version # Should display 3.10.x
-```
-
-**2. Install Dependencies for MiniCPM-o 4.5**
-
-Using the `install.sh` script in the project directory is the fastest way. It creates a venv virtual environment named `base` under `.venv` in the project directory and installs all dependencies.
-
-```bash
-source ./miniconda3/bin/activate
-bash ./install.sh
-```
-
-If you have a good network connection, the entire installation process takes about 5 minutes. If you are in China, consider using a third-party PyPI mirror such as the Tsinghua mirror.
-
-<details>
-<summary>Click to expand manual installation steps</summary>
-
-You can also install dependencies manually in 2 steps:
-
-```bash
-# First, prepare an empty Python 3.10 environment
-source ./miniconda3/bin/activate
-python -m venv .venv/base
-source .venv/base/bin/activate
-
-# Install PyTorch
-pip install "torch==2.8.0" "torchaudio==2.8.0"
-
-# Install the remaining dependencies
-pip install -r requirements.txt
-```
-
-</details>
-
-**3. Create Configuration File**
-
-Copy `config.example.json` to `config.json` in the project directory.
-
-```bash
-cp config.example.json config.json
-```
-
-The model path (`model_path`) defaults to `openbmb/MiniCPM-o-4_5`. If you have access to Hugging Face, no modification is needed — the model will be automatically pulled from Hugging Face.
-
-<details>
-<summary>Click to expand detailed instructions about model path</summary>
-
-(Optional) If you prefer to download model weights to a fixed location, or cannot access Hugging Face, you can modify `model_path` to your local model path.
-```bash
-# Install huggingface cli
-pip install -U huggingface_hub
-
-# Download the model
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-
-```
-
-If you cannot access Hugging Face, you can use the following two methods to download the model in advance.
-
-- Download the model using hf-mirror
-
-```bash
-pip install -U huggingface_hub
-
-export HF_ENDPOINT=https://hf-mirror.com
-
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-```
-
-- Download the model using ModelScope
-
-```bash
-pip install modelscope
-
-modelscope download --model OpenBMB/MiniCPM-o-4_5 --local_dir /path/to/your/MiniCPM-o-4_5
-```
-
-
-</details>
-
-<br/>
-
-Modify `"gateway_port": 8006` to change the deployment port. The default is 8006.
-
-
-**4. Deployment Architecture**
+**Deployment Architecture**
 
 The current deployment is split into three runtime roles:
 
@@ -279,15 +178,6 @@ Ready-to-use desktop installers are available for Windows and macOS. Download fr
 
 ---
 
-## Known Issues and Improvement Plans
-
-- In Turn-based Chat mode, image input is temporarily unavailable — only audio and text input are supported. An image Q&A mode will be split out soon.
-- Half-duplex voice call (no button required to trigger responses) is under development and will be merged soon.
-- In Audio Full-Duplex mode, echo cancellation currently has issues affecting interruption success rate. Using headphones is recommended. A fix is coming soon.
-- In voice mode, due to the model's training strategy, Chinese and English calls require corresponding language system prompts.
-
-<br/>
-
 ## Project Structure
 
 **Project Code Structure**
@@ -335,43 +225,9 @@ minicpmo45_service/
 
 ## Configuration
 
-### config.json — Unified Configuration File
+`config.json` is only a fallback for processes started directly on the host, or for container defaults when a file is mounted explicitly. Docker deployment does not copy the host `config.json` into images by default; Compose files, entrypoints, environment variables, and CLI arguments define the deployment behavior.
 
-All configurations are centralized in `config.json` (copied from `config.example.json`).
-`config.json` is gitignored and will not be committed.
-
-**Configuration Priority**: CLI arguments > config.json > Pydantic defaults
-
-| Group | Field | Default | Description |
-|-------|-------|---------|-------------|
-| **model** | `model_path` | _(required)_ | HuggingFace format model directory |
-| model | `pt_path` | null | Additional .pt weight override |
-| model | `attn_implementation` | `"auto"` | Attention implementation: `"auto"`/`"flash_attention_2"`/`"sdpa"`/`"eager"` |
-| **audio** | `ref_audio_path` | `assets/ref_audio/ref_minicpm_signature.wav` | Default TTS reference audio |
-| audio | `playback_delay_ms` | 200 | Frontend audio playback delay (ms); higher = smoother but more latency |
-| audio | `chat_vocoder` | `"token2wav"` | Chat mode vocoder: `"token2wav"` (default) or `"cosyvoice2"` |
-| **service** | `gateway_port` | 8006 | Gateway port |
-| service | `worker_base_port` | 22400 | Worker base port |
-| service | `max_queue_size` | 100 | Maximum queued requests |
-| service | `request_timeout` | 300.0 | Request timeout (seconds) |
-| service | `compile` | false | torch.compile acceleration |
-| service | `data_dir` | "data" | Data directory |
-| **duplex** | `pause_timeout` | 60.0 | Duplex pause timeout (seconds) |
-
-**Minimal Configuration** (only model path required):
-```json
-{"model": {"model_path": "/path/to/model"}}
-```
-
-## CLI Argument Overrides
-
-```bash
-# Worker
-python worker.py --model-path /alt/model --pt-path /alt/weights.pt --ref-audio-path /alt/ref.wav
-
-# Gateway
-python gateway.py --port 10025 --workers localhost:22400,localhost:22401 --http
-```
+If you need bare-metal debugging, start from `config.example.json` and `config.py`. CLI arguments still take precedence over `config.json`, and missing fields fall back to Pydantic defaults.
 
 
 ## Resource Consumption

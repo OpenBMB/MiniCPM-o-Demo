@@ -100,110 +100,9 @@ ffmpeg -version
 ```
 
 ### 部署步骤
-**1. 安装Python 3.10**
+常规部署请使用下面的 Docker Compose 文件。旧的裸机 Python 安装不是推荐路径；如果需要裸机调试，请对齐 Dockerfile 和 entrypoint，而不是把 README 命令当作权威来源。
 
-推荐使用 miniconda 安装 Python 3.10。
-
-```bash
-mkdir -p ./miniconda3_install_tmp
-
-# 下载 miniconda3 安装脚本
-wget https://repo.anaconda.com/miniconda/Miniconda3-py310_25.11.1-1-Linux-x86_64.sh -O ./miniconda3_install_tmp/miniconda.sh 
-
-# 将 miniconda3 安装到项目目录下
-bash ./miniconda3_install_tmp/miniconda.sh -b -u -p ./miniconda3 
-```
-
-安装完成后，会得到一个空的 base 环境，激活这个 base 环境，base 环境中默认为 Python 3.10。
-
-```bash
-source ./miniconda3/bin/activate
-python --version # 应显示 3.10.x
-```
-
-**2. 安装 MiniCPM-o 4.5 所需的依赖**
-
-使用项目目录下的 `install.sh` 安装依赖是最快的，它会在项目目录下的 .venv 中创建一个名为 `base` 的venv虚拟环境，并在其中安装所有的依赖。
-
-```bash
-source ./miniconda3/bin/activate
-bash ./install.sh
-```
-
-如果网络良好，整个安装过程大约花费 5 分钟。如果你处在中国，可以考虑使用第三方 PyPi 镜像源，例如清华镜像源。
-
-<details>
-<summary>点击展开手动安装步骤</summary>
-
-您也可以手动安装依赖，分 2 步：
-
-```bash
-# 首先准备好一个空的 python 3.10 环境
-source ./miniconda3/bin/activate
-python -m venv .venv/base
-source .venv/base/bin/activate
-
-# 安装 PyTorch。
-pip install "torch==2.8.0" "torchaudio==2.8.0"
-
-# 安装其余依赖。
-pip install -r requirements.txt
-```
-
-</details>
-
-**3. 创建配置文件**
-
-将项目目录下的 `config.example.json` 复制为 `config.json`。
-
-```bash
-cp config.example.json config.json
-```
-
-模型路径（`model_path`），默认使用 `openbmb/MiniCPM-o-4_5`，如果你可以访问 huggingface，无需修改，将会自动从 huggingface 拉取模型。
-
-<details>
-<summary>点击展开关于模型路径的详细说明</summary>
-
-(可选) 如果你习惯于下载模型权重到固定位置，或无法访问 huggingface，可以修改 model_path 为你的模型路径。
-```bash
-# 安装huggingface cli
-pip install -U huggingface_hub
-
-# 下载模型
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-
-```
-
-如果无法访问 huggingface，可以使用以下两种方式提前下载模型。
-
-- 使用 hf-mirror 提前下载模型
-
-```bash
-pip install -U huggingface_hub
-
-export HF_ENDPOINT=https://hf-mirror.com
-
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-```
-
-- 使用 modelscope 提前下载模型
-
-```bash
-pip install modelscope
-
-modelscope download --model OpenBMB/MiniCPM-o-4_5 --local_dir /path/to/your/MiniCPM-o-4_5
-```
-
-
-</details>
-
-<br/>
-
-修改 `"gateway_port": 8006` 即可改变部署的端口，默认为 8006。
-
-
-**4. 部署架构**
+**部署架构**
 
 当前部署拆成三个运行角色：
 
@@ -282,15 +181,6 @@ docker compose -f docker-compose.cpp.yml down  # C++ backend compose
 
 ---
 
-## 已知问题和改进计划
-
-- 轮次对话模式下，图片输入暂时不可用，仅支持音频和文本输入，近期会拆分出图片问答模式。
-- 半双工的语音通话（无需按钮触发回复）正在开发中，近期合入。
-- 语音全双工模式下，回声消除目前存在问题，影响到打断成功率，推荐使用耳机进行交互，近期将修复。
-- 语音模式下，由于模型的训练策略，中文和英文通话下，需要使用对应语言的系统提示词。
-
-<br/>
-
 ## 项目结构
 
 **项目代码结构**
@@ -338,43 +228,9 @@ minicpmo45_service/
 
 ## 配置说明
 
-### config.json — 统一配置文件
+`config.json` 只作为裸机直接启动进程时的 fallback，或在容器里显式挂载该文件时提供默认值。Docker 部署默认不会把宿主机的 `config.json` 拷进镜像；部署行为以 Compose、entrypoint、环境变量和 CLI 参数为准。
 
-所有配置集中在 `config.json`（从 `config.example.json` 复制）。
-`config.json` 已 gitignore，不会被提交。
-
-**配置优先级**：CLI 参数 > config.json > Pydantic 默认值
-
-| 分组 | 字段 | 默认值 | 说明 |
-|------|------|--------|------|
-| **model** | `model_path` | _(必填)_ | HuggingFace 格式模型目录 |
-| model | `pt_path` | null | 额外 .pt 权重覆盖 |
-| model | `attn_implementation` | `"auto"` | Attention 实现：`"auto"`/`"flash_attention_2"`/`"sdpa"`/`"eager"` |
-| **audio** | `ref_audio_path` | `assets/ref_audio/ref_minicpm_signature.wav` | 默认 TTS 参考音频 |
-| audio | `playback_delay_ms` | 200 | 前端音频播放延迟（ms），越大越平滑但延迟越高 |
-| audio | `chat_vocoder` | `"token2wav"` | Chat 模式 vocoder：`"token2wav"`（默认）或 `"cosyvoice2"` |
-| **service** | `gateway_port` | 8006 | Gateway 端口 |
-| service | `worker_base_port` | 22400 | Worker 起始端口 |
-| service | `max_queue_size` | 100 | 最大排队请求数 |
-| service | `request_timeout` | 300.0 | 请求超时（秒） |
-| service | `compile` | false | torch.compile 加速 |
-| service | `data_dir` | "data" | 数据目录 |
-| **duplex** | `pause_timeout` | 60.0 | Duplex 暂停超时（秒） |
-
-**最小配置**（只需模型路径）：
-```json
-{"model": {"model_path": "/path/to/model"}}
-```
-
-## CLI 参数覆盖
-
-```bash
-# Worker
-python worker.py --model-path /alt/model --pt-path /alt/weights.pt --ref-audio-path /alt/ref.wav
-
-# Gateway
-python gateway.py --port 10025 --workers localhost:22400,localhost:22401 --http
-```
+如果需要裸机调试，请从 `config.example.json` 和 `config.py` 开始看。CLI 参数优先级高于 `config.json`，缺省字段会回落到 Pydantic 默认值。
 
 
 ## 资源消耗
