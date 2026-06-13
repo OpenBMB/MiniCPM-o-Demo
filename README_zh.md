@@ -217,7 +217,7 @@ Browser -> Gateway -> Python Worker -> Backend
 
 **5. Docker 部署（推荐）**
 
-Docker 是当前仓库的部署权威来源。Dockerfile 和 entrypoint 定义了受支持的进程拓扑、依赖版本、端口、健康检查、模型挂载和 backend 启动参数。裸机部署只建议作为高级调试方式，并应与 Dockerfile / entrypoint 保持等价。
+Docker 是当前仓库的部署权威来源。部署请使用 Compose 文件；具体启动流程、端口、挂载、健康检查和 backend 参数，请直接查看 `docker-compose*.yml`、`docker/Dockerfile.*` 和 `docker/entrypoint-*.sh`。
 
 **前置条件：**
 - Docker 和 Compose v2 插件
@@ -237,7 +237,7 @@ docker compose logs -f gateway
 docker compose logs -f worker-backend-0
 ```
 
-`docker-compose.yml` 默认启动一个 gateway 和两个绑定 GPU 0 / GPU 1 的 `worker-backend` 容器。请按机器 GPU 数量显式增删 worker service，并同步修改 gateway 的 `--workers` 列表。如果确实需要单张 GPU 跑多个 worker 实例，可以参考 `docker-compose.multi.yml`。
+请按机器 GPU 数量修改 `docker-compose.yml`。如果确实需要单张 GPU 跑多个 worker 实例，可以参考 `docker-compose.multi.yml`。
 
 **C++ backend（Compose）：**
 
@@ -255,19 +255,11 @@ docker compose -f docker-compose.cpp.yml logs -f gateway
 docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
 ```
 
-`docker-compose.cpp.yml` 默认启动一个 gateway 和一个 `cpp-worker-backend` 容器。C++ worker-backend 容器内部同时运行 `llama-omni-server` 和 `worker.py`；gateway 通过 Compose 网络访问 worker。C++ 镜像默认构建 `tc-mb/llama.cpp-omni` 的 `master` 分支；如果需要固定上游版本，可以在构建时传入 `LLAMA_OMNI_REFSPEC=<branch-or-ref>` 和 `LLAMA_OMNI_REF=<ref-or-commit>`。compose 文件默认通过 `LLAMA_SERVER_EXTRA_ARGS` 给 `llama-omni-server` 传入 `-c 8192`，用于显式设置 backend context size；只有在确认目标 context 配置时才建议覆盖 `LLAMA_SERVER_EXTRA_ARGS`。
+C++ backend 推荐入口是 `docker-compose.cpp.yml`。它使用 `docker/Dockerfile.cpp-worker-backend` 和 `docker/entrypoint-cpp-worker-backend.sh` 定义的 C++ worker 镜像；llama.cpp-omni ref、backend 启动命令和默认 `LLAMA_SERVER_EXTRA_ARGS` 以这些文件为准。
 
 **裸机部署：**
 
-裸机命令不是当前主安装路径，因为不同机器的 CUDA、Python、编译器和模型目录差异很大。如果需要裸机调试，请以 Dockerfile 和 entrypoint 作为参考实现：
-
-- `docker/Dockerfile.gateway`
-- `docker/Dockerfile.worker-backend`
-- `docker/entrypoint-worker-backend.sh`
-- `docker/Dockerfile.cpp-worker-backend`
-- `docker/entrypoint-cpp-worker-backend.sh`
-
-请保持同样的运行拓扑：Gateway -> Python Worker -> Backend。C++ backend 的 backend 进程是 `llama-omni-server`；PyTorch backend 的 backend 进程是 `py_backend/server.py`。
+裸机命令不是当前主安装路径，因为不同机器的 CUDA、Python、编译器和模型目录差异很大。如果需要裸机调试，请对齐 Dockerfile 和 entrypoint。
 
 **停止 Docker 服务：**
 
@@ -282,7 +274,7 @@ docker compose -f docker-compose.cpp.yml down  # C++ backend compose
 
 ## C++ 后端（llama.cpp）
 
-本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以通过 `llama-omni-server` 运行 MiniCPM-o 4.5。请以上方 Docker 部署章节作为权威安装路径；该路径会构建 `tc-mb/llama.cpp-omni` 的 `master` 分支，并按 Gateway -> Python Worker -> C++ Backend 拓扑接入匹配的 realtime backend protocol。
+本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**。请以上方 Docker 部署章节作为权威安装路径；启动细节直接查看 `docker-compose.cpp.yml` 和 `docker/Dockerfile.cpp-worker-backend`。
 
 ### 桌面端应用（Windows & macOS）
 

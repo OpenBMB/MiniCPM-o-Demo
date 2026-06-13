@@ -214,7 +214,7 @@ Browser -> Gateway -> Python Worker -> Backend
 
 **5. Docker Deployment (Recommended)**
 
-Docker is the deployment source of truth for this repository. The Dockerfiles and entrypoints define the supported process layout, package versions, ports, health checks, model mounts, and backend startup parameters. Bare-metal deployments should be treated as advanced/debug setups and should match the Dockerfiles and entrypoints.
+Docker is the deployment source of truth for this repository. Use the Compose files for deployment, and refer to `docker-compose*.yml`, `docker/Dockerfile.*`, and `docker/entrypoint-*.sh` for the exact startup flow, ports, mounts, health checks, and backend arguments.
 
 **Prerequisites:**
 - Docker with the Compose v2 plugin
@@ -234,7 +234,7 @@ docker compose logs -f gateway
 docker compose logs -f worker-backend-0
 ```
 
-`docker-compose.yml` starts one gateway and two `worker-backend` containers bound to GPU 0 and GPU 1. Edit the explicit worker services and the gateway `--workers` list to match your GPU count. Use `docker-compose.multi.yml` if you intentionally want multiple worker instances per GPU.
+Edit `docker-compose.yml` to match your GPU count. Use `docker-compose.multi.yml` only if you intentionally want multiple worker instances per GPU.
 
 **C++ backend via Compose:**
 
@@ -252,19 +252,11 @@ docker compose -f docker-compose.cpp.yml logs -f gateway
 docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
 ```
 
-`docker-compose.cpp.yml` starts one gateway and one `cpp-worker-backend` container. The C++ worker-backend container runs both `llama-omni-server` and `worker.py`; the gateway talks to the worker over the Compose network. The C++ image builds `tc-mb/llama.cpp-omni` `master` by default. Set `LLAMA_OMNI_REFSPEC=<branch-or-ref>` and `LLAMA_OMNI_REF=<ref-or-commit>` during build if you need to pin a specific upstream revision. The compose file passes `-c 8192` to `llama-omni-server` through `LLAMA_SERVER_EXTRA_ARGS` by default to set the backend context size explicitly; override `LLAMA_SERVER_EXTRA_ARGS` only if you know the target context configuration.
+For the C++ backend, `docker-compose.cpp.yml` is the intended entrypoint. It uses the C++ worker image defined by `docker/Dockerfile.cpp-worker-backend` and `docker/entrypoint-cpp-worker-backend.sh`. Read those files for the exact llama.cpp-omni ref, backend command, and default `LLAMA_SERVER_EXTRA_ARGS`.
 
 **Bare-metal deployment:**
 
-Bare-metal commands are not maintained as the primary installation path because host CUDA, Python, compiler, and model layouts vary. If you need bare-metal deployment for debugging, use the Dockerfiles and entrypoints as the reference implementation:
-
-- `docker/Dockerfile.gateway`
-- `docker/Dockerfile.worker-backend`
-- `docker/entrypoint-worker-backend.sh`
-- `docker/Dockerfile.cpp-worker-backend`
-- `docker/entrypoint-cpp-worker-backend.sh`
-
-Keep the same runtime topology: Gateway -> Python Worker -> Backend. For the C++ backend, the backend process is `llama-omni-server`; for the PyTorch backend, it is `py_backend/server.py`.
+Bare-metal commands are not maintained as the primary installation path because host CUDA, Python, compiler, and model layouts vary. If you need bare-metal deployment for debugging, mirror the Dockerfiles and entrypoints.
 
 **Stop Docker services:**
 
@@ -279,7 +271,7 @@ docker compose -f docker-compose.cpp.yml down  # C++ backend compose
 
 ## C++ Backend (llama.cpp)
 
-This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling MiniCPM-o 4.5 to run through `llama-omni-server`. Use the Docker deployment section above as the authoritative setup path; it builds `tc-mb/llama.cpp-omni` `master` and wires Gateway -> Python Worker -> C++ Backend with the matching realtime backend protocol.
+This demo also supports a **C++ inference backend** based on llama.cpp-omni. Use the Docker deployment section above as the authoritative setup path; inspect `docker-compose.cpp.yml` and `docker/Dockerfile.cpp-worker-backend` for startup details.
 
 ### Desktop App (Windows & macOS)
 
