@@ -63,4 +63,4 @@ python video_probe.py \
 ```
 
 The script extracts 16 kHz mono audio and JPEG frames with `ffmpeg`,
-then sends `input_audio_buffer.append` events with `video_frames`.
+then sends `input.append` events with `input.video_frames`.

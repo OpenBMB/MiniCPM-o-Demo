@@ -41,3 +41,8 @@ benchmark.json
 
 Dockerfile
 docker-compose.yml
+docker-compose.multi.yml
+
+# 运维笔记,含内部 IP / SWR / 隧道 / 凭证引用 —— 绝不进镜像(尤其推公网 registry)
+docker/34-CHANGES-AND-RECOVERY.md
+certs/

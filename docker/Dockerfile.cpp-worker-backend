@@ -1,0 +1,101 @@
+# syntax=docker/dockerfile:1
+#
+# C++ worker + backend bundle image.
+#
+# One container runs:
+#   - llama.cpp-omni llama-omni-server on 127.0.0.1:${BACKEND_PORT:-22500}
+#   - worker.py on 0.0.0.0:${WORKER_PORT:-22400}, forwarding to the local backend
+#
+# Model weights are mounted at runtime; they are not baked into the image.
+
+ARG CUDA_VERSION=12.8.1
+ARG UBUNTU_VERSION=22.04
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS cpp-build
+
+ARG LLAMA_OMNI_REPO=https://github.com/tc-mb/llama.cpp-omni.git
+ARG LLAMA_OMNI_REFSPEC=master
+ARG LLAMA_OMNI_REF=origin/master
+ARG LLAMA_OMNI_SERVER_TARGET=llama-omni-server
+ARG LLAMA_OMNI_SERVER_BIN=llama-omni-server
+ARG CMAKE_CUDA_ARCHITECTURES=80;120
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        libgomp1 \
+        ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+RUN git init llama.cpp-omni \
+    && cd llama.cpp-omni \
+    && git remote add origin "${LLAMA_OMNI_REPO}" \
+    && git fetch --depth=1 origin "${LLAMA_OMNI_REFSPEC}" \
+    && git checkout --detach "${LLAMA_OMNI_REF}" \
+    && git rev-parse HEAD
+
+WORKDIR /src/llama.cpp-omni
+
+RUN cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DGGML_CUDA=ON \
+        -DGGML_NATIVE=OFF \
+        -DLLAMA_CURL=OFF \
+        -DLLAMA_BUILD_SERVER=ON \
+        -DLLAMA_BUILD_TESTS=OFF \
+        -DLLAMA_BUILD_EXAMPLES=OFF \
+        -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined \
+        -DCMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES}" \
+    && cmake --build build --target "${LLAMA_OMNI_SERVER_TARGET}" -j "$(nproc)" \
+    && mkdir -p /opt/llama.cpp-omni/bin \
+    && cp -a "build/bin/${LLAMA_OMNI_SERVER_BIN}" build/bin/*.so* /opt/llama.cpp-omni/bin/
+
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LD_LIBRARY_PATH=/opt/llama.cpp-omni/bin:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    PATH=/opt/venv/bin:${PATH} \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libgomp1 \
+        python3 \
+        python3-pip \
+        python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/venv
+
+WORKDIR /app
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+        "fastapi>=0.128.0" \
+        "httpx>=0.28.0" \
+        "numpy>=2.2.0" \
+        "pydantic>=2.11.0" \
+        python-multipart \
+        "uvicorn>=0.40.0" \
+        "websockets>=16.0"
+
+COPY --from=cpp-build /opt/llama.cpp-omni /opt/llama.cpp-omni
+COPY . .
+
+RUN chmod +x docker/entrypoint-cpp-worker-backend.sh \
+    && mkdir -p /app/logs
+
+EXPOSE 22500
+EXPOSE 22400
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=40 \
+    CMD curl -sf "http://127.0.0.1:${WORKER_PORT:-22400}/health" >/dev/null || exit 1
+
+ENTRYPOINT ["docker/entrypoint-cpp-worker-backend.sh"]

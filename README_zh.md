@@ -100,244 +100,72 @@ ffmpeg -version
 ```
 
 ### 部署步骤
-**1. 安装Python 3.10**
+常规部署请使用下面的 Docker Compose 文件。旧的裸机 Python 安装不是推荐路径；如果需要裸机调试，请对齐 Dockerfile 和 entrypoint，而不是把 README 命令当作权威来源。
 
-推荐使用 miniconda 安装 Python 3.10。
+**部署架构**
 
-```bash
-mkdir -p ./miniconda3_install_tmp
+当前部署拆成三个运行角色：
 
-# 下载 miniconda3 安装脚本
-wget https://repo.anaconda.com/miniconda/Miniconda3-py310_25.11.1-1-Linux-x86_64.sh -O ./miniconda3_install_tmp/miniconda.sh 
-
-# 将 miniconda3 安装到项目目录下
-bash ./miniconda3_install_tmp/miniconda.sh -b -u -p ./miniconda3 
+```text
+Browser -> Gateway -> Python Worker -> Backend
 ```
 
-安装完成后，会得到一个空的 base 环境，激活这个 base 环境，base 环境中默认为 Python 3.10。
+- **Gateway** 是对外的 HTTPS/WebSocket 入口，不加载模型，负责路由、排队、session 录制和 worker 健康检查。
+- **Python Worker** 暴露 worker WebSocket/health API，维护 worker 状态，并把 runtime protocol 消息转发给 backend server。
+- **Backend** 负责实际模型推理。Backend 可以是 PyTorch 实现（`py_backend/server.py`），也可以是 C++ 实现（`llama.cpp-omni` 的 `llama-omni-server`）。
 
-```bash
-source ./miniconda3/bin/activate
-python --version # 应显示 3.10.x
-```
+**5. Docker 部署（推荐）**
 
-**2. 安装 MiniCPM-o 4.5 所需的依赖**
-
-使用项目目录下的 `install.sh` 安装依赖是最快的，它会在项目目录下的 .venv 中创建一个名为 `base` 的venv虚拟环境，并在其中安装所有的依赖。
-
-```bash
-source ./miniconda3/bin/activate
-bash ./install.sh
-```
-
-如果网络良好，整个安装过程大约花费 5 分钟。如果你处在中国，可以考虑使用第三方 PyPi 镜像源，例如清华镜像源。
-
-<details>
-<summary>点击展开手动安装步骤</summary>
-
-您也可以手动安装依赖，分 2 步：
-
-```bash
-# 首先准备好一个空的 python 3.10 环境
-source ./miniconda3/bin/activate
-python -m venv .venv/base
-source .venv/base/bin/activate
-
-# 安装 PyTorch。
-pip install "torch==2.8.0" "torchaudio==2.8.0"
-
-# 安装其余依赖。
-pip install -r requirements.txt
-```
-
-</details>
-
-**3. 创建配置文件**
-
-将项目目录下的 `config.example.json` 复制为 `config.json`。
-
-```bash
-cp config.example.json config.json
-```
-
-模型路径（`model_path`），默认使用 `openbmb/MiniCPM-o-4_5`，如果你可以访问 huggingface，无需修改，将会自动从 huggingface 拉取模型。
-
-<details>
-<summary>点击展开关于模型路径的详细说明</summary>
-
-(可选) 如果你习惯于下载模型权重到固定位置，或无法访问 huggingface，可以修改 model_path 为你的模型路径。
-```bash
-# 安装huggingface cli
-pip install -U huggingface_hub
-
-# 下载模型
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-
-```
-
-如果无法访问 huggingface，可以使用以下两种方式提前下载模型。
-
-- 使用 hf-mirror 提前下载模型
-
-```bash
-pip install -U huggingface_hub
-
-export HF_ENDPOINT=https://hf-mirror.com
-
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-```
-
-- 使用 modelscope 提前下载模型
-
-```bash
-pip install modelscope
-
-modelscope download --model OpenBMB/MiniCPM-o-4_5 --local_dir /path/to/your/MiniCPM-o-4_5
-```
-
-
-</details>
-
-<br/>
-
-修改 `"gateway_port": 8006` 即可改变部署的端口，默认为 8006。
-
-
-**4. 构建移动端前端并启动服务**
-
-`start_all.sh` 会在启动 Worker 和 Gateway 前，自动重新构建 `frontend/mobile`，并发布到 `static/mobile/`。这样 `/mobile` 入口会始终使用最新的 React/Vite 代码。
-
-第一次构建移动端前端时，需要先安装一次 bun 依赖：
-
-```bash
-cd frontend/mobile
-bun install
-cd ../..
-```
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
-
-如果手动部署，一定要先执行 `cd frontend/mobile && bun run build:static`，再启动 gateway。只有在纯后端调试时才建议设置 `SKIP_MOBILE_BUILD=1` 跳过移动端构建。
-
-服务启动后访问 https://localhost:8006 即可。自签名证书会触发浏览器警告，点"高级"→"继续访问"。
-
-**5. torch.compile 加速**
-
-在 A100、RTX 4090 等上一代 GPU 上，全模态全双工（Omni Full-Duplex）模式的单 unit 计算耗时约 0.9s，接近了 1 秒的实时阈值，会出现明显卡顿。`torch.compile` 通过 Triton 将核心子模块编译为优化后的 GPU kernel，可将计算耗时降至约 **0.5s**，满足实时要求，实现无卡顿的流畅交互。
-
-开启方式分为三步：
-
-**5a.** 在 `config.json` 中启用编译：
-
-```json
-{ "service": { "compile": true } }
-```
-
-**5b.** 运行预编译脚本（一次性，约 15 分钟）：
-
-```bash
-CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_CACHE_DIR=./torch_compile_cache .venv/base/bin/python precompile.py
-```
-
-预编译会生成优化后的 Triton kernel 并保存到 `./torch_compile_cache` 目录（`start_all.sh` 会从 `TORCHINDUCTOR_CACHE_DIR` 读取编译缓存）。该缓存持久存储在磁盘上，后续所有启动（包括进程重启）都会自动加载，无需重复编译。
-
-**5c.** 启动服务：
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
-
-Worker 启动时自动从 `./torch_compile_cache` 加载已缓存的 kernel。有缓存时加载约需 5 分钟。
-
-<details>
-<summary>点击展开其他启动选项</summary>
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 bash start_all.sh          # 指定 GPU
-bash start_all.sh --http                             # 降级 HTTP（不推荐，麦克风/摄像头 API 需要 HTTPS）
-```
-
-**手动启动（分步）:**
-```bash
-# Worker（每张 GPU 一个）
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python worker.py --worker-index 0 --gpu-id 0
-
-# Gateway
-PYTHONPATH=. .venv/base/bin/python gateway.py --port 10024 --workers localhost:22400
-```
-</details>
-
-**5. 停止服务**：
-```bash
-pkill -f "gateway.py|worker.py"
-```
-
-<br/>
-
-### Docker 部署
-
-你也可以通过 Docker 运行本服务。这种方式将所有依赖打包在一个镜像中，只需挂载一个工作目录即可启动。
+Docker 是当前仓库的部署权威来源。部署请使用 Compose 文件；具体启动流程、端口、挂载、健康检查和 backend 参数，请直接查看 `docker-compose*.yml`、`docker/Dockerfile.*` 和 `docker/entrypoint-*.sh`。
 
 **前置条件：**
-- Docker Engine 19.03+
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)（`nvidia-docker`）
-- 显存大于 28 GB 的 NVIDIA GPU
+- Docker 和 Compose v2 插件
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- 每个 worker-backend 实例独占一张 NVIDIA GPU
+- 模型权重从宿主机挂载，镜像内不包含模型权重
 
-**1. 构建镜像：**
-
-```bash
-docker build -t minicpm-o-demo .
-```
-
-**2. 准备工作目录：**
-
-创建一个工作目录，放入模型权重和可选的配置文件：
+**PyTorch backend（Compose）：**
 
 ```bash
-mkdir -p my-workspace/models
+mkdir -p certs data
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
 
-# 复制或软链接模型权重
-ln -s /path/to/MiniCPM-o-4_5 my-workspace/models/MiniCPM-o-4_5
-
-# （可选）自定义配置 —— model_path 应指向 /workspace/models/MiniCPM-o-4_5
-cp config.example.json my-workspace/config.json
+MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose up -d --build
+docker compose logs -f gateway
+docker compose logs -f worker-backend-0
 ```
 
-工作目录结构：
-```
-my-workspace/
-├── models/MiniCPM-o-4_5/   # 模型权重（必需）
-├── config.json              # 自定义配置（可选，不提供则使用默认值）
-├── certs/                   # TLS 证书（可选，用于 HTTPS）
-├── data/                    # 自动创建：持久化会话数据
-└── torch_compile_cache/     # 自动创建：编译缓存
-```
+请按机器 GPU 数量修改 `docker-compose.yml`。如果确实需要单张 GPU 跑多个 worker 实例，可以参考 `docker-compose.multi.yml`。
 
-**3. 使用 `docker run` 运行：**
+**C++ backend（Compose）：**
 
 ```bash
-docker run --gpus all -p 8006:8006 \
-    -v $(pwd)/my-workspace:/workspace \
-    minicpm-o-demo
+mkdir -p certs data
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
+
+GGUF_MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5-gguf \
+GATEWAY_HOST_PORT=8006 \
+CPP_GPU_ID=0 \
+docker compose -f docker-compose.cpp.yml up -d --build
+
+docker compose -f docker-compose.cpp.yml logs -f gateway
+docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
 ```
 
-**3（替代方案）. 使用 Docker Compose 运行：**
+C++ backend 推荐入口是 `docker-compose.cpp.yml`。它使用 `docker/Dockerfile.cpp-worker-backend` 和 `docker/entrypoint-cpp-worker-backend.sh` 定义的 C++ worker 镜像；llama.cpp-omni ref、backend 启动命令和默认 `LLAMA_SERVER_EXTRA_ARGS` 以这些文件为准。
 
-编辑 `docker-compose.yml` 设置工作目录路径，然后：
+**裸机部署：**
+
+裸机命令不是当前主安装路径，因为不同机器的 CUDA、Python、编译器和模型目录差异很大。如果需要裸机调试，请对齐 Dockerfile 和 entrypoint。
+
+**停止 Docker 服务：**
 
 ```bash
-docker compose up -d
+docker compose down                      # PyTorch backend compose
+docker compose -f docker-compose.cpp.yml down  # C++ backend compose
 ```
-
-**容器支持的环境变量：**
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `GATEWAY_PROTO` | `http` | `http` 或 `https` |
-| `GATEWAY_PORT` | 来自 config（8006） | Gateway 监听端口 |
-| `CUDA_VISIBLE_DEVICES` | 所有 GPU | 逗号分隔的 GPU 索引 |
 
 <br/>
 <br/>
@@ -345,22 +173,13 @@ docker compose up -d
 
 ## C++ 后端（llama.cpp）
 
-本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**，可以在更低配置的消费级设备上运行 MiniCPM-o 4.5。详见 [Comni 分支](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/Comni)。
+本 Demo 同时支持基于 llama.cpp-omni 的 **C++ 推理后端**。请以上方 Docker 部署章节作为权威安装路径；启动细节直接查看 `docker-compose.cpp.yml` 和 `docker/Dockerfile.cpp-worker-backend`。
 
 ### 桌面端应用（Windows & macOS）
 
 提供 Windows 和 macOS 的开箱即用安装包，前往 [llama.cpp-omni Releases](https://github.com/tc-mb/llama.cpp-omni/releases/) 下载。
 
 ---
-
-## 已知问题和改进计划
-
-- 轮次对话模式下，图片输入暂时不可用，仅支持音频和文本输入，近期会拆分出图片问答模式。
-- 半双工的语音通话（无需按钮触发回复）正在开发中，近期合入。
-- 语音全双工模式下，回声消除目前存在问题，影响到打断成功率，推荐使用耳机进行交互，近期将修复。
-- 语音模式下，由于模型的训练策略，中文和英文通话下，需要使用对应语言的系统提示词。
-
-<br/>
 
 ## 项目结构
 
@@ -371,11 +190,16 @@ minicpmo45_service/
 ├── config.example.json       # 配置示例（完整字段 + 默认值）
 ├── config.py                 # 配置加载逻辑（Pydantic 定义 + JSON 加载）
 ├── requirements.txt          # Python 依赖
-├── start_all.sh              # 一键启动脚本
+├── docker-compose.yml        # 推荐的 PyTorch backend 部署
+├── docker-compose.cpp.yml    # 推荐的 C++ backend 部署
+├── docker-compose.multi.yml  # 单卡多 worker 部署变体
+├── docker/                   # Dockerfile 和容器 entrypoint
 │
 ├── gateway.py                # Gateway（路由、排队、WS 代理）
-├── worker.py                 # Worker（推理服务）
+├── worker.py                 # Worker（runtime protocol 转发层）
 ├── gateway_modules/          # Gateway 业务模块
+├── py_backend/               # PyTorch backend server
+├── runtime/                  # Backend protocol client/session 层
 │
 ├── core/                     # 核心封装
 │   ├── schemas/              # Pydantic Schema（请求/响应）
@@ -404,43 +228,9 @@ minicpmo45_service/
 
 ## 配置说明
 
-### config.json — 统一配置文件
+`config.json` 只作为裸机直接启动进程时的 fallback，或在容器里显式挂载该文件时提供默认值。Docker 部署默认不会把宿主机的 `config.json` 拷进镜像；部署行为以 Compose、entrypoint、环境变量和 CLI 参数为准。
 
-所有配置集中在 `config.json`（从 `config.example.json` 复制）。
-`config.json` 已 gitignore，不会被提交。
-
-**配置优先级**：CLI 参数 > config.json > Pydantic 默认值
-
-| 分组 | 字段 | 默认值 | 说明 |
-|------|------|--------|------|
-| **model** | `model_path` | _(必填)_ | HuggingFace 格式模型目录 |
-| model | `pt_path` | null | 额外 .pt 权重覆盖 |
-| model | `attn_implementation` | `"auto"` | Attention 实现：`"auto"`/`"flash_attention_2"`/`"sdpa"`/`"eager"` |
-| **audio** | `ref_audio_path` | `assets/ref_audio/ref_minicpm_signature.wav` | 默认 TTS 参考音频 |
-| audio | `playback_delay_ms` | 200 | 前端音频播放延迟（ms），越大越平滑但延迟越高 |
-| audio | `chat_vocoder` | `"token2wav"` | Chat 模式 vocoder：`"token2wav"`（默认）或 `"cosyvoice2"` |
-| **service** | `gateway_port` | 8006 | Gateway 端口 |
-| service | `worker_base_port` | 22400 | Worker 起始端口 |
-| service | `max_queue_size` | 100 | 最大排队请求数 |
-| service | `request_timeout` | 300.0 | 请求超时（秒） |
-| service | `compile` | false | torch.compile 加速 |
-| service | `data_dir` | "data" | 数据目录 |
-| **duplex** | `pause_timeout` | 60.0 | Duplex 暂停超时（秒） |
-
-**最小配置**（只需模型路径）：
-```json
-{"model": {"model_path": "/path/to/model"}}
-```
-
-## CLI 参数覆盖
-
-```bash
-# Worker
-python worker.py --model-path /alt/model --pt-path /alt/weights.pt --ref-audio-path /alt/ref.wav
-
-# Gateway
-python gateway.py --port 10025 --workers localhost:22400,localhost:22401 --http
-```
+如果需要裸机调试，请从 `config.example.json` 和 `config.py` 开始看。CLI 参数优先级高于 `config.json`，缺省字段会回落到 Pydantic 默认值。
 
 
 ## 资源消耗

@@ -1,7 +1,7 @@
 /**
  * ui/duplex-ui.js — UI binding layer for duplex pages
  *
- * Bridges pure-logic metrics data from DuplexSession/AudioPlayer to DOM elements.
+ * Bridges pure-logic metrics data from RealtimeSession/AudioPlayer to DOM elements.
  * All DOM access is concentrated here.
  */
 
@@ -21,7 +21,7 @@ export class MetricsPanel {
     }
 
     /**
-     * Handle a metrics update from DuplexSession or AudioPlayer.
+     * Handle a metrics update from RealtimeSession or AudioPlayer.
      * @param {object} data - Metrics data with `type` field
      */
     update(data) {

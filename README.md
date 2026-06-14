@@ -97,244 +97,72 @@ ffmpeg -version
 ```
 
 ### Deployment Steps
-**1. Install Python 3.10**
+Use the Docker Compose files below for normal deployment. The old bare-metal Python setup is not the recommended path; if you need it for debugging, mirror the Dockerfiles and entrypoints instead of treating README commands as the source of truth.
 
-We recommend using miniconda to install Python 3.10.
+**Deployment Architecture**
 
-```bash
-mkdir -p ./miniconda3_install_tmp
+The current deployment is split into three runtime roles:
 
-# Download the miniconda3 installation script
-wget https://repo.anaconda.com/miniconda/Miniconda3-py310_25.11.1-1-Linux-x86_64.sh -O ./miniconda3_install_tmp/miniconda.sh 
-
-# Install miniconda3 into the project directory
-bash ./miniconda3_install_tmp/miniconda.sh -b -u -p ./miniconda3 
+```text
+Browser -> Gateway -> Python Worker -> Backend
 ```
 
-After installation, you will have an empty base environment. Activate this base environment, which uses Python 3.10 by default.
+- **Gateway** is the public HTTPS/WebSocket entrypoint. It does not load the model; it handles routing, queueing, session recording, and worker health checks.
+- **Python Worker** exposes the worker WebSocket/health API, owns worker state, and forwards runtime protocol messages to a backend server.
+- **Backend** runs the model. The backend can be the PyTorch implementation (`py_backend/server.py`) or the C++ implementation (`llama-omni-server` from `llama.cpp-omni`).
 
-```bash
-source ./miniconda3/bin/activate
-python --version # Should display 3.10.x
-```
+**5. Docker Deployment (Recommended)**
 
-**2. Install Dependencies for MiniCPM-o 4.5**
-
-Using the `install.sh` script in the project directory is the fastest way. It creates a venv virtual environment named `base` under `.venv` in the project directory and installs all dependencies.
-
-```bash
-source ./miniconda3/bin/activate
-bash ./install.sh
-```
-
-If you have a good network connection, the entire installation process takes about 5 minutes. If you are in China, consider using a third-party PyPI mirror such as the Tsinghua mirror.
-
-<details>
-<summary>Click to expand manual installation steps</summary>
-
-You can also install dependencies manually in 2 steps:
-
-```bash
-# First, prepare an empty Python 3.10 environment
-source ./miniconda3/bin/activate
-python -m venv .venv/base
-source .venv/base/bin/activate
-
-# Install PyTorch
-pip install "torch==2.8.0" "torchaudio==2.8.0"
-
-# Install the remaining dependencies
-pip install -r requirements.txt
-```
-
-</details>
-
-**3. Create Configuration File**
-
-Copy `config.example.json` to `config.json` in the project directory.
-
-```bash
-cp config.example.json config.json
-```
-
-The model path (`model_path`) defaults to `openbmb/MiniCPM-o-4_5`. If you have access to Hugging Face, no modification is needed — the model will be automatically pulled from Hugging Face.
-
-<details>
-<summary>Click to expand detailed instructions about model path</summary>
-
-(Optional) If you prefer to download model weights to a fixed location, or cannot access Hugging Face, you can modify `model_path` to your local model path.
-```bash
-# Install huggingface cli
-pip install -U huggingface_hub
-
-# Download the model
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-
-```
-
-If you cannot access Hugging Face, you can use the following two methods to download the model in advance.
-
-- Download the model using hf-mirror
-
-```bash
-pip install -U huggingface_hub
-
-export HF_ENDPOINT=https://hf-mirror.com
-
-huggingface-cli download openbmb/MiniCPM-o-4_5 --local-dir /path/to/your/MiniCPM-o-4_5
-```
-
-- Download the model using ModelScope
-
-```bash
-pip install modelscope
-
-modelscope download --model OpenBMB/MiniCPM-o-4_5 --local_dir /path/to/your/MiniCPM-o-4_5
-```
-
-
-</details>
-
-<br/>
-
-Modify `"gateway_port": 8006` to change the deployment port. The default is 8006.
-
-
-**4. Build the Mobile Frontend and Start the Service**
-
-`start_all.sh` automatically rebuilds `frontend/mobile` and publishes it to `static/mobile/` before starting workers and the gateway. This keeps the `/mobile` entry in sync with the latest React/Vite code.
-
-If this is your first time building the mobile frontend, install its npm dependencies once:
-
-```bash
-cd frontend/mobile
-bun install
-cd ../..
-```
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
-
-For manual deployment, always run `cd frontend/mobile && bun run build:static` before starting the gateway. Only set `SKIP_MOBILE_BUILD=1` for backend-only debugging.
-
-After the service starts, visit https://localhost:8006. The self-signed certificate will trigger a browser warning — click "Advanced" → "Proceed" to continue.
-
-**5. torch.compile Acceleration**
-
-On older-generation GPUs such as A100 and RTX 4090, the per-unit computation time in Omni Full-Duplex mode is approximately 0.9s, approaching the 1-second real-time threshold and causing noticeable stuttering. `torch.compile` uses Triton to compile core sub-modules into optimized GPU kernels, reducing computation time to approximately **0.5s** — meeting real-time requirements for smooth, stutter-free interaction.
-
-Three steps to enable:
-
-**5a.** Enable compilation in `config.json`:
-
-```json
-{ "service": { "compile": true } }
-```
-
-**5b.** Run the pre-compilation script (one-time, ~15 min):
-
-```bash
-CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_CACHE_DIR=./torch_compile_cache .venv/base/bin/python precompile.py
-```
-
-Pre-compilation generates optimized Triton kernels and saves them to the `./torch_compile_cache` directory (`start_all.sh` reads the compilation cache from `TORCHINDUCTOR_CACHE_DIR`). The cache persists on disk and is automatically loaded on all subsequent starts (including process restarts), with no need to recompile.
-
-**5c.** Start the service:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
-```
-
-Workers automatically load the cached kernels from `./torch_compile_cache`. Loading takes approximately 5 minutes when the cache is available.
-
-<details>
-<summary>Click to expand other startup options</summary>
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 bash start_all.sh          # Specify GPUs
-bash start_all.sh --http                             # Downgrade to HTTP (not recommended, mic/camera APIs require HTTPS)
-```
-
-**Manual Startup (step by step):**
-```bash
-# Worker (one per GPU)
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python worker.py --worker-index 0 --gpu-id 0
-
-# Gateway
-PYTHONPATH=. .venv/base/bin/python gateway.py --port 10024 --workers localhost:22400
-```
-</details>
-
-**5. Stop the Service:**
-```bash
-pkill -f "gateway.py|worker.py"
-```
-
-<br/>
-
-### Docker Deployment
-
-You can also run the service inside Docker. This approach packages all dependencies into a single image — just mount one workspace directory and you're good to go.
+Docker is the deployment source of truth for this repository. Use the Compose files for deployment, and refer to `docker-compose*.yml`, `docker/Dockerfile.*`, and `docker/entrypoint-*.sh` for the exact startup flow, ports, mounts, health checks, and backend arguments.
 
 **Prerequisites:**
-- Docker Engine 19.03+
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (`nvidia-docker`)
-- NVIDIA GPU with > 28 GB VRAM
+- Docker with the Compose v2 plugin
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- One NVIDIA GPU per worker-backend instance
+- Model weights mounted from the host; weights are not baked into images
 
-**1. Build the image:**
-
-```bash
-docker build -t minicpm-o-demo .
-```
-
-**2. Prepare the workspace directory:**
-
-Create a single workspace directory with your model weights and optional config:
+**PyTorch backend via Compose:**
 
 ```bash
-mkdir -p my-workspace/models
+mkdir -p certs data
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
 
-# Copy or symlink model weights
-ln -s /path/to/MiniCPM-o-4_5 my-workspace/models/MiniCPM-o-4_5
-
-# (Optional) Custom config — model_path should point to /workspace/models/MiniCPM-o-4_5
-cp config.example.json my-workspace/config.json
+MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose up -d --build
+docker compose logs -f gateway
+docker compose logs -f worker-backend-0
 ```
 
-The workspace directory layout:
-```
-my-workspace/
-├── models/MiniCPM-o-4_5/   # Model weights (required)
-├── config.json              # Custom config (optional, fallback to defaults)
-├── certs/                   # TLS certs (optional, for HTTPS)
-├── data/                    # Auto-created: persistent session data
-└── torch_compile_cache/     # Auto-created: compilation cache
-```
+Edit `docker-compose.yml` to match your GPU count. Use `docker-compose.multi.yml` only if you intentionally want multiple worker instances per GPU.
 
-**3. Run with `docker run`:**
+**C++ backend via Compose:**
 
 ```bash
-docker run --gpus all -p 8006:8006 \
-    -v $(pwd)/my-workspace:/workspace \
-    minicpm-o-demo
+mkdir -p certs data
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
+
+GGUF_MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5-gguf \
+GATEWAY_HOST_PORT=8006 \
+CPP_GPU_ID=0 \
+docker compose -f docker-compose.cpp.yml up -d --build
+
+docker compose -f docker-compose.cpp.yml logs -f gateway
+docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
 ```
 
-**3 (alternative). Run with Docker Compose:**
+For the C++ backend, `docker-compose.cpp.yml` is the intended entrypoint. It uses the C++ worker image defined by `docker/Dockerfile.cpp-worker-backend` and `docker/entrypoint-cpp-worker-backend.sh`. Read those files for the exact llama.cpp-omni ref, backend command, and default `LLAMA_SERVER_EXTRA_ARGS`.
 
-Edit `docker-compose.yml` to set the workspace volume path, then:
+**Bare-metal deployment:**
+
+Bare-metal commands are not maintained as the primary installation path because host CUDA, Python, compiler, and model layouts vary. If you need bare-metal deployment for debugging, mirror the Dockerfiles and entrypoints.
+
+**Stop Docker services:**
 
 ```bash
-docker compose up -d
+docker compose down                      # PyTorch backend compose
+docker compose -f docker-compose.cpp.yml down  # C++ backend compose
 ```
-
-**Environment variables supported by the container:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GATEWAY_PROTO` | `http` | `http` or `https` |
-| `GATEWAY_PORT` | from config (8006) | Gateway listen port |
-| `CUDA_VISIBLE_DEVICES` | all GPUs | Comma-separated GPU indices |
 
 <br/>
 <br/>
@@ -342,22 +170,13 @@ docker compose up -d
 
 ## C++ Backend (llama.cpp)
 
-This demo also supports a **C++ inference backend** based on llama.cpp-omni, enabling you to run MiniCPM-o 4.5 on lower-spec consumer hardware. See the [Comni branch](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/Comni) for setup instructions and details.
+This demo also supports a **C++ inference backend** based on llama.cpp-omni. Use the Docker deployment section above as the authoritative setup path; inspect `docker-compose.cpp.yml` and `docker/Dockerfile.cpp-worker-backend` for startup details.
 
 ### Desktop App (Windows & macOS)
 
 Ready-to-use desktop installers are available for Windows and macOS. Download from [llama.cpp-omni Releases](https://github.com/tc-mb/llama.cpp-omni/releases/).
 
 ---
-
-## Known Issues and Improvement Plans
-
-- In Turn-based Chat mode, image input is temporarily unavailable — only audio and text input are supported. An image Q&A mode will be split out soon.
-- Half-duplex voice call (no button required to trigger responses) is under development and will be merged soon.
-- In Audio Full-Duplex mode, echo cancellation currently has issues affecting interruption success rate. Using headphones is recommended. A fix is coming soon.
-- In voice mode, due to the model's training strategy, Chinese and English calls require corresponding language system prompts.
-
-<br/>
 
 ## Project Structure
 
@@ -368,11 +187,16 @@ minicpmo45_service/
 ├── config.example.json       # Config example (full fields + defaults)
 ├── config.py                 # Config loading logic (Pydantic definition + JSON loading)
 ├── requirements.txt          # Python dependencies
-├── start_all.sh              # One-click startup script
+├── docker-compose.yml        # Recommended PyTorch backend deployment
+├── docker-compose.cpp.yml    # Recommended C++ backend deployment
+├── docker-compose.multi.yml  # Multi-worker-per-GPU deployment variant
+├── docker/                   # Dockerfiles and container entrypoints
 │
 ├── gateway.py                # Gateway (routing, queuing, WS proxy)
-├── worker.py                 # Worker (inference service)
+├── worker.py                 # Worker (runtime protocol proxy)
 ├── gateway_modules/          # Gateway business modules
+├── py_backend/               # PyTorch backend server
+├── runtime/                  # Backend protocol client/session layer
 │
 ├── core/                     # Core encapsulation
 │   ├── schemas/              # Pydantic schemas (request/response)
@@ -401,43 +225,9 @@ minicpmo45_service/
 
 ## Configuration
 
-### config.json — Unified Configuration File
+`config.json` is only a fallback for processes started directly on the host, or for container defaults when a file is mounted explicitly. Docker deployment does not copy the host `config.json` into images by default; Compose files, entrypoints, environment variables, and CLI arguments define the deployment behavior.
 
-All configurations are centralized in `config.json` (copied from `config.example.json`).
-`config.json` is gitignored and will not be committed.
-
-**Configuration Priority**: CLI arguments > config.json > Pydantic defaults
-
-| Group | Field | Default | Description |
-|-------|-------|---------|-------------|
-| **model** | `model_path` | _(required)_ | HuggingFace format model directory |
-| model | `pt_path` | null | Additional .pt weight override |
-| model | `attn_implementation` | `"auto"` | Attention implementation: `"auto"`/`"flash_attention_2"`/`"sdpa"`/`"eager"` |
-| **audio** | `ref_audio_path` | `assets/ref_audio/ref_minicpm_signature.wav` | Default TTS reference audio |
-| audio | `playback_delay_ms` | 200 | Frontend audio playback delay (ms); higher = smoother but more latency |
-| audio | `chat_vocoder` | `"token2wav"` | Chat mode vocoder: `"token2wav"` (default) or `"cosyvoice2"` |
-| **service** | `gateway_port` | 8006 | Gateway port |
-| service | `worker_base_port` | 22400 | Worker base port |
-| service | `max_queue_size` | 100 | Maximum queued requests |
-| service | `request_timeout` | 300.0 | Request timeout (seconds) |
-| service | `compile` | false | torch.compile acceleration |
-| service | `data_dir` | "data" | Data directory |
-| **duplex** | `pause_timeout` | 60.0 | Duplex pause timeout (seconds) |
-
-**Minimal Configuration** (only model path required):
-```json
-{"model": {"model_path": "/path/to/model"}}
-```
-
-## CLI Argument Overrides
-
-```bash
-# Worker
-python worker.py --model-path /alt/model --pt-path /alt/weights.pt --ref-audio-path /alt/ref.wav
-
-# Gateway
-python gateway.py --port 10025 --workers localhost:22400,localhost:22401 --http
-```
+If you need bare-metal debugging, start from `config.example.json` and `config.py`. CLI arguments still take precedence over `config.json`, and missing fields fall back to Pydantic defaults.
 
 
 ## Resource Consumption

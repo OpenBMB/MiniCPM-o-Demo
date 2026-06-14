@@ -1,0 +1,83 @@
+# MiniCPM-o C++ backend deployment (docker compose)
+#
+# Topology:
+#   gateway            x1   host :${GATEWAY_HOST_PORT:-8006} -> container :8006
+#   cpp-worker-backend x1   one container with:
+#       - llama-omni-server backend on 127.0.0.1:22500
+#       - Python worker on 0.0.0.0:22400, forwarding to the local backend
+#
+# Usage:
+#   mkdir -p certs data
+#   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+#     -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
+#   GGUF_MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5-gguf \
+#   GATEWAY_HOST_PORT=8006 \
+#   CPP_GPU_ID=0 \
+#   docker compose -f docker-compose.cpp.yml up -d --build
+#   docker compose -f docker-compose.cpp.yml logs -f gateway
+#   docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
+
+services:
+  cpp-worker-backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cpp-worker-backend
+      args:
+        LLAMA_OMNI_REFSPEC: ${LLAMA_OMNI_REFSPEC:-master}
+        LLAMA_OMNI_REF: ${LLAMA_OMNI_REF:-origin/master}
+    image: minicpm-cpp-worker-backend:dev
+    environment:
+      GPU_ID: "0"
+      BACKEND_PORT: "22500"
+      WORKER_PORT: "22400"
+      GGUF_MODEL: /models/MiniCPM-o-4_5-gguf/${GGUF_MODEL_FILE:-MiniCPM-o-4_5-Q4_K_M.gguf}
+      LLAMA_SERVER_EXTRA_ARGS: "${LLAMA_SERVER_EXTRA_ARGS:--c 8192}"
+    volumes:
+      - ${GGUF_MODEL_HOST_PATH:?set GGUF_MODEL_HOST_PATH to the host GGUF model dir}:/models/MiniCPM-o-4_5-gguf:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${CPP_GPU_ID:-0}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:22400/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    image: minicpm-gateway:dev
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8006"
+      - "--https"
+      - "--ssl-certfile"
+      - "/app/certs/cert.pem"
+      - "--ssl-keyfile"
+      - "/app/certs/key.pem"
+      - "--workers"
+      - "cpp-worker-backend:22400"
+    ports:
+      - "${GATEWAY_HOST_PORT:-8006}:8006"
+    volumes:
+      - ${DATA_HOST_PATH:-./data}:/app/data
+      - ${CERTS_HOST_PATH:-./certs}:/app/certs:ro
+    depends_on:
+      cpp-worker-backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}

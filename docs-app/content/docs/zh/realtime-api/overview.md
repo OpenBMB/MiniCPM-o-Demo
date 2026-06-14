@@ -1,56 +1,237 @@
 ---
 title: "Realtime API 概览"
-description: "MiniCPM-o Realtime API 协议概览"
+description: "MiniCPM-o Realtime API 当前公开 WebSocket 协议"
 ---
 
-MiniCPM-o 提供两种全双工实时对话模式，通过 WebSocket 协议通信。
+MiniCPM-o Realtime API 通过一个 WebSocket 入口提供 turn-based chat、视频全双工和音频全双工三种模式。
 
 ## API Host
 
-```
+```text
 https://minicpmo45.modelbest.cn
 ```
 
 ## 连接端点
 
-```
-wss://host/v1/realtime?mode={video|audio}
+```text
+wss://host/v1/realtime?mode={chat|video|audio}
 ```
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
-| `mode` | 否 | `video`（默认）或 `audio`，决定会话时长和推荐的输入模态 |
+| `mode` | 否 | `video` 为默认值；可选 `chat`、`video`、`audio` |
 
-`session_id` 由**服务端**在连接建立后自动生成（格式 `rt_{timestamp_ms}`），通过 `session.created` 事件返回给客户端。客户端不需要也不应该在 URL 中传入 `session_id`。
+`session_id` 是服务端返回的不透明字符串，客户端不需要在 URL 中传入，也不应该假设它的格式。
 
-## 两种模式
+## 模式
 
-| 模式 | 端点示例 | 上行数据 | 会话时长 | 有效对话 |
-|------|---------|---------|---------|---------|
-| **视频双工** | `wss://host/v1/realtime?mode=video` | 音频 + 视频帧 | 5 分钟 | ~90 秒 |
-| **音频双工** | `wss://host/v1/realtime?mode=audio` | 仅音频 | 10 分钟 | ~8 分钟 |
+| 模式 | 端点示例 | 上行输入 | 下行输出 | 说明 |
+|------|---------|---------|---------|------|
+| Chat | `wss://host/v1/realtime?mode=chat` | 一次 turn 的 `messages` | 文本增量、可选音频、`response.done` | 支持 streaming 和 non-streaming |
+| 视频双工 | `wss://host/v1/realtime?mode=video` | 连续音频，可携带视频帧 | `listen`、文本增量、音频增量 | 会话总时长 300 秒 |
+| 音频双工 | `wss://host/v1/realtime?mode=audio` | 连续音频 | `listen`、文本增量、音频增量 | 会话总时长 600 秒 |
 
-两种模式共享相同的事件命名和消息结构，区别在于：
-- **视频双工**：`input_audio_buffer.append` 建议携带 `video_frames`
-- **音频双工**：`input_audio_buffer.append` 不建议携带 `video_frames`（携带时行为未定义）
+三种模式共享同一套事件命名：
 
-模式选择后整个会话期间不能切换。
+- 初始化使用 `session.init`
+- 提交输入使用 `input.append`
+- 输出统一使用 `response.output.delta`，并通过 `kind` 区分 `listen`、`text`、`audio`
+- Chat 模式用 `response.done` 表示一次 turn 输出完成
+- 关闭使用 `session.close` 和 `session.closed`
 
-## 协议文档
+## 生命周期
 
-- [视频双工协议](/zh/realtime-api/video/) — 含视频帧的全双工对话
-- [音频双工协议](/zh/realtime-api/audio/) — 纯音频的全双工对话
-- [JSON Schema](/docs/realtime-protocol-schema.json) — 机器可读的消息格式定义
+```text
+Client connects
+  <- session.queued / session.queue_update   optional
+  <- session.queue_done
+  -> session.init
+  <- session.created
+  -> input.append
+  <- response.output.delta / response.done
+  -> session.close
+  <- session.closed
+```
 
-## 示例代码
+客户端应等到 `session.queue_done` 后再发送 `session.init`。如果没有排队，服务端也会立即发送 `session.queue_done`。
 
-完整的客户端实现示例请参考本仓库的全双工 demo 页面，它们直接使用 Realtime API 协议：
+## 客户端事件
 
-| 页面 | 说明 |
-|------|------|
-| [`static/omni/`](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol/static/omni) | 视频双工 — 实时音视频对话 |
-| [`static/audio-duplex/`](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol/static/audio-duplex) | 音频双工 — 实时纯音频对话 |
+### session.init
 
-核心协议封装库：[`static/duplex/lib/realtime-session.js`](https://github.com/OpenBMB/MiniCPM-o-Demo/blob/realtime-protocol/static/duplex/lib/realtime-session.js)
+`session.init` 初始化会话。消息必须包含对象类型的 `payload` 字段。
 
-> 仓库地址：<https://github.com/OpenBMB/MiniCPM-o-Demo/tree/realtime-protocol>
+```json
+{
+  "type": "session.init",
+  "payload": {
+    "system_prompt": "你是一个有用的助手"
+  }
+}
+```
+
+常用字段：
+
+| 字段 | 模式 | 说明 |
+|------|------|------|
+| `system_prompt` | `video` / `audio` | 双工模式系统提示词 |
+| `instructions` | `video` / `audio` | `system_prompt` 的等价字段 |
+| `config` | `video` / `audio` | 双工推理配置，例如 `length_penalty` |
+| `voice.ref_audio_base64` | `video` / `audio` | LLM 参考音频，base64 PCM |
+| `voice.tts_ref_audio_base64` | `video` / `audio` | TTS 参考音频，base64 PCM |
+
+Chat 模式可以发送空 payload：
+
+```json
+{ "type": "session.init", "payload": {} }
+```
+
+### input.append
+
+`input.append` 提交一次模型输入。消息必须包含对象类型的 `input` 字段。
+
+Chat 模式：
+
+```json
+{
+  "type": "input.append",
+  "input": {
+    "messages": [
+      { "role": "user", "content": "请只回答：测试" }
+    ],
+    "streaming": true,
+    "generation": {
+      "max_new_tokens": 64,
+      "length_penalty": 1.1
+    },
+    "tts": {
+      "enabled": false
+    }
+  }
+}
+```
+
+视频/音频双工模式：
+
+```json
+{
+  "type": "input.append",
+  "input": {
+    "audio": "<base64 float32 PCM, 16 kHz mono>",
+    "video_frames": ["<base64 JPEG>"],
+    "force_listen": false,
+    "max_slice_nums": 1
+  }
+}
+```
+
+`audio` 是双工模式的主要输入。`video_frames` 只用于 `mode=video`，`mode=audio` 不需要携带。
+
+### session.close
+
+```json
+{
+  "type": "session.close",
+  "reason": "user_stop"
+}
+```
+
+发送后客户端不应再发送新的 `input.append`。
+
+## 服务端事件
+
+### 排队事件
+
+```json
+{
+  "type": "session.queued",
+  "position": 2,
+  "estimated_wait_s": 20,
+  "ticket_id": "ticket_xxx",
+  "queue_length": 3
+}
+```
+
+`session.queue_update` 使用相同字段表达排队位置更新。`session.queue_done` 表示 worker 已分配完成，可以发送 `session.init`。
+
+### session.created
+
+```json
+{
+  "type": "session.created",
+  "session_id": "sess_xxx",
+  "mode": "full_duplex",
+  "metrics": {}
+}
+```
+
+表示会话初始化完成。
+
+### response.output.delta
+
+```json
+{
+  "type": "response.output.delta",
+  "kind": "text",
+  "session_id": "sess_xxx",
+  "response_id": "resp_xxx",
+  "input_id": "input_xxx",
+  "text": "你好",
+  "metrics": {}
+}
+```
+
+| `kind` | 字段 | 说明 |
+|--------|------|------|
+| `listen` | `metrics` | 模型继续听用户输入 |
+| `text` | `text` | 文本增量 |
+| `audio` | `audio` | 24 kHz 单声道 float32 PCM，base64 编码 |
+
+一个 `response.output.delta` 只表达一种输出分支。文本和音频可能分别到达，客户端应按接收顺序更新字幕和播放音频。
+
+### response.done
+
+`response.done` 只用于 `mode=chat`，表示一次 turn-based response 完成。
+
+```json
+{
+  "type": "response.done",
+  "session_id": "sess_xxx",
+  "response_id": "resp_xxx",
+  "text": "测试",
+  "reason": "turn_end",
+  "metrics": {}
+}
+```
+
+### session.closed
+
+```json
+{
+  "type": "session.closed",
+  "session_id": "sess_xxx",
+  "reason": "user_stop"
+}
+```
+
+`reason` 可能是 `user_stop`、`client_closed`、`timeout`、`backend_error` 等。客户端收到该事件或 WebSocket 关闭后，应认为会话已经结束。
+
+### error
+
+```json
+{
+  "type": "error",
+  "error": {
+    "code": "queue_full",
+    "message": "Queue full",
+    "type": "server_error"
+  }
+}
+```
+
+## 协议页面
+
+- [Chat 模式](./chat/)：turn-based 文本/可选语音输出
+- [视频双工](./video/)：连续音频加视频帧输入
+- [音频双工](./audio/)：连续音频输入
+- [使用范例](./examples/)：命令行 probe 客户端

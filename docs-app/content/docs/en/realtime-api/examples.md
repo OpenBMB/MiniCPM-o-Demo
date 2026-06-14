@@ -24,8 +24,9 @@ ffmpeg -version
 
 ## Audio probe
 
-The audio probe opens `wss://host/v1/realtime?mode=audio`, sends 16 kHz mono
-float32 PCM audio chunks, and reports client-observed streaming metrics.
+The audio probe opens `wss://host/v1/realtime?mode=audio`, waits for
+`session.queue_done`, sends `session.init`, and then sends audio chunks as
+`input.append` events. Input audio is 16 kHz mono float32 PCM.
 
 ```bash
 python audio_probe.py \
@@ -41,7 +42,7 @@ smoke test.
 ## Video probe
 
 The video probe extracts 16 kHz mono audio and JPEG frames from an MP4 file with
-`ffmpeg`, then sends `input_audio_buffer.append` events with `video_frames`.
+`ffmpeg`, then sends `input.append` events with `input.video_frames`.
 
 ```bash
 python video_probe.py \

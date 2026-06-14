@@ -3,6 +3,7 @@
   "defaultOpen": true,
   "pages": [
     "overview",
+    "chat",
     "video",
     "audio",
     "examples"
