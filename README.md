@@ -38,11 +38,10 @@ MiniCPM-o 4.5 is the latest and most capable model in the MiniCPM-o series. The 
 | Mode | Features | I/O Modalities | Paradigm
 |------|----------|------|------
 | **Turn-based Chat** | Low-latency streaming interaction; button-triggered responses; supports offline video/audio understanding and analysis; high response accuracy; strong basic capabilities | Audio + Text + Video input, Audio + Text output | Turn-based
-| **Half-Duplex Audio** | VAD auto-detects speech boundaries for hands-free voice conversation; higher TTS voice quality; more accurate responses; stronger user experience | Voice input, Text + Voice output | Half-duplex
 | **Omnimodal Full-Duplex** | Real-time omnimodal full-duplex interaction; visual and voice input with simultaneous voice output; model autonomously decides when to speak; powerful cutting-edge capabilities | Vision + Audio input, Text + Voice output | Full-duplex
 | **Audio Full-Duplex** | Real-time audio full-duplex interaction; voice input and voice output happen simultaneously; model autonomously decides when to speak; powerful cutting-edge capabilities | Audio input, Text + Voice output | Full-duplex
 
-The 4 currently supported modes share a single model instance with millisecond-level hot-switching (< 0.1ms).
+The 3 currently supported modes share a single model instance with millisecond-level hot-switching (< 0.1ms).
 
 **Additional features:**
 
@@ -76,25 +75,6 @@ Worker Pool (:22400+)
 ### Check System Requirements
 1. Make sure you have an NVIDIA GPU with more than 28GB of VRAM.
 2. Make sure your machine is running a Linux operating system.
-
-### Install FFmpeg
-
-FFmpeg is required for video frame extraction and inference result visualization. For more information, visit the [official FFmpeg website](https://ffmpeg.org/).
-
-**macOS (Homebrew):**
-```bash
-brew install ffmpeg
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update && sudo apt install ffmpeg
-```
-
-**Verify installation:**
-```bash
-ffmpeg -version
-```
 
 ### Deployment Steps
 The fastest deployment path is Docker Compose. For bare-metal deployment, use the Dockerfiles and entrypoints as the reference for dependencies and for the three startup stages: Gateway, Python Worker, and Backend.
@@ -205,7 +185,6 @@ minicpmo45_service/
 ├── MiniCPMO45/               # Model core inference code
 ├── static/                   # Frontend pages
 ├── resources/                # Resource files (reference audio, etc.)
-├── tests/                    # Tests
 └── tmp/                      # Runtime logs and PID files
 ```
 
@@ -214,7 +193,6 @@ minicpmo45_service/
 | Page | URL |
 |------|-----|
 | Turn-based Chat | https://localhost:8006 |
-| Half-Duplex Audio | https://localhost:8006/half_duplex |
 | Omnimodal Full-Duplex | https://localhost:8006/omni |
 | Audio Full-Duplex | https://localhost:8006/audio_duplex |
 | Dashboard | https://localhost:8006/admin |
@@ -238,17 +216,3 @@ If you need bare-metal debugging, start from `config.example.json` and `config.p
 | Model loading time | ~16s | ~16s + ~5 min (warm) / ~15 min (cold) |
 | Mode switching latency | < 0.1ms | < 0.1ms |
 | Omni Full-Duplex per-unit latency (A100) | ~0.9s | **~0.5s** |
-
-## Testing
-
-```bash
-
-# Schema unit tests (no GPU required)
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_schemas.py -v
-
-# Processor tests (GPU required)
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_chat.py tests/test_streaming.py tests/test_duplex.py -v -s
-
-# API integration tests (service must be running)
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_api.py -v -s
-```

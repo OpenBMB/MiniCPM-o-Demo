@@ -38,11 +38,10 @@ MiniCPM-o 4.5 是 MiniCPM-o 系列中最新、能力最强的模型。该模型�
 | 模式 | 特点 | 输入输出模态 | 范式
 |------|------|------|------
 | **Turn-based Chat (轮次对话)** | 低延迟流式交互，按钮触发回复，支持离线视频、音频理解分析，回复正确性好，基础能力强 | 音频+文本+视频输入，音频+文本输出 | 轮次对话范式
-| **Half-Duplex Audio (半双工语音)** | VAD 自动检测语音边界，无需按钮即可进行语音通话，语音生成质量更高，回复准确性强，用户获得感好 | 语音输入，文本+语音输出 | 半双工范式
 | **Omnimodal Full-Duplex (全模态全双工)** | 全模态全双工实时交互，视觉语音输入、语音输出同时发生，模型完全自主决定说话时机，前沿能力强大 | 视觉+语音输入，文本+语音输出 | 全双工范式
 | **Audio Full-Duplex (语音全双工)** | 语音全双工实时交互，语音输入和语音输出同时发生，模型完全自主决定说话时机，前沿能力强大 | 语音输入，文本+语音输出 | 全双工范式
 
-目前支持的 4 种模式共享同一个模型实例，支持毫秒级热切换（< 0.1ms）。
+目前支持的 3 种模式共享同一个模型实例，支持毫秒级热切换（< 0.1ms）。
 
 **其他特性：**
 
@@ -79,25 +78,6 @@ Worker Pool (:22400+)
 ### 检查系统要求
 1. 确保你有一张显存大于 28GB 的 NVIDIA GPU。
 2. 确保你的机器安装了 Linux 操作系统。
-
-### 安装 FFmpeg
-
-FFmpeg 用于视频帧提取 和 推理结果可视化。更多信息请访问 [FFmpeg 官网](https://ffmpeg.org/)。
-
-**macOS (Homebrew):**
-```bash
-brew install ffmpeg
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update && sudo apt install ffmpeg
-```
-
-**验证安装:**
-```bash
-ffmpeg -version
-```
 
 ### 部署步骤
 快速部署方式是 Docker Compose。裸机部署请参考 Dockerfile 和 entrypoint 来确定依赖与启动方式，并保持 Gateway、Python Worker、Backend 三个启动环节一致。
@@ -208,7 +188,6 @@ minicpmo45_service/
 ├── MiniCPMO45/               # 模型核心推理代码
 ├── static/                   # 前端页面
 ├── resources/                # 资源文件（参考音频等）
-├── tests/                    # 测试
 └── tmp/                      # 运行时日志和 PID 文件
 ```
 
@@ -217,7 +196,6 @@ minicpmo45_service/
 | 页面 | URL |
 |------|-----|
 | 轮次对话 | https://localhost:8006 |
-| 半双工语音 | https://localhost:8006/half_duplex |
 | 全模态全双工 | https://localhost:8006/omni |
 | 语音全双工 | https://localhost:8006/audio_duplex |
 | 仪表盘 | https://localhost:8006/admin |
@@ -241,17 +219,3 @@ minicpmo45_service/
 | 模型加载时间 | ~16s | ~16s + ~5 min（有缓存）/ ~15 min（无缓存）|
 | 模式切换延迟 | < 0.1ms | < 0.1ms |
 | Omni Full-Duplex 单 unit 延迟（A100） | ~0.9s | **~0.5s** |
-
-## 测试
-
-```bash
-
-# Schema 单元测试（无需 GPU）
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_schemas.py -v
-
-# Processor 测试（需要 GPU）
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_chat.py tests/test_streaming.py tests/test_duplex.py -v -s
-
-# API 集成测试（需要先启动服务）
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_api.py -v -s
-```
