@@ -188,19 +188,6 @@ minicpmo45_service/
 └── tmp/                      # Runtime logs and PID files
 ```
 
-**Frontend Routes**
-
-| Page | URL |
-|------|-----|
-| Turn-based Chat | https://localhost:8006 |
-| Omnimodal Full-Duplex | https://localhost:8006/omni |
-| Audio Full-Duplex | https://localhost:8006/audio_duplex |
-| Dashboard | https://localhost:8006/admin |
-| Docs / Realtime API Docs | https://localhost:8006/docs |
-
-<br/>
-<br/>
-
 ## Configuration
 
 `config.json` provides defaults for processes started directly on the host, or for containers when a file is mounted explicitly. Docker deployment does not copy the host `config.json` into images by default; Compose files, entrypoints, environment variables, and CLI arguments define the deployment behavior.

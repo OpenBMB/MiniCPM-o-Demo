@@ -191,19 +191,6 @@ minicpmo45_service/
 └── tmp/                      # 运行时日志和 PID 文件
 ```
 
-**前端路由设定**
-
-| 页面 | URL |
-|------|-----|
-| 轮次对话 | https://localhost:8006 |
-| 全模态全双工 | https://localhost:8006/omni |
-| 语音全双工 | https://localhost:8006/audio_duplex |
-| 仪表盘 | https://localhost:8006/admin |
-| 文档 / Realtime API 文档 | https://localhost:8006/docs |
-
-<br/>
-<br/>
-
 ## 配置说明
 
 `config.json` 为裸机直接启动进程提供默认配置；如果在容器里显式挂载该文件，也可以作为容器内默认值。Docker 部署默认不会把宿主机的 `config.json` 拷进镜像；部署行为以 Compose、entrypoint、环境变量和 CLI 参数为准。
