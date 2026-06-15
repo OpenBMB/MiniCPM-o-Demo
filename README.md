@@ -91,7 +91,7 @@ Browser -> Gateway -> Python Worker -> Backend
 - **Python Worker** exposes the worker WebSocket/health API, owns worker state, and forwards runtime protocol messages to a backend server.
 - **Backend** runs the model. The backend can be the PyTorch implementation (`py_backend/server.py`) or the C++ implementation (`llama-omni-server` from `llama.cpp-omni`).
 
-**5. Docker Deployment (Recommended)**
+**Docker Deployment (Recommended)**
 
 Docker Compose is the maintained quick-start deployment path. Use the Compose files for deployment, and refer to `docker-compose*.yml`, `docker/Dockerfile.*`, and `docker/entrypoint-*.sh` for the exact startup flow, ports, mounts, health checks, and backend arguments.
 

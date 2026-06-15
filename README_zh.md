@@ -94,7 +94,7 @@ Browser -> Gateway -> Python Worker -> Backend
 - **Python Worker** 暴露 worker WebSocket/health API，维护 worker 状态，并把 runtime protocol 消息转发给 backend server。
 - **Backend** 负责实际模型推理。Backend 可以是 PyTorch 实现（`py_backend/server.py`），也可以是 C++ 实现（`llama.cpp-omni` 的 `llama-omni-server`）。
 
-**5. Docker 部署（推荐）**
+**Docker 部署（推荐）**
 
 Docker Compose 是当前维护的快速部署方式。部署请使用 Compose 文件；具体启动流程、端口、挂载、健康检查和 backend 参数，请直接查看 `docker-compose*.yml`、`docker/Dockerfile.*` 和 `docker/entrypoint-*.sh`。
 
