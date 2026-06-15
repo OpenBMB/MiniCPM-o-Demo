@@ -967,6 +967,7 @@ async function startSession() {
     // Build prepare payload
     const preparePayload = {
         config: { length_penalty: parseFloat(document.getElementById('duplexLengthPenalty').value) || 1.05 },
+        use_tts: document.getElementById('ttsEnabled').checked,
     };
     const refBase64 = refAudio.getBase64();
     if (refBase64) preparePayload.ref_audio_base64 = refBase64;
