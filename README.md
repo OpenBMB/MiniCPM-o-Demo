@@ -97,7 +97,7 @@ ffmpeg -version
 ```
 
 ### Deployment Steps
-Use the Docker Compose files below for normal deployment. The old bare-metal Python setup is not the recommended path; if you need it for debugging, mirror the Dockerfiles and entrypoints instead of treating README commands as the source of truth.
+The fastest deployment path is Docker Compose. For bare-metal deployment, use the Dockerfiles and entrypoints as the reference for dependencies and for the three startup stages: Gateway, Python Worker, and Backend.
 
 **Deployment Architecture**
 
@@ -113,7 +113,7 @@ Browser -> Gateway -> Python Worker -> Backend
 
 **5. Docker Deployment (Recommended)**
 
-Docker is the deployment source of truth for this repository. Use the Compose files for deployment, and refer to `docker-compose*.yml`, `docker/Dockerfile.*`, and `docker/entrypoint-*.sh` for the exact startup flow, ports, mounts, health checks, and backend arguments.
+Docker Compose is the maintained quick-start deployment path. Use the Compose files for deployment, and refer to `docker-compose*.yml`, `docker/Dockerfile.*`, and `docker/entrypoint-*.sh` for the exact startup flow, ports, mounts, health checks, and backend arguments.
 
 **Prerequisites:**
 - Docker with the Compose v2 plugin
@@ -155,7 +155,7 @@ For the C++ backend, `docker-compose.cpp.yml` is the intended entrypoint. It use
 
 **Bare-metal deployment:**
 
-Bare-metal commands are not maintained as the primary installation path because host CUDA, Python, compiler, and model layouts vary. If you need bare-metal deployment for debugging, mirror the Dockerfiles and entrypoints.
+For bare-metal deployment, map the Docker dependencies and entrypoint commands to your host environment. Keep the same three-stage startup flow: Gateway, Python Worker, and Backend.
 
 **Stop Docker services:**
 
@@ -225,7 +225,7 @@ minicpmo45_service/
 
 ## Configuration
 
-`config.json` is only a fallback for processes started directly on the host, or for container defaults when a file is mounted explicitly. Docker deployment does not copy the host `config.json` into images by default; Compose files, entrypoints, environment variables, and CLI arguments define the deployment behavior.
+`config.json` provides defaults for processes started directly on the host, or for containers when a file is mounted explicitly. Docker deployment does not copy the host `config.json` into images by default; Compose files, entrypoints, environment variables, and CLI arguments define the deployment behavior.
 
 If you need bare-metal debugging, start from `config.example.json` and `config.py`. CLI arguments still take precedence over `config.json`, and missing fields fall back to Pydantic defaults.
 

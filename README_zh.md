@@ -100,7 +100,7 @@ ffmpeg -version
 ```
 
 ### 部署步骤
-常规部署请使用下面的 Docker Compose 文件。旧的裸机 Python 安装不是推荐路径；如果需要裸机调试，请对齐 Dockerfile 和 entrypoint，而不是把 README 命令当作权威来源。
+快速部署方式是 Docker Compose。裸机部署请参考 Dockerfile 和 entrypoint 来确定依赖与启动方式，并保持 Gateway、Python Worker、Backend 三个启动环节一致。
 
 **部署架构**
 
@@ -116,7 +116,7 @@ Browser -> Gateway -> Python Worker -> Backend
 
 **5. Docker 部署（推荐）**
 
-Docker 是当前仓库的部署权威来源。部署请使用 Compose 文件；具体启动流程、端口、挂载、健康检查和 backend 参数，请直接查看 `docker-compose*.yml`、`docker/Dockerfile.*` 和 `docker/entrypoint-*.sh`。
+Docker Compose 是当前维护的快速部署方式。部署请使用 Compose 文件；具体启动流程、端口、挂载、健康检查和 backend 参数，请直接查看 `docker-compose*.yml`、`docker/Dockerfile.*` 和 `docker/entrypoint-*.sh`。
 
 **前置条件：**
 - Docker 和 Compose v2 插件
@@ -158,7 +158,7 @@ C++ backend 推荐入口是 `docker-compose.cpp.yml`。它使用 `docker/Dockerf
 
 **裸机部署：**
 
-裸机命令不是当前主安装路径，因为不同机器的 CUDA、Python、编译器和模型目录差异很大。如果需要裸机调试，请对齐 Dockerfile 和 entrypoint。
+裸机部署时，请把 Docker 里的依赖和 entrypoint 启动命令映射到宿主机环境，并保持 Gateway、Python Worker、Backend 三段启动流程一致。
 
 **停止 Docker 服务：**
 
@@ -228,7 +228,7 @@ minicpmo45_service/
 
 ## 配置说明
 
-`config.json` 只作为裸机直接启动进程时的 fallback，或在容器里显式挂载该文件时提供默认值。Docker 部署默认不会把宿主机的 `config.json` 拷进镜像；部署行为以 Compose、entrypoint、环境变量和 CLI 参数为准。
+`config.json` 为裸机直接启动进程提供默认配置；如果在容器里显式挂载该文件，也可以作为容器内默认值。Docker 部署默认不会把宿主机的 `config.json` 拷进镜像；部署行为以 Compose、entrypoint、环境变量和 CLI 参数为准。
 
 如果需要裸机调试，请从 `config.example.json` 和 `config.py` 开始看。CLI 参数优先级高于 `config.json`，缺省字段会回落到 Pydantic 默认值。
 
