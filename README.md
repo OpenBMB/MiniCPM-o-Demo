@@ -38,11 +38,10 @@ MiniCPM-o 4.5 is the latest and most capable model in the MiniCPM-o series. The 
 | Mode | Features | I/O Modalities | Paradigm
 |------|----------|------|------
 | **Turn-based Chat** | Low-latency streaming interaction; button-triggered responses; supports offline video/audio understanding and analysis; high response accuracy; strong basic capabilities | Audio + Text + Video input, Audio + Text output | Turn-based
-| **Half-Duplex Audio** | VAD auto-detects speech boundaries for hands-free voice conversation; higher TTS voice quality; more accurate responses; stronger user experience | Voice input, Text + Voice output | Half-duplex
 | **Omnimodal Full-Duplex** | Real-time omnimodal full-duplex interaction; visual and voice input with simultaneous voice output; model autonomously decides when to speak; powerful cutting-edge capabilities | Vision + Audio input, Text + Voice output | Full-duplex
 | **Audio Full-Duplex** | Real-time audio full-duplex interaction; voice input and voice output happen simultaneously; model autonomously decides when to speak; powerful cutting-edge capabilities | Audio input, Text + Voice output | Full-duplex
 
-The 4 currently supported modes share a single model instance with millisecond-level hot-switching (< 0.1ms).
+The 3 currently supported modes share a single model instance with millisecond-level hot-switching (< 0.1ms).
 
 **Additional features:**
 
@@ -77,27 +76,8 @@ Worker Pool (:22400+)
 1. Make sure you have an NVIDIA GPU with more than 28GB of VRAM.
 2. Make sure your machine is running a Linux operating system.
 
-### Install FFmpeg
-
-FFmpeg is required for video frame extraction and inference result visualization. For more information, visit the [official FFmpeg website](https://ffmpeg.org/).
-
-**macOS (Homebrew):**
-```bash
-brew install ffmpeg
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update && sudo apt install ffmpeg
-```
-
-**Verify installation:**
-```bash
-ffmpeg -version
-```
-
 ### Deployment Steps
-Use the Docker Compose files below for normal deployment. The old bare-metal Python setup is not the recommended path; if you need it for debugging, mirror the Dockerfiles and entrypoints instead of treating README commands as the source of truth.
+The fastest deployment path is Docker Compose. For bare-metal deployment, use the Dockerfiles and entrypoints as the reference for dependencies and for the three startup stages: Gateway, Python Worker, and Backend.
 
 **Deployment Architecture**
 
@@ -111,9 +91,9 @@ Browser -> Gateway -> Python Worker -> Backend
 - **Python Worker** exposes the worker WebSocket/health API, owns worker state, and forwards runtime protocol messages to a backend server.
 - **Backend** runs the model. The backend can be the PyTorch implementation (`py_backend/server.py`) or the C++ implementation (`llama-omni-server` from `llama.cpp-omni`).
 
-**5. Docker Deployment (Recommended)**
+**Docker Deployment (Recommended)**
 
-Docker is the deployment source of truth for this repository. Use the Compose files for deployment, and refer to `docker-compose*.yml`, `docker/Dockerfile.*`, and `docker/entrypoint-*.sh` for the exact startup flow, ports, mounts, health checks, and backend arguments.
+Docker Compose is the maintained quick-start deployment path. Use the Compose files for deployment, and refer to `docker-compose*.yml`, `docker/Dockerfile.*`, and `docker/entrypoint-*.sh` for the exact startup flow, ports, mounts, health checks, and backend arguments.
 
 **Prerequisites:**
 - Docker with the Compose v2 plugin
@@ -155,7 +135,7 @@ For the C++ backend, `docker-compose.cpp.yml` is the intended entrypoint. It use
 
 **Bare-metal deployment:**
 
-Bare-metal commands are not maintained as the primary installation path because host CUDA, Python, compiler, and model layouts vary. If you need bare-metal deployment for debugging, mirror the Dockerfiles and entrypoints.
+For bare-metal deployment, map the Docker dependencies and entrypoint commands to your host environment. Keep the same three-stage startup flow: Gateway, Python Worker, and Backend.
 
 **Stop Docker services:**
 
@@ -205,27 +185,12 @@ minicpmo45_service/
 ├── MiniCPMO45/               # Model core inference code
 ├── static/                   # Frontend pages
 ├── resources/                # Resource files (reference audio, etc.)
-├── tests/                    # Tests
 └── tmp/                      # Runtime logs and PID files
 ```
 
-**Frontend Routes**
-
-| Page | URL |
-|------|-----|
-| Turn-based Chat | https://localhost:8006 |
-| Half-Duplex Audio | https://localhost:8006/half_duplex |
-| Omnimodal Full-Duplex | https://localhost:8006/omni |
-| Audio Full-Duplex | https://localhost:8006/audio_duplex |
-| Dashboard | https://localhost:8006/admin |
-| Docs / Realtime API Docs | https://localhost:8006/docs |
-
-<br/>
-<br/>
-
 ## Configuration
 
-`config.json` is only a fallback for processes started directly on the host, or for container defaults when a file is mounted explicitly. Docker deployment does not copy the host `config.json` into images by default; Compose files, entrypoints, environment variables, and CLI arguments define the deployment behavior.
+`config.json` provides defaults for processes started directly on the host, or for containers when a file is mounted explicitly. Docker deployment does not copy the host `config.json` into images by default; Compose files, entrypoints, environment variables, and CLI arguments define the deployment behavior.
 
 If you need bare-metal debugging, start from `config.example.json` and `config.py`. CLI arguments still take precedence over `config.json`, and missing fields fall back to Pydantic defaults.
 
@@ -238,17 +203,3 @@ If you need bare-metal debugging, start from `config.example.json` and `config.p
 | Model loading time | ~16s | ~16s + ~5 min (warm) / ~15 min (cold) |
 | Mode switching latency | < 0.1ms | < 0.1ms |
 | Omni Full-Duplex per-unit latency (A100) | ~0.9s | **~0.5s** |
-
-## Testing
-
-```bash
-
-# Schema unit tests (no GPU required)
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_schemas.py -v
-
-# Processor tests (GPU required)
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_chat.py tests/test_streaming.py tests/test_duplex.py -v -s
-
-# API integration tests (service must be running)
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_api.py -v -s
-```

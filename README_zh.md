@@ -38,11 +38,10 @@ MiniCPM-o 4.5 是 MiniCPM-o 系列中最新、能力最强的模型。该模型�
 | 模式 | 特点 | 输入输出模态 | 范式
 |------|------|------|------
 | **Turn-based Chat (轮次对话)** | 低延迟流式交互，按钮触发回复，支持离线视频、音频理解分析，回复正确性好，基础能力强 | 音频+文本+视频输入，音频+文本输出 | 轮次对话范式
-| **Half-Duplex Audio (半双工语音)** | VAD 自动检测语音边界，无需按钮即可进行语音通话，语音生成质量更高，回复准确性强，用户获得感好 | 语音输入，文本+语音输出 | 半双工范式
 | **Omnimodal Full-Duplex (全模态全双工)** | 全模态全双工实时交互，视觉语音输入、语音输出同时发生，模型完全自主决定说话时机，前沿能力强大 | 视觉+语音输入，文本+语音输出 | 全双工范式
 | **Audio Full-Duplex (语音全双工)** | 语音全双工实时交互，语音输入和语音输出同时发生，模型完全自主决定说话时机，前沿能力强大 | 语音输入，文本+语音输出 | 全双工范式
 
-目前支持的 4 种模式共享同一个模型实例，支持毫秒级热切换（< 0.1ms）。
+目前支持的 3 种模式共享同一个模型实例，支持毫秒级热切换（< 0.1ms）。
 
 **其他特性：**
 
@@ -80,27 +79,8 @@ Worker Pool (:22400+)
 1. 确保你有一张显存大于 28GB 的 NVIDIA GPU。
 2. 确保你的机器安装了 Linux 操作系统。
 
-### 安装 FFmpeg
-
-FFmpeg 用于视频帧提取 和 推理结果可视化。更多信息请访问 [FFmpeg 官网](https://ffmpeg.org/)。
-
-**macOS (Homebrew):**
-```bash
-brew install ffmpeg
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update && sudo apt install ffmpeg
-```
-
-**验证安装:**
-```bash
-ffmpeg -version
-```
-
 ### 部署步骤
-常规部署请使用下面的 Docker Compose 文件。旧的裸机 Python 安装不是推荐路径；如果需要裸机调试，请对齐 Dockerfile 和 entrypoint，而不是把 README 命令当作权威来源。
+快速部署方式是 Docker Compose。裸机部署请参考 Dockerfile 和 entrypoint 来确定依赖与启动方式，并保持 Gateway、Python Worker、Backend 三个启动环节一致。
 
 **部署架构**
 
@@ -114,9 +94,9 @@ Browser -> Gateway -> Python Worker -> Backend
 - **Python Worker** 暴露 worker WebSocket/health API，维护 worker 状态，并把 runtime protocol 消息转发给 backend server。
 - **Backend** 负责实际模型推理。Backend 可以是 PyTorch 实现（`py_backend/server.py`），也可以是 C++ 实现（`llama.cpp-omni` 的 `llama-omni-server`）。
 
-**5. Docker 部署（推荐）**
+**Docker 部署（推荐）**
 
-Docker 是当前仓库的部署权威来源。部署请使用 Compose 文件；具体启动流程、端口、挂载、健康检查和 backend 参数，请直接查看 `docker-compose*.yml`、`docker/Dockerfile.*` 和 `docker/entrypoint-*.sh`。
+Docker Compose 是当前维护的快速部署方式。部署请使用 Compose 文件；具体启动流程、端口、挂载、健康检查和 backend 参数，请直接查看 `docker-compose*.yml`、`docker/Dockerfile.*` 和 `docker/entrypoint-*.sh`。
 
 **前置条件：**
 - Docker 和 Compose v2 插件
@@ -158,7 +138,7 @@ C++ backend 推荐入口是 `docker-compose.cpp.yml`。它使用 `docker/Dockerf
 
 **裸机部署：**
 
-裸机命令不是当前主安装路径，因为不同机器的 CUDA、Python、编译器和模型目录差异很大。如果需要裸机调试，请对齐 Dockerfile 和 entrypoint。
+裸机部署时，请把 Docker 里的依赖和 entrypoint 启动命令映射到宿主机环境，并保持 Gateway、Python Worker、Backend 三段启动流程一致。
 
 **停止 Docker 服务：**
 
@@ -208,27 +188,12 @@ minicpmo45_service/
 ├── MiniCPMO45/               # 模型核心推理代码
 ├── static/                   # 前端页面
 ├── resources/                # 资源文件（参考音频等）
-├── tests/                    # 测试
 └── tmp/                      # 运行时日志和 PID 文件
 ```
 
-**前端路由设定**
-
-| 页面 | URL |
-|------|-----|
-| 轮次对话 | https://localhost:8006 |
-| 半双工语音 | https://localhost:8006/half_duplex |
-| 全模态全双工 | https://localhost:8006/omni |
-| 语音全双工 | https://localhost:8006/audio_duplex |
-| 仪表盘 | https://localhost:8006/admin |
-| 文档 / Realtime API 文档 | https://localhost:8006/docs |
-
-<br/>
-<br/>
-
 ## 配置说明
 
-`config.json` 只作为裸机直接启动进程时的 fallback，或在容器里显式挂载该文件时提供默认值。Docker 部署默认不会把宿主机的 `config.json` 拷进镜像；部署行为以 Compose、entrypoint、环境变量和 CLI 参数为准。
+`config.json` 为裸机直接启动进程提供默认配置；如果在容器里显式挂载该文件，也可以作为容器内默认值。Docker 部署默认不会把宿主机的 `config.json` 拷进镜像；部署行为以 Compose、entrypoint、环境变量和 CLI 参数为准。
 
 如果需要裸机调试，请从 `config.example.json` 和 `config.py` 开始看。CLI 参数优先级高于 `config.json`，缺省字段会回落到 Pydantic 默认值。
 
@@ -241,17 +206,3 @@ minicpmo45_service/
 | 模型加载时间 | ~16s | ~16s + ~5 min（有缓存）/ ~15 min（无缓存）|
 | 模式切换延迟 | < 0.1ms | < 0.1ms |
 | Omni Full-Duplex 单 unit 延迟（A100） | ~0.9s | **~0.5s** |
-
-## 测试
-
-```bash
-
-# Schema 单元测试（无需 GPU）
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_schemas.py -v
-
-# Processor 测试（需要 GPU）
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_chat.py tests/test_streaming.py tests/test_duplex.py -v -s
-
-# API 集成测试（需要先启动服务）
-PYTHONPATH=. .venv/base/bin/python -m pytest tests/test_api.py -v -s
-```
