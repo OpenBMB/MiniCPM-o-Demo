@@ -1,7 +1,15 @@
 # MiniCPM-o Realtime API 协议
 
-本文记录当前 Docker 分支实际实现的 Realtime API。公开文档源位于
-`docs-app/content/docs/zh/realtime-api/`，Docker gateway 会把该目录构建到 `/docs`。
+本文记录当前实现的 Realtime API。公开文档源位于
+`docs-app/content/docs/zh/realtime-api/`，Gateway 镜像会把该目录构建到 `/docs`。
+
+公网客户端只连接 Gateway。实际链路为：
+
+```text
+Client -> Gateway -> Python Worker -> Backend
+```
+
+Gateway 负责排队、worker 分配、session 录制和 WebSocket 转发；Worker 暴露内部 runtime WebSocket，并把 `session.init` / `input.append` / `session.close` 转发给 backend（C++ `llama-omni-server` 或 PyTorch backend）。
 
 ## 连接端点
 
@@ -23,6 +31,8 @@ wss://host/v1/realtime?mode={chat|video|audio}
 | `video` | 连续音频，可携带视频帧 | `listen`、文本增量、音频增量 | 会话总时长 300 秒 |
 | `audio` | 连续音频 | `listen`、文本增量、音频增量 | 会话总时长 600 秒 |
 
+`chat` 在 backend runtime 中映射为 `turn_based`；`video` 与 `audio` 都映射为 `full_duplex`。
+
 ## 事件模型
 
 客户端事件：
@@ -39,6 +49,8 @@ wss://host/v1/realtime?mode={chat|video|audio}
 - `response.done`：仅 chat 模式使用，表示一次 turn 输出完成。
 - `session.closed`：session 已关闭。
 - `error`：错误事件。
+
+`session.created.mode` 表示 backend runtime mode，而不是 URL 中的公开 API mode。
 
 ## 基本时序
 

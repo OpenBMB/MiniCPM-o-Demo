@@ -4,6 +4,7 @@ description: "Current public WebSocket protocol for the MiniCPM-o Realtime API"
 ---
 
 The MiniCPM-o Realtime API exposes turn-based chat, video full-duplex, and audio full-duplex through one WebSocket endpoint.
+Public clients connect only to the Gateway. The Gateway handles queueing, worker assignment, session recording, and forwarding; the Python Worker then forwards runtime protocol messages to the actual backend, either C++ `llama-omni-server` or the PyTorch backend.
 
 ## API Host
 
@@ -30,6 +31,8 @@ wss://host/v1/realtime?mode={chat|video|audio}
 | Chat | `wss://host/v1/realtime?mode=chat` | One turn of `messages` | Text deltas, optional audio, `response.done` | Supports streaming and non-streaming |
 | Video full-duplex | `wss://host/v1/realtime?mode=video` | Continuous audio, optionally with video frames | `listen`, text deltas, audio deltas | 300 second session limit |
 | Audio full-duplex | `wss://host/v1/realtime?mode=audio` | Continuous audio | `listen`, text deltas, audio deltas | 600 second session limit |
+
+`mode=chat` maps to backend runtime mode `turn_based`; both `mode=video` and `mode=audio` map to `full_duplex`, with the Gateway request type and session duration limit distinguishing the two public modes.
 
 All modes use the same event names:
 
@@ -166,6 +169,8 @@ After this event, the client should not send more `input.append` events.
 ```
 
 The session has been initialized.
+
+The `mode` field is the backend runtime mode, not the public API mode from the URL: `mode=chat` usually returns `turn_based`, while `mode=video` / `mode=audio` usually return `full_duplex`.
 
 ### response.output.delta
 

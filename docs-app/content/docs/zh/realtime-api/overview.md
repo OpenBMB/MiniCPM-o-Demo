@@ -4,6 +4,7 @@ description: "MiniCPM-o Realtime API 当前公开 WebSocket 协议"
 ---
 
 MiniCPM-o Realtime API 通过一个 WebSocket 入口提供 turn-based chat、视频全双工和音频全双工三种模式。
+公网客户端只连接 Gateway；Gateway 负责排队、分配 worker、会话录制与转发，Python Worker 再把 runtime 协议消息转发给实际 backend（C++ `llama-omni-server` 或 PyTorch backend）。
 
 ## API Host
 
@@ -30,6 +31,8 @@ wss://host/v1/realtime?mode={chat|video|audio}
 | Chat | `wss://host/v1/realtime?mode=chat` | 一次 turn 的 `messages` | 文本增量、可选音频、`response.done` | 支持 streaming 和 non-streaming |
 | 视频双工 | `wss://host/v1/realtime?mode=video` | 连续音频，可携带视频帧 | `listen`、文本增量、音频增量 | 会话总时长 300 秒 |
 | 音频双工 | `wss://host/v1/realtime?mode=audio` | 连续音频 | `listen`、文本增量、音频增量 | 会话总时长 600 秒 |
+
+`mode=chat` 在 backend runtime 中映射为 `turn_based`；`mode=video` 和 `mode=audio` 都映射为 `full_duplex`，二者由 Gateway 的请求类型和会话时长限制区分。
 
 三种模式共享同一套事件命名：
 
@@ -166,6 +169,8 @@ Chat 模式：
 ```
 
 表示会话初始化完成。
+
+`mode` 字段表示 backend runtime mode，而不是 URL 中的公开 API mode：`mode=chat` 通常返回 `turn_based`，`mode=video` / `mode=audio` 通常返回 `full_duplex`。
 
 ### response.output.delta
 

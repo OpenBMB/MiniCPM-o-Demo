@@ -1,8 +1,18 @@
 # MiniCPM-o Realtime API Protocol
 
-This document records the Realtime API implemented by the current Docker branch. The public
-documentation source lives under `docs-app/content/docs/en/realtime-api/`, and the Docker gateway
+This document records the current Realtime API implementation. The public
+documentation source lives under `docs-app/content/docs/en/realtime-api/`, and the Gateway image
 builds it into `/docs`.
+
+Public clients connect only to the Gateway. The actual chain is:
+
+```text
+Client -> Gateway -> Python Worker -> Backend
+```
+
+The Gateway handles queueing, worker assignment, session recording, and WebSocket forwarding. The
+Worker exposes internal runtime WebSockets and forwards `session.init` / `input.append` /
+`session.close` to the backend, either C++ `llama-omni-server` or the PyTorch backend.
 
 ## Endpoint
 
@@ -25,6 +35,8 @@ and should not rely on a specific format.
 | `video` | Continuous audio, optionally with video frames | `listen`, text deltas, audio deltas | 300 second session limit |
 | `audio` | Continuous audio | `listen`, text deltas, audio deltas | 600 second session limit |
 
+`chat` maps to backend runtime mode `turn_based`; both `video` and `audio` map to `full_duplex`.
+
 ## Event Model
 
 Client events:
@@ -41,6 +53,8 @@ Server events:
 - `response.done`: chat mode only; marks one turn response as completed.
 - `session.closed`: session closed.
 - `error`: error event.
+
+`session.created.mode` is the backend runtime mode, not the public API mode from the URL.
 
 ## Lifecycle
 
