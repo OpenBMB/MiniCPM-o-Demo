@@ -1597,6 +1597,7 @@ async function startSession() {
     const preparePayload = {
         config: { length_penalty: parseFloat(document.getElementById('omniLengthPenalty').value) || 1.0 },
         max_slice_nums: getEffectiveMaxSliceNums(),
+        use_tts: document.getElementById('ttsEnabled').checked,
     };
     const refBase64 = refAudio.getBase64();
     if (refBase64) preparePayload.ref_audio_base64 = refBase64;
