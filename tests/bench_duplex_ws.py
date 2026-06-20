@@ -1,6 +1,6 @@
 """Duplex worker-runtime WebSocket A/B 对比基准测试（多轮统计版）
 
-直接连接 Worker 的 /v1/worker/sessions/{session_id}/duplex 端点，发送真实音频，
+直接连接 Worker 的 /v1/worker/duplex 端点，发送真实音频，
 对 normal 和 compile 模式各跑 N_ROUNDS 轮，汇总 LISTEN/SPEAK 稳态统计。
 
 用法:
@@ -76,8 +76,7 @@ async def run_duplex_session(
     result = SessionResult(worker_name=worker_name, round_idx=round_idx)
 
     try:
-        session_id = f"bench_{worker_name}_{round_idx}_{int(time.time() * 1000)}"
-        ws_url = f"{worker_base_url}/v1/worker/sessions/{session_id}/duplex"
+        ws_url = f"{worker_base_url}/v1/worker/duplex"
         async with websockets.connect(ws_url, max_size=50 * 1024 * 1024) as ws:
             ref_audio_b64 = base64.b64encode(ref_audio.astype(np.float32).tobytes()).decode()
 

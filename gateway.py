@@ -75,6 +75,12 @@ def _sanitize_session_id(session_id: str) -> str:
     return session_id
 
 
+def _sessions_root() -> str:
+    from config import get_config
+    cfg = get_config()
+    return os.path.realpath(os.path.join(_BASE_DIR, cfg.data_dir, "sessions"))
+
+
 def _client_ip_from_ws(ws: WebSocket) -> Optional[str]:
     xff = ws.headers.get("x-forwarded-for")
     if xff:
@@ -85,7 +91,6 @@ def _client_ip_from_ws(ws: WebSocket) -> Optional[str]:
 def _identity_dict(
     ws: WebSocket,
     *,
-    session_id: str,
     source_channel: str,
     source_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -105,8 +110,6 @@ def _identity_dict(
         or ws.cookies.get("page_session_id")
     )
     return {
-        "session_id": session_id,
-        "gateway_session_id": session_id,
         "client_id": client_id,
         "page_session_id": page_session_id,
         "client_ip": _client_ip_from_ws(ws),
@@ -118,20 +121,6 @@ def _identity_dict(
         "page_route": ws.query_params.get("page_route"),
         "client_surface": ws.query_params.get("client_surface"),
     }
-
-
-def _worker_identity_query(
-    ws: WebSocket,
-    *,
-    session_id: str,
-    source_channel: str,
-    source_mode: Optional[str] = None,
-) -> str:
-    """Build query params passed to worker so recordings can be linked to clients/pages."""
-    params = _identity_dict(
-        ws, session_id=session_id, source_channel=source_channel, source_mode=source_mode
-    )
-    return urlencode({k: v for k, v in params.items() if v})
 
 
 # ============ 全局变量 ============
@@ -317,7 +306,6 @@ async def _api_worker_passthrough_ws(
     request_type: str,
     worker_status: GatewayWorkerStatus,
     worker_path: str,
-    session_id: str,
     source_channel: str,
     source_mode: Optional[str],
     max_duration_s: Optional[float] = None,
@@ -328,11 +316,10 @@ async def _api_worker_passthrough_ws(
         await ws.close(code=1013, reason="Service not ready")
         return
 
-    session_id = _sanitize_session_id(session_id)
     await ws.accept()
 
     try:
-        ticket, future = worker_pool.enqueue(request_type, session_id=session_id)
+        ticket, future = worker_pool.enqueue(request_type)
     except WorkerPool.QueueFullError:
         await ws.send_json({
             "type": "error",
@@ -370,7 +357,7 @@ async def _api_worker_passthrough_ws(
                     worker_pool.cancel(ticket.ticket_id)
                     return
         except (WebSocketDisconnect, Exception) as exc:
-            logger.info("API WS disconnected during queue: session=%s (%s)", session_id, exc)
+            logger.info("API WS disconnected during queue: ticket=%s (%s)", ticket.ticket_id, exc)
             worker_pool.cancel(ticket.ticket_id)
             return
         if worker is None and future.done():
@@ -385,7 +372,7 @@ async def _api_worker_passthrough_ws(
         return
 
     await ws.send_json({"type": "session.queue_done"})
-    worker.mark_busy(worker_status, request_type, session_id=session_id)
+    worker.mark_busy(worker_status, request_type, ticket_id=ticket.ticket_id)
     task_start = datetime.now()
     worker_ws = None
     recorder = None
@@ -395,52 +382,107 @@ async def _api_worker_passthrough_ws(
         import websockets
         identity = _identity_dict(
             ws,
-            session_id=session_id,
             source_channel=source_channel,
             source_mode=source_mode,
         )
         identity_qs = urlencode({k: v for k, v in identity.items() if v})
 
         # ---- session 录制(旁路,fail-safe:任何异常都不影响转发主路径)----
+        recording_enabled = False
+        recorder_cls = None
+        recorder_mode = "turn_based" if request_type == "chat" else "full_duplex"
+        recorder_data_dir = None
+        recorder_worker = {"host": worker.host, "port": worker.port, "gpu_id": getattr(worker, "gpu_id", None)}
+        pending_record_frames = []
         recorder = None
         try:
             from config import get_config
             _cfg = get_config()
             if _cfg.recording.enabled:
                 from gateway_modules.session_recording import SessionRecorder
-                _mode = "turn_based" if request_type == "chat" else "full_duplex"
-                recorder = SessionRecorder(
-                    session_id, _mode,
-                    data_dir=os.path.join(_BASE_DIR, _cfg.data_dir),
-                    identity=identity,
-                    worker={"host": worker.host, "port": worker.port, "gpu_id": getattr(worker, "gpu_id", None)},
-                )
+                recording_enabled = True
+                recorder_cls = SessionRecorder
+                recorder_data_dir = os.path.join(_BASE_DIR, _cfg.data_dir)
         except Exception:
+            recording_enabled = False
+            recorder_cls = None
+            recorder_data_dir = None
             recorder = None
 
         ws_url = f"ws://{worker.host}:{worker.port}{worker_path}?{identity_qs}"
         worker_ws = await websockets.connect(ws_url, open_timeout=5, max_size=128 * 1024 * 1024)
 
+        def record_or_buffer(direction: str, frame: Dict[str, Any]) -> None:
+            nonlocal recorder
+            if not recording_enabled:
+                return
+            if recorder is None:
+                pending_record_frames.append((direction, frame))
+                return
+            try:
+                recorder.record(direction, frame)
+            except Exception:
+                pass
+
+        def ensure_recorder(session_id: Optional[str]) -> None:
+            nonlocal recorder
+            if (
+                not recording_enabled
+                or recorder is not None
+                or recorder_cls is None
+                or recorder_data_dir is None
+                or not session_id
+            ):
+                return
+            safe_session_id = _sanitize_session_id(session_id)
+            recording_identity = dict(identity)
+            recording_identity["session_id"] = safe_session_id
+            try:
+                recorder = recorder_cls(
+                    safe_session_id,
+                    recorder_mode,
+                    data_dir=recorder_data_dir,
+                    identity=recording_identity,
+                    worker=recorder_worker,
+                )
+            except Exception:
+                recorder = None
+                return
+            buffered = list(pending_record_frames)
+            pending_record_frames.clear()
+            for direction, frame in buffered:
+                try:
+                    recorder.record(direction, frame)
+                except Exception:
+                    pass
+
         async def client_to_worker() -> None:
             try:
                 async for raw in ws.iter_text():
                     await worker_ws.send(raw)
-                    if recorder is not None:
-                        try:
-                            recorder.record("up", json.loads(raw))
-                        except Exception:
-                            pass
+                    try:
+                        record_or_buffer("up", json.loads(raw))
+                    except Exception:
+                        pass
             except WebSocketDisconnect:
                 pass
 
         async def worker_to_client() -> None:
             async for raw in worker_ws:
-                await ws.send_text(raw)
                 try:
                     msg = json.loads(raw)
-                    if recorder is not None:
-                        recorder.record("down", msg)
-                    if msg.get("type") == "session.closed":
+                    msg_type = msg.get("type")
+                    if msg_type == "session.created":
+                        ensure_recorder(msg.get("session_id"))
+                    raw_to_send = raw
+                except Exception:
+                    msg = None
+                    raw_to_send = raw
+
+                await ws.send_text(raw_to_send)
+                try:
+                    record_or_buffer("down", msg if msg is not None else json.loads(raw_to_send))
+                    if msg is not None and msg.get("type") == "session.closed":
                         session_closed.set()
                         return
                 except Exception:
@@ -456,7 +498,7 @@ async def _api_worker_passthrough_ws(
                 await asyncio.sleep(max_duration_s)
                 if session_closed.is_set():
                     return
-                logger.info("API session timeout (%ss): session=%s", max_duration_s, session_id)
+                logger.info("API session timeout (%ss): ticket=%s", max_duration_s, ticket.ticket_id)
                 await ws.send_json({"type": "session.closed", "reason": "timeout"})
                 session_closed.set()
 
@@ -469,7 +511,7 @@ async def _api_worker_passthrough_ws(
             task.result()
 
     except Exception as exc:
-        logger.error("API worker passthrough failed: session=%s error=%s", session_id, exc, exc_info=True)
+        logger.error("API worker passthrough failed: ticket=%s error=%s", ticket.ticket_id, exc, exc_info=True)
         try:
             await ws.send_json({
                 "type": "error",
@@ -869,19 +911,19 @@ _BASE_DIR = os.path.dirname(__file__)
 
 
 def _list_active_sessions_payload() -> Dict[str, Any]:
-    """Gateway 当前占用 Worker 的会话列表（Admin / 测试共用）。"""
+    """Gateway 当前占用 Worker 的请求列表（Admin / 测试共用）。"""
     if worker_pool is None:
         raise HTTPException(status_code=503, detail="Service not ready")
     sessions: List[Dict[str, Any]] = []
     for w in worker_pool.workers.values():
-        if not w.current_session_id:
+        if not w.current_ticket_id:
             continue
         last_active = w.last_heartbeat or w.task_started_at or datetime.now()
         sessions.append(
             {
-                "session_id": w.current_session_id,
+                "ticket_id": w.current_ticket_id,
                 "worker_id": w.worker_id,
-                "messages_hash": w.cached_hash or "",
+                "messages_hash": getattr(w, "cached_hash", "") or "",
                 "last_active": last_active.isoformat()
                 if hasattr(last_active, "isoformat")
                 else str(last_active),
@@ -905,12 +947,10 @@ async def list_active_sessions_api():
 def _session_dir(session_id: str) -> str:
     """获取 session 目录的绝对路径（含路径安全校验）"""
     safe_id = _sanitize_session_id(session_id)
-    from config import get_config
-    cfg = get_config()
-    base = os.path.join(_BASE_DIR, cfg.data_dir, "sessions", safe_id)
+    sessions_root = _sessions_root()
+    base = os.path.join(sessions_root, safe_id)
     resolved = os.path.realpath(base)
-    sessions_root = os.path.realpath(os.path.join(_BASE_DIR, cfg.data_dir, "sessions"))
-    if not resolved.startswith(sessions_root):
+    if os.path.commonpath([sessions_root, resolved]) != sessions_root:
         raise HTTPException(status_code=400, detail="Invalid session_id")
     return resolved
 
@@ -1287,7 +1327,6 @@ app.mount("/docs", StaticFiles(directory=docs_static_dir, html=True, check_dir=F
 async def realtime_ws(ws: WebSocket):
     """Unified API V2 WebSocket for chat and realtime duplex modes."""
 
-    session_id = f"rt_{int(datetime.now().timestamp()*1000)}"
     mode = ws.query_params.get("mode", "video")
 
     if mode == "chat":
@@ -1298,8 +1337,7 @@ async def realtime_ws(ws: WebSocket):
             ws,
             request_type="chat",
             worker_status=GatewayWorkerStatus.BUSY_CHAT,
-            worker_path=f"/v1/worker/sessions/{session_id}/chat",
-            session_id=session_id,
+            worker_path="/v1/worker/chat",
             source_channel="realtime_api",
             source_mode=mode,
         )
@@ -1316,8 +1354,7 @@ async def realtime_ws(ws: WebSocket):
         ws,
         request_type=request_type,
         worker_status=GatewayWorkerStatus.DUPLEX_ACTIVE,
-        worker_path=f"/v1/worker/sessions/{session_id}/duplex",
-        session_id=session_id,
+        worker_path="/v1/worker/duplex",
         source_channel="realtime_api",
         source_mode=mode,
         max_duration_s=max_duration_s,

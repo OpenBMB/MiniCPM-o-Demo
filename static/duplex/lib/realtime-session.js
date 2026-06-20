@@ -194,7 +194,7 @@ export class RealtimeSession {
                     } else if (msg.type === 'session.created') {
                         this._queueReject = null;
                         this.sessionId = msg.session_id || '';
-                        this.recordingSessionId = msg.recording_session_id || this.sessionId;
+                        this.recordingSessionId = this.sessionId;
                         this._logProtoEvent('server', 'session.created',
                             `session_id=${this.sessionId}`, msg);
                         this.onQueueUpdate(null);
