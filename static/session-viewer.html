@@ -229,6 +229,17 @@
         .ev-frame { max-height: 72px; border-radius: 4px; margin: 4px 4px 0 0; vertical-align: top; }
         .ev-audio { margin-top: 4px; }
         .ev-audio .ev-sub { display: block; margin-bottom: 2px; }
+        .init-summary { display: grid; gap: 8px; }
+        .init-row { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+        .init-key { min-width: 108px; color: #6b7280; font-size: 12px; font-weight: 600; }
+        .init-val { color: #111827; font-size: 12.5px; }
+        .init-pill {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 2px 8px; border-radius: 999px;
+            background: rgba(17,24,39,0.06); color: #374151; font-size: 12px;
+        }
+        .init-detail summary { cursor: pointer; color: #6b7280; font-size: 12px; }
+        .frontend-replay-empty { color: #9ca3af; font-size: 12px; }
         @media (max-width: 640px) {
             .ev { grid-template-columns: 36px 1fr; }
             .ev-ts, .ev-label { grid-column: 2; }
@@ -306,6 +317,7 @@
         document.title = `${meta.title||SID} — Session Viewer`;
 
         renderInfo(meta);
+        await renderFrontendReplay();
         // 用户评语(可选,缺失则不渲染)
         try {
             const cr = await fetch(`/api/sessions/${SID}/comment`);
@@ -331,6 +343,24 @@
     function blobUrl(ref) {
         if (typeof ref !== 'string' || !ref) return null;
         return aUrl(ref.startsWith('@') ? ref.slice(1) : ref);
+    }
+
+    async function renderFrontendReplay() {
+        const host = document.getElementById('area-frontend');
+        const candidates = [
+            { rel: 'frontend_replay.webm', type: 'video/webm' },
+            { rel: 'frontend_replay.mp4', type: 'video/mp4' },
+        ];
+        let hit = null;
+        for (const c of candidates) {
+            if (await assetExists(c.rel)) { hit = c; break; }
+        }
+        if (!hit) return;
+        host.innerHTML = `
+            <section class="area-sec">
+                <div class="area-hd">Frontend replay <span class="sub">${esc(hit.rel)}</span></div>
+                <video controls playsinline preload="metadata" src="${aUrl(hit.rel)}" type="${hit.type}"></video>
+            </section>`;
     }
 
     /* ══════════════ Area 1: Session info ══════════════ */
@@ -380,7 +410,7 @@
             const dirCls = dir === 'up' ? 'ev-up' : 'ev-down';
 
             let label, body = '';
-            if (type === 'session.init')      { label = 'session.init';  body = miniJson(f.payload); }
+            if (type === 'session.init')      { label = 'session.init';  body = renderSessionInit(f.payload || {}); }
             else if (type === 'session.created') { label = 'session.created'; body = `<code>${esc(f.session_id||'')}</code> <span class="ev-sub">${esc(f.mode||'')}</span>`; }
             else if (type === 'session.closed')  { label = 'session.closed'; body = `<span class="ev-sub">${esc(f.reason||'')}</span>`; }
             else if (type === 'input.append') {
@@ -423,6 +453,68 @@
     function miniJson(o) {
         if (o == null) return '';
         try { return `<pre class="ev-json">${esc(JSON.stringify(o))}</pre>`; } catch { return ''; }
+    }
+    function approxBytesFromBase64(s) {
+        if (typeof s !== 'string') return 0;
+        const cleanLen = s.replace(/\s/g, '').length;
+        return Math.max(0, Math.floor(cleanLen * 3 / 4));
+    }
+    function humanBytes(n) {
+        if (!Number.isFinite(n) || n <= 0) return '0 B';
+        if (n < 1024) return `${n} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    }
+    function audioRefSummary(payload, key) {
+        const v = payload?.[key] ?? payload?.voice?.[key] ?? payload?.defaults?.[key];
+        if (typeof v === 'string' && v) {
+            if (v.startsWith('@')) return `<span class="init-pill">${esc(key)} ${esc(v)}</span>`;
+            return `<span class="init-pill">${esc(key)} inline base64, ${humanBytes(approxBytesFromBase64(v))}</span>`;
+        }
+        return '';
+    }
+    function displayPayload(value, key) {
+        const audioKeys = new Set(['ref_audio_base64', 'tts_ref_audio_base64', 'ref_audio', 'tts_ref_audio']);
+        if (audioKeys.has(key) && typeof value === 'string' && value && !value.startsWith('@')) {
+            return `<inline base64 ${humanBytes(approxBytesFromBase64(value))}>`;
+        }
+        if (Array.isArray(value)) return value.map((v) => displayPayload(v, key));
+        if (value && typeof value === 'object') {
+            const out = {};
+            for (const [k, v] of Object.entries(value)) out[k] = displayPayload(v, k);
+            return out;
+        }
+        return value;
+    }
+    function renderSessionInit(payload) {
+        const systemPrompt = payload.system_prompt || payload.instructions || '';
+        const config = payload.config || payload.duplex || {};
+        const rows = [];
+        if (systemPrompt) {
+            rows.push(`<div class="init-row"><span class="init-key">system</span><span class="init-val">${esc(systemPrompt)}</span></div>`);
+        }
+        rows.push(`<div class="init-row"><span class="init-key">mode</span><span class="init-val">${esc(payload.mode || 'full_duplex')}</span></div>`);
+        if (payload.max_slice_nums != null) {
+            rows.push(`<div class="init-row"><span class="init-key">max slices</span><span class="init-val">${esc(String(payload.max_slice_nums))}</span></div>`);
+        }
+        if (payload.use_tts != null) {
+            rows.push(`<div class="init-row"><span class="init-key">tts</span><span class="init-val">${payload.use_tts ? 'enabled' : 'disabled'}</span></div>`);
+        }
+        const configText = Object.keys(config).length ? JSON.stringify(config) : '';
+        if (configText) {
+            rows.push(`<div class="init-row"><span class="init-key">config</span><span class="init-val">${esc(configText)}</span></div>`);
+        }
+        const audioRefs = [
+            audioRefSummary(payload, 'ref_audio_base64'),
+            audioRefSummary(payload, 'tts_ref_audio_base64'),
+            audioRefSummary(payload, 'ref_audio'),
+            audioRefSummary(payload, 'tts_ref_audio'),
+        ].filter(Boolean);
+        if (audioRefs.length) {
+            rows.push(`<div class="init-row"><span class="init-key">reference audio</span><span class="init-val">${audioRefs.join(' ')}</span></div>`);
+        }
+        rows.push(`<details class="init-detail"><summary>Payload JSON</summary>${miniJson(displayPayload(payload))}</details>`);
+        return `<div class="init-summary">${rows.join('')}</div>`;
     }
     function summarizeMessages(messages) {
         try {
