@@ -41,7 +41,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ---- ② 其余轻依赖（~1G），requirements 变才重跑 ----
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+    pip install "minicpmo-utils[all]>=1.0.5" \
+    && grep -vE '^[[:space:]]*minicpmo-utils(\[all\])?>=' requirements.txt > /tmp/requirements-worker.txt \
+    && pip install -r /tmp/requirements-worker.txt \
+    && rm /tmp/requirements-worker.txt
 
 # ---- ③ 代码放最后：最常变，但只影响这一层；前两层全命中缓存 ----
 COPY . .
