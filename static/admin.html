@@ -157,8 +157,8 @@
                 <input type="number" id="etaChat" style="width:80px;background:#0f3460;border:1px solid #2a2a4a;border-radius:6px;padding:6px;color:#e0e0e0" step="1">
             </div>
             <div>
-                <label style="font-size:12px;color:#888">Streaming (s)</label><br>
-                <input type="number" id="etaStreaming" style="width:80px;background:#0f3460;border:1px solid #2a2a4a;border-radius:6px;padding:6px;color:#e0e0e0" step="1">
+                <label style="font-size:12px;color:#888">Half Duplex (s)</label><br>
+                <input type="number" id="etaHalfDuplex" style="width:80px;background:#0f3460;border:1px solid #2a2a4a;border-radius:6px;padding:6px;color:#e0e0e0" step="1">
             </div>
             <div>
                 <label style="font-size:12px;color:#888">Audio Duplex (s)</label><br>
@@ -182,7 +182,7 @@
     <div class="card">
         <table>
             <thead>
-                <tr><th>Position</th><th>Type</th><th>Session</th><th>ETA</th><th>Waiting</th><th>Enqueued</th><th>操作</th></tr>
+                <tr><th>Position</th><th>Type</th><th>Ticket</th><th>ETA</th><th>Waiting</th><th>Enqueued</th><th>操作</th></tr>
             </thead>
             <tbody id="queueTable"></tbody>
         </table>
@@ -200,11 +200,11 @@
     </div>
 
     <!-- 会话映射 -->
-    <h2>会话映射</h2>
+    <h2>运行中的请求</h2>
     <div class="card">
         <table>
             <thead>
-                <tr><th>Session ID</th><th>Worker</th><th>Hash (前16位)</th><th>最后活跃</th><th>操作</th></tr>
+                <tr><th>Ticket ID</th><th>Worker</th><th>Hash (前16位)</th><th>最后活跃</th></tr>
             </thead>
             <tbody id="sessionsTable"></tbody>
         </table>
@@ -283,7 +283,7 @@ async function loadWorkers() {
                     <div class="name">${w.worker_id}</div>
                     <div class="detail">GPU ${w.gpu_id} | :${w.port}</div>
                     <div class="detail">Requests: ${w.total_requests}</div>
-                    ${w.current_session_id ? `<div class="detail">Session: ${w.current_session_id}</div>` : ''}
+                    ${w.current_ticket_id ? `<div class="detail">Ticket: ${w.current_ticket_id}</div>` : ''}
                     <div class="wstatus ${statusClass}">${w.status}</div>
                 </div>
             `;
@@ -322,16 +322,15 @@ async function loadSessions() {
         const data = await resp.json();
         const tbody = document.getElementById('sessionsTable');
         if (data.sessions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="color:#555">暂无活跃会话</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" style="color:#555">暂无运行中的请求</td></tr>';
             return;
         }
         tbody.innerHTML = data.sessions.map(s => `
             <tr>
-                <td>${s.session_id}</td>
+                <td>${s.ticket_id}</td>
                 <td>${s.worker_id}</td>
                 <td>${s.messages_hash}</td>
                 <td>${new Date(s.last_active).toLocaleString()}</td>
-                <td><button class="btn btn-danger" onclick="deleteSession('${s.session_id}')">删除</button></td>
             </tr>
         `).join('');
     } catch (e) {
@@ -344,14 +343,14 @@ async function loadEtaConfig() {
         const resp = await fetch(`${API_BASE}/api/config/eta`);
         const data = await resp.json();
         document.getElementById('etaChat').value = data.config.eta_chat_s;
-        document.getElementById('etaStreaming').value = data.config.eta_streaming_s;
+        document.getElementById('etaHalfDuplex').value = data.config.eta_half_duplex_s;
         document.getElementById('etaAudioDuplex').value = data.config.eta_audio_duplex_s;
         document.getElementById('etaOmniDuplex').value = data.config.eta_omni_duplex_s;
         document.getElementById('etaEmaAlpha').value = data.ema_alpha;
 
         const parts = [];
         if (data.ema_chat_samples > 0) parts.push(`Chat EMA: ${data.ema_chat_s?.toFixed(1)}s (${data.ema_chat_samples} samples)`);
-        if (data.ema_streaming_samples > 0) parts.push(`Streaming EMA: ${data.ema_streaming_s?.toFixed(1)}s (${data.ema_streaming_samples} samples)`);
+        if (data.ema_half_duplex_samples > 0) parts.push(`Half Duplex EMA: ${data.ema_half_duplex_s?.toFixed(1)}s (${data.ema_half_duplex_samples} samples)`);
         if (data.ema_audio_duplex_samples > 0) parts.push(`Audio Duplex EMA: ${data.ema_audio_duplex_s?.toFixed(1)}s (${data.ema_audio_duplex_samples} samples)`);
         if (data.ema_omni_duplex_samples > 0) parts.push(`Omni Duplex EMA: ${data.ema_omni_duplex_s?.toFixed(1)}s (${data.ema_omni_duplex_samples} samples)`);
         document.getElementById('etaEmaInfo').textContent = parts.length ? parts.join(' | ') : 'No EMA data yet';
@@ -367,7 +366,7 @@ async function saveEtaConfig() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 eta_chat_s: parseFloat(document.getElementById('etaChat').value),
-                eta_streaming_s: parseFloat(document.getElementById('etaStreaming').value),
+                eta_half_duplex_s: parseFloat(document.getElementById('etaHalfDuplex').value),
                 eta_audio_duplex_s: parseFloat(document.getElementById('etaAudioDuplex').value),
                 eta_omni_duplex_s: parseFloat(document.getElementById('etaOmniDuplex').value),
                 ema_alpha: parseFloat(document.getElementById('etaEmaAlpha').value),
@@ -397,7 +396,7 @@ async function loadQueue() {
                 <tr>
                     <td>#${item.position}</td>
                     <td>${item.request_type}</td>
-                    <td>${item.session_id || '-'}</td>
+                    <td>${item.ticket_id}</td>
                     <td>~${Math.round(item.estimated_wait_s)}s</td>
                     <td>${Math.round(item.wait_elapsed_s)}s</td>
                     <td>${new Date(item.enqueued_at).toLocaleTimeString()}</td>
@@ -464,15 +463,6 @@ async function deleteRefAudio(id) {
     try {
         await fetch(`${API_BASE}/api/assets/ref_audio/${id}`, { method: 'DELETE' });
         loadRefAudios();
-    } catch (e) {
-        alert('删除失败: ' + e.message);
-    }
-}
-
-async function deleteSession(sessionId) {
-    try {
-        await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
-        loadSessions();
     } catch (e) {
         alert('删除失败: ' + e.message);
     }

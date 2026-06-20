@@ -57,7 +57,7 @@ class WorkerConnection:
     port: int
     gpu_id: int
     status: GatewayWorkerStatus = GatewayWorkerStatus.OFFLINE
-    current_session_id: Optional[str] = None
+    current_ticket_id: Optional[str] = None
     total_requests: int = 0
     avg_inference_time_ms: float = 0.0
     last_heartbeat: Optional[datetime] = None
@@ -94,7 +94,7 @@ class WorkerConnection:
             port=self.port,
             gpu_id=self.gpu_id,
             status=self.status,
-            current_session_id=self.current_session_id,
+            current_ticket_id=self.current_ticket_id,
             total_requests=self.total_requests,
             avg_inference_time_ms=self.avg_inference_time_ms,
             last_heartbeat=self.last_heartbeat,
@@ -104,12 +104,12 @@ class WorkerConnection:
         )
 
     def mark_busy(self, status: GatewayWorkerStatus, request_type: str,
-                  session_id: Optional[str] = None) -> None:
+                  ticket_id: Optional[str] = None) -> None:
         """标记 Worker 为忙碌状态（Gateway 调度决策）"""
         self.status = status
         self.current_request_type = request_type
         self.task_started_at = datetime.now()
-        self.current_session_id = session_id
+        self.current_ticket_id = ticket_id
         self._gateway_dispatched = True
 
     def update_duplex_status(self, status: GatewayWorkerStatus) -> None:
@@ -121,7 +121,7 @@ class WorkerConnection:
         self.status = GatewayWorkerStatus.IDLE
         self.current_request_type = None
         self.task_started_at = None
-        self.current_session_id = None
+        self.current_ticket_id = None
         self._gateway_dispatched = False
 
 
@@ -363,7 +363,9 @@ class WorkerPool:
                     return
 
                 worker.status = new_status
-                worker.current_session_id = data.get("current_session_id")
+                reported_ticket_id = data.get("current_ticket_id")
+                if reported_ticket_id is not None or not worker._gateway_dispatched:
+                    worker.current_ticket_id = reported_ticket_id
                 worker.total_requests = data.get("total_requests", 0)
                 worker.avg_inference_time_ms = data.get("avg_inference_time_ms", 0.0)
                 worker.capabilities = data.get("capabilities") or list(DEFAULT_WORKER_CAPABILITIES)
@@ -406,7 +408,7 @@ class WorkerPool:
     def enqueue(
         self,
         request_type: str,
-        session_id: Optional[str] = None,
+        history_hash: Optional[str] = None,
     ) -> Tuple[QueueTicket, "asyncio.Future[Optional[WorkerConnection]]"]:
         """入队请求
 
@@ -415,7 +417,6 @@ class WorkerPool:
 
         Args:
             request_type: "chat" | "half_duplex_audio" | "audio_duplex" | "omni_duplex"
-            session_id: 会话 ID
 
         Returns:
             (ticket, future)
@@ -431,15 +432,13 @@ class WorkerPool:
             dispatch_status = self._DISPATCH_STATUS_MAP.get(
                 request_type, GatewayWorkerStatus.BUSY_CHAT
             )
-            worker.mark_busy(dispatch_status, request_type, session_id)
-
             ticket = QueueTicket(
                 ticket_id=f"q_{uuid.uuid4().hex[:12]}",
                 request_type=request_type,
-                session_id=session_id,
                 position=0,
                 estimated_wait_s=0.0,
             )
+            worker.mark_busy(dispatch_status, request_type, ticket.ticket_id)
             future: asyncio.Future[Optional[WorkerConnection]] = loop.create_future()
             future.set_result(worker)
             logger.info(
@@ -456,10 +455,9 @@ class WorkerPool:
         ticket = QueueTicket(
             ticket_id=f"q_{uuid.uuid4().hex[:12]}",
             request_type=request_type,
-            session_id=session_id,
         )
         future = loop.create_future()
-        entry = QueueEntry(ticket=ticket, future=future)
+        entry = QueueEntry(ticket=ticket, future=future, history_hash=history_hash)
         self._queue[ticket.ticket_id] = entry
 
         self._recalc_positions_and_eta()
@@ -514,7 +512,7 @@ class WorkerPool:
             selected_worker.mark_busy(
                 self._DISPATCH_STATUS_MAP.get(req_type, GatewayWorkerStatus.BUSY_CHAT),
                 req_type,
-                selected_entry.ticket.session_id,
+                selected_entry.ticket.ticket_id,
             )
 
             self._queue.pop(selected_ticket_id)
@@ -659,7 +657,6 @@ class WorkerPool:
             items.append(QueueTicketSummary(
                 ticket_id=t.ticket_id,
                 request_type=t.request_type,
-                session_id=t.session_id,
                 position=t.position,
                 estimated_wait_s=t.estimated_wait_s,
                 enqueued_at=t.enqueued_at,

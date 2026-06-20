@@ -12,10 +12,8 @@
         --ref-audio-path /path/to/ref.wav
 """
 
-import re
 import json
 import time
-import uuid
 import asyncio
 import argparse
 import logging
@@ -47,7 +45,7 @@ class WorkerHealthResponse(BaseModel):
     worker_status: WorkerStatus
     gpu_id: int
     model_loaded: bool
-    current_session_id: Optional[str] = None
+    current_ticket_id: Optional[str] = None
     total_requests: int = 0
     avg_inference_time_ms: float = 0.0
     kv_cache_length: int = 0  # 当前 LLM KV cache token 总数
@@ -164,7 +162,7 @@ async def health():
         worker_status=worker.state.status,
         gpu_id=worker.gpu_id,
         model_loaded=model_loaded,
-        current_session_id=worker.state.current_session_id,
+        current_ticket_id=worker.state.current_ticket_id,
         total_requests=worker.state.total_requests,
         avg_inference_time_ms=avg_time,
         kv_cache_length=kv_len,
@@ -176,7 +174,6 @@ async def health():
 async def _handle_remote_backend_runtime_ws(
     ws: WebSocket,
     *,
-    session_id: str,
     mode: str,
     active_status: WorkerStatus,
     idle_status: WorkerStatus,
@@ -196,11 +193,9 @@ async def _handle_remote_backend_runtime_ws(
 
     await ws.accept()
     worker.state.status = active_status
-    worker.state.current_session_id = session_id
     runtime = BackendRuntimeSession(
         backend_base_url=backend_url,
         mode=mode,
-        session_id=session_id,
     )
     backend_closed = False
 
@@ -217,14 +212,13 @@ async def _handle_remote_backend_runtime_ws(
         if first_type == "session.init":
             init_params = _init_payload(first)
         elif first_type == "input.append":
-            init_params = {"mode": mode, "session_id": session_id}
+            init_params = {"mode": mode}
             pending_input = _input_payload(first)
         else:
             raise RuntimeError(f"first message must initialize or push input, got: {first_type}")
 
         init_params = dict(init_params)
         init_params.setdefault("mode", mode)
-        init_params.setdefault("session_id", session_id)
         await _send_runtime_event(await runtime.init(init_params))
 
         if pending_input is not None:
@@ -247,7 +241,7 @@ async def _handle_remote_backend_runtime_ws(
                     if close_payload.get("type") != "session.closed":
                         close_payload = {
                             "type": "session.closed",
-                            "session_id": session_id,
+                            "session_id": runtime.session_id,
                             "reason": msg.get("reason", "client_closed"),
                         }
                     await ws.send_json(close_payload)
@@ -278,11 +272,15 @@ async def _handle_remote_backend_runtime_ws(
             task.result()
 
     except WebSocketDisconnect:
-        logger.info("Remote backend runtime WebSocket disconnected: session=%s", session_id)
+        logger.info("Remote backend runtime WebSocket disconnected")
     except Exception as exc:
-        logger.error("Remote backend runtime failed: session=%s error=%s", session_id, exc, exc_info=True)
+        logger.error("Remote backend runtime failed: error=%s", exc, exc_info=True)
         try:
-            await ws.send_json({"type": "session.closed", "session_id": session_id, "reason": "backend_error"})
+            await ws.send_json({
+                "type": "session.closed",
+                "session_id": runtime.session_id,
+                "reason": "backend_error",
+            })
         except Exception:
             pass
     finally:
@@ -290,65 +288,30 @@ async def _handle_remote_backend_runtime_ws(
             if not backend_closed:
                 await runtime.unary("close", {"reason": "worker_disconnected"})
         except Exception:
-            logger.exception("Remote backend runtime cleanup failed: session=%s", session_id)
+            logger.exception("Remote backend runtime cleanup failed")
         worker.state.status = idle_status
-        worker.state.current_session_id = None
+        worker.state.current_ticket_id = None
         try:
             await ws.close()
         except Exception:
             pass
 
 
-@app.websocket("/v1/worker/sessions/{session_id}/chat")
-async def worker_chat_runtime_ws(ws: WebSocket, session_id: str):
+@app.websocket("/v1/worker/chat")
+async def worker_chat_runtime_ws(ws: WebSocket):
     """Worker-internal turn-based chat runtime protocol (backend-server only)."""
     await _handle_remote_backend_runtime_ws(
         ws,
-        session_id=_sanitize_session_id(session_id),
         mode="turn_based",
         active_status=WorkerStatus.BUSY_CHAT,
         idle_status=WorkerStatus.IDLE,
     )
 
 
-_SESSION_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
-
-
-def _sanitize_session_id(session_id: str) -> str:
-    """校验 session_id 只含安全字符，防止 path traversal"""
-    if not _SESSION_ID_RE.match(session_id):
-        safe = re.sub(r'[^a-zA-Z0-9_\-]', '_', session_id)
-        return safe
-    return session_id
-
-
-def _ws_client_info(ws: WebSocket) -> Dict[str, Any]:
-    """Best-effort client/page identity captured from gateway-forwarded query params."""
-    return {
-        "client_id": ws.query_params.get("client_id"),
-        "page_session_id": ws.query_params.get("page_session_id"),
-        "ip": ws.query_params.get("client_ip"),
-        "user_agent": ws.query_params.get("user_agent"),
-        "origin": ws.query_params.get("origin"),
-    }
-
-
-def _ws_source_info(ws: WebSocket, default_channel: str, default_mode: Optional[str] = None) -> Dict[str, Any]:
-    return {
-        "channel": ws.query_params.get("source_channel") or default_channel,
-        "mode": ws.query_params.get("source_mode") or default_mode,
-        "gateway_session_id": ws.query_params.get("gateway_session_id") or ws.query_params.get("session_id"),
-        "path": ws.query_params.get("source_path"),
-        "page_route": ws.query_params.get("page_route"),
-        "client_surface": ws.query_params.get("client_surface"),
-    }
-
-
-
 # ========== Duplex WebSocket ==========
 
-@app.websocket("/v1/worker/sessions/{session_id}/duplex")
-async def worker_duplex_runtime_ws(ws: WebSocket, session_id: str):
+@app.websocket("/v1/worker/duplex")
+async def worker_duplex_runtime_ws(ws: WebSocket):
     """Worker-internal duplex runtime protocol (backend-server only).
 
     This endpoint is meant for gateway-worker communication and uses runtime
@@ -356,7 +319,6 @@ async def worker_duplex_runtime_ws(ws: WebSocket, session_id: str):
     """
     await _handle_remote_backend_runtime_ws(
         ws,
-        session_id=_sanitize_session_id(session_id),
         mode="full_duplex",
         active_status=WorkerStatus.DUPLEX_ACTIVE,
         idle_status=WorkerStatus.IDLE,

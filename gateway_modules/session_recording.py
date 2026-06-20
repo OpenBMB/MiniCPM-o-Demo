@@ -85,7 +85,6 @@ class SessionRecorder:
         os.makedirs(self._blob_dir, exist_ok=True)
         self._meta: Dict[str, Any] = {
             "session_id": session_id,
-            "backend_session_id": None,
             "mode": mode,
             "created_at": self._start,
             "ended_at": None,
@@ -104,12 +103,6 @@ class SessionRecorder:
         """记录一个协议帧。direction = "up"(client→backend) | "down"(backend→client)。"""
         ts = time.time()
         try:
-            # 下行 session.created:补 backend 分配的 session_id 进 meta
-            if direction == "down" and frame.get("type") == "session.created":
-                bsid = frame.get("session_id")
-                if bsid:
-                    self._meta["backend_session_id"] = bsid
-                    _io_pool.submit(self._flush_meta)
             with self._lock:
                 seq = self._seq
                 self._seq += 1

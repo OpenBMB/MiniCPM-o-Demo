@@ -22,7 +22,7 @@ class WorkerStatus(str, Enum):
 class WorkerState(BaseModel):
     """Worker 运行时状态"""
     status: WorkerStatus = WorkerStatus.LOADING
-    current_session_id: Optional[str] = None
+    current_ticket_id: Optional[str] = None
     duplex_pause_time: Optional[float] = None  # Duplex 暂停的时间戳
     total_requests: int = 0
     total_inference_time_ms: float = 0.0
@@ -40,5 +40,3 @@ class WorkerState(BaseModel):
             WorkerStatus.DUPLEX_ACTIVE,
             WorkerStatus.DUPLEX_PAUSED,
         )
-
-

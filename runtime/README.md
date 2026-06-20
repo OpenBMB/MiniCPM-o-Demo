@@ -6,10 +6,10 @@ backends.
 ## Current Shape
 
 The worker now exposes runtime-shaped internal endpoints for turn-based chat and
-duplex sessions:
+duplex requests:
 
-- `/v1/worker/sessions/{session_id}/chat`
-- `/v1/worker/sessions/{session_id}/duplex`
+- `/v1/worker/chat`
+- `/v1/worker/duplex`
 
 Public pages and external clients should enter through the gateway, primarily
 `/ws/chat` for turn-based chat and `/v1/realtime` for duplex sessions.  The
@@ -66,4 +66,3 @@ is a compatibility-preserving boundary for future specialized runtimes.
 `finalize`, KV-cache edits, prompt-cache artifacts, and backend-specific stream
 mechanics should not leak into gateway or scheduler code.  They belong inside
 runtime/backend boundaries.
-

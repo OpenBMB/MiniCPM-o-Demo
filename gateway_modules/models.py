@@ -31,7 +31,7 @@ class WorkerInfo(BaseModel):
     port: int
     gpu_id: int
     status: GatewayWorkerStatus
-    current_session_id: Optional[str] = None
+    current_ticket_id: Optional[str] = None
     total_requests: int = 0
     avg_inference_time_ms: float = 0.0
     last_heartbeat: Optional[datetime] = None
@@ -45,12 +45,11 @@ class WorkerInfo(BaseModel):
 class QueueTicket(BaseModel):
     """排队凭证
 
-    每个等待中的请求/session 持有一个 ticket，包含位置和预估等待时间。
+    每个等待中的请求持有一个 ticket，包含位置和预估等待时间。
     位置和 ETA 随队列变化动态更新。
     """
     ticket_id: str
     request_type: str  # "chat" | "half_duplex_audio" | "audio_duplex" | "omni_duplex"
-    session_id: Optional[str] = None
     enqueued_at: datetime = Field(default_factory=datetime.now)
     position: int = 0  # 1-based，0 表示已分配
     estimated_wait_s: float = 0.0
@@ -61,7 +60,6 @@ class QueueTicketSummary(BaseModel):
     """队列项摘要（供 API 和 Admin 展示）"""
     ticket_id: str
     request_type: str
-    session_id: Optional[str] = None
     position: int
     estimated_wait_s: float
     enqueued_at: datetime

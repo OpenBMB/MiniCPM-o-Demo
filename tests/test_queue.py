@@ -34,7 +34,7 @@ def make_pool(
     pool = WorkerPool(
         worker_addresses=addresses,
         max_queue_size=max_queue_size,
-        eta_config=EtaConfig(eta_chat_s=10.0, eta_half_duplex_s=15.0, eta_duplex_s=90.0),
+        eta_config=EtaConfig(eta_chat_s=10.0, eta_half_duplex_s=15.0, eta_omni_duplex_s=90.0),
     )
     if all_idle:
         for w in pool.workers.values():
@@ -43,7 +43,7 @@ def make_pool(
 
 
 def make_workers_busy(pool: WorkerPool, count: Optional[int] = None,
-                      request_type: str = "duplex") -> None:
+                      request_type: str = "omni_duplex") -> None:
     """将指定数量的 Worker 标记为忙碌"""
     n = count or len(pool.workers)
     for i, w in enumerate(pool.workers.values()):
@@ -65,8 +65,8 @@ class TestFIFO:
         make_workers_busy(pool, count=1)
 
         t1, f1 = pool.enqueue("chat")
-        t2, f2 = pool.enqueue("streaming")
-        t3, f3 = pool.enqueue("duplex")
+        t2, f2 = pool.enqueue("half_duplex_audio")
+        t3, f3 = pool.enqueue("omni_duplex")
 
         assert t1.position == 1
         assert t2.position == 2
@@ -74,7 +74,7 @@ class TestFIFO:
 
         # 释放 Worker → 队头 t1 应该获得
         w = list(pool.workers.values())[0]
-        pool.release_worker(w, "duplex", 5.0)
+        pool.release_worker(w, "omni_duplex", 5.0)
 
         assert f1.done()
         assert not f2.done()
@@ -229,7 +229,7 @@ class TestETA:
     async def test_eta_basic(self) -> None:
         """基本 ETA 估算"""
         pool = make_pool(num_workers=1, all_idle=True)
-        make_workers_busy(pool, count=1, request_type="duplex")
+        make_workers_busy(pool, count=1, request_type="omni_duplex")
 
         t1, _ = pool.enqueue("chat")
         # ETA 应该 > 0（前面有 duplex 在运行）
@@ -334,8 +334,8 @@ class TestImmediateAssign:
         pool = make_pool(num_workers=3, all_idle=True)
 
         pool.enqueue("chat")
-        pool.enqueue("streaming")
-        pool.enqueue("duplex")
+        pool.enqueue("half_duplex_audio")
+        pool.enqueue("omni_duplex")
 
         assert pool.queue_length == 0
 
@@ -516,28 +516,27 @@ class TestQueueStatus:
     async def test_get_queue_status(self) -> None:
         """获取队列状态"""
         pool = make_pool(num_workers=1, all_idle=True)
-        make_workers_busy(pool, count=1, request_type="duplex")
+        make_workers_busy(pool, count=1, request_type="omni_duplex")
 
         pool.enqueue("chat")
-        pool.enqueue("streaming", session_id="s1")
+        pool.enqueue("half_duplex_audio")
 
         status = pool.get_queue_status()
         assert status.queue_length == 2
         assert status.max_queue_size == 1000
         assert len(status.items) == 2
         assert status.items[0].request_type == "chat"
-        assert status.items[1].request_type == "streaming"
-        assert status.items[1].session_id == "s1"
+        assert status.items[1].request_type == "half_duplex_audio"
 
     @pytest.mark.asyncio
     async def test_running_tasks_info(self) -> None:
         """运行中任务信息"""
         pool = make_pool(num_workers=2, all_idle=True)
-        make_workers_busy(pool, count=1, request_type="duplex")
+        make_workers_busy(pool, count=1, request_type="omni_duplex")
 
         tasks = pool._get_running_tasks()
         assert len(tasks) == 1
-        assert tasks[0].request_type == "duplex"
+        assert tasks[0].request_type == "omni_duplex"
         assert tasks[0].elapsed_s >= 0
 
     @pytest.mark.asyncio
@@ -585,7 +584,7 @@ class TestNonStreamingRouting:
         w1.cached_hash = "hash_B"
         w1.last_cache_used_at = datetime.now()
 
-        t, f = pool.enqueue("duplex")
+        t, f = pool.enqueue("omni_duplex")
         assert f.done()
         assert f.result() == w0  # 淘汰最旧缓存
 
@@ -605,12 +604,12 @@ class TestEtaConfig:
         pool.eta_tracker.update_config(EtaConfig(
             eta_chat_s=20.0,
             eta_half_duplex_s=30.0,
-            eta_duplex_s=120.0,
+            eta_omni_duplex_s=120.0,
         ))
 
         assert pool.eta_tracker.get_eta("chat") == 20.0
-        assert pool.eta_tracker.get_eta("streaming") == 30.0
-        assert pool.eta_tracker.get_eta("duplex") == 120.0
+        assert pool.eta_tracker.get_eta("half_duplex_audio") == 30.0
+        assert pool.eta_tracker.get_eta("omni_duplex") == 120.0
 
     @pytest.mark.asyncio
     async def test_eta_status(self) -> None:
@@ -623,7 +622,7 @@ class TestEtaConfig:
         assert status.config.eta_chat_s == 10.0
         assert status.ema_chat_s == 5.0
         assert status.ema_chat_samples == 1
-        assert status.ema_streaming_samples == 0
+        assert status.ema_half_duplex_samples == 0
 
 
 # ============ 13. ETA 时间精度验证 ============
@@ -639,11 +638,11 @@ class TestEtaAccuracy:
         """
         pool = make_pool(num_workers=1, all_idle=True)
         pool.eta_tracker.update_config(
-            EtaConfig(eta_chat_s=15.0, eta_half_duplex_s=15.0, eta_duplex_s=90.0)
+            EtaConfig(eta_chat_s=15.0, eta_half_duplex_s=15.0, eta_omni_duplex_s=90.0)
         )
 
         # t=0s: Worker 接手任务 A
-        ticket_a, future_a = pool.enqueue("chat", session_id="user_a")
+        ticket_a, future_a = pool.enqueue("chat")
         worker_a = future_a.result()  # 立即分配
         assert worker_a is not None
 
@@ -651,7 +650,7 @@ class TestEtaAccuracy:
         worker_a.task_started_at = datetime.now() - timedelta(seconds=5)
 
         # t=5s: 新请求 B 入队
-        ticket_b, future_b = pool.enqueue("chat", session_id="user_b")
+        ticket_b, future_b = pool.enqueue("chat")
         assert not future_b.done()  # B 在排队
 
         # 检查 B 的 ETA：应该 ≈ 10s（15 - 5），而不是被 floor 到 15s
@@ -664,11 +663,11 @@ class TestEtaAccuracy:
         """任务超时（elapsed > eta）时兜底 15s，不显示 0 或负数"""
         pool = make_pool(num_workers=1, all_idle=True)
         pool.eta_tracker.update_config(
-            EtaConfig(eta_chat_s=10.0, eta_half_duplex_s=15.0, eta_duplex_s=90.0)
+            EtaConfig(eta_chat_s=10.0, eta_half_duplex_s=15.0, eta_omni_duplex_s=90.0)
         )
 
         # Worker 接手任务
-        ticket_a, future_a = pool.enqueue("chat", session_id="user_a")
+        ticket_a, future_a = pool.enqueue("chat")
         worker_a = future_a.result()
         assert worker_a is not None
 
@@ -676,7 +675,7 @@ class TestEtaAccuracy:
         worker_a.task_started_at = datetime.now() - timedelta(seconds=20)
 
         # 新请求入队
-        ticket_b, future_b = pool.enqueue("chat", session_id="user_b")
+        ticket_b, future_b = pool.enqueue("chat")
         assert not future_b.done()
 
         # ETA 应该兜底到 15s
@@ -689,23 +688,23 @@ class TestEtaAccuracy:
         """2 Worker 交错繁忙，3 请求排队，ETA 递增"""
         pool = make_pool(num_workers=2, all_idle=True)
         pool.eta_tracker.update_config(
-            EtaConfig(eta_chat_s=20.0, eta_half_duplex_s=15.0, eta_duplex_s=90.0)
+            EtaConfig(eta_chat_s=20.0, eta_half_duplex_s=15.0, eta_omni_duplex_s=90.0)
         )
 
         # Worker 0 接手 A（已跑 5s，剩余 15s）
-        ticket_a, future_a = pool.enqueue("chat", session_id="user_a")
+        ticket_a, future_a = pool.enqueue("chat")
         worker_a = future_a.result()
         worker_a.task_started_at = datetime.now() - timedelta(seconds=5)
 
         # Worker 1 接手 B（已跑 10s，剩余 10s）
-        ticket_b, future_b = pool.enqueue("chat", session_id="user_b")
+        ticket_b, future_b = pool.enqueue("chat")
         worker_b = future_b.result()
         worker_b.task_started_at = datetime.now() - timedelta(seconds=10)
 
         # 排队请求 C, D, E
-        ticket_c, _ = pool.enqueue("chat", session_id="user_c")
-        ticket_d, _ = pool.enqueue("chat", session_id="user_d")
-        ticket_e, _ = pool.enqueue("chat", session_id="user_e")
+        ticket_c, _ = pool.enqueue("chat")
+        ticket_d, _ = pool.enqueue("chat")
+        ticket_e, _ = pool.enqueue("chat")
 
         # C 应该等最快释放的 Worker（剩余 10s）
         assert ticket_c.estimated_wait_s is not None
@@ -728,10 +727,10 @@ class TestEtaAccuracy:
         """_get_running_tasks 返回的 estimated_remaining_s 随时间递减"""
         pool = make_pool(num_workers=1, all_idle=True)
         pool.eta_tracker.update_config(
-            EtaConfig(eta_chat_s=15.0, eta_half_duplex_s=15.0, eta_duplex_s=90.0)
+            EtaConfig(eta_chat_s=15.0, eta_half_duplex_s=15.0, eta_omni_duplex_s=90.0)
         )
 
-        ticket_a, future_a = pool.enqueue("chat", session_id="user_a")
+        ticket_a, future_a = pool.enqueue("chat")
         worker_a = future_a.result()
         assert worker_a is not None
 
