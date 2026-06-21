@@ -32,7 +32,7 @@ import httpx
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Body
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from gateway_modules.models import (
@@ -209,6 +209,25 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+
+_PUBLIC_ADMIN_ENABLED = os.getenv("ENABLE_PUBLIC_ADMIN", "").lower() in {"1", "true", "yes", "on"}
+_BLOCKED_ADMIN_PATHS = {"/admin", "/admin/"}
+_BLOCKED_ADMIN_STATIC_PATHS = {"/static/admin.html", "/static/admin.html/"}
+
+
+@app.middleware("http")
+async def hide_admin_routes(request: Request, call_next):
+    """Keep admin-only surfaces unavailable on public deployments by default."""
+    if not _PUBLIC_ADMIN_ENABLED:
+        path = request.url.path
+        if (
+            path in _BLOCKED_ADMIN_PATHS
+            or path.startswith("/api/admin/")
+            or path in _BLOCKED_ADMIN_STATIC_PATHS
+        ):
+            return JSONResponse({"detail": "Not found"}, status_code=404)
+    return await call_next(request)
 
 
 # ============ 健康检查 ============
