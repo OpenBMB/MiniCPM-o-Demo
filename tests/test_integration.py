@@ -72,14 +72,13 @@ class ProcessManager:
         self.processes.append(proc)
         return proc
 
-    def start_gateway(self, port: int, worker_addresses: List[str]) -> subprocess.Popen:
+    def start_gateway(self, port: int) -> subprocess.Popen:
         """启动 Gateway 进程（HTTP 模式，无需证书）"""
-        workers_str = ",".join(worker_addresses)
         cmd = [
             PYTHON, os.path.join(PROJECT_ROOT, "gateway.py"),
             "--port", str(port),
+            "--internal-port", str(port + 1000),
             "--http",
-            "--workers", workers_str,
             "--max-queue-size", "20",
         ]
         proc = subprocess.Popen(
@@ -141,6 +140,22 @@ async def wait_for_gateway_workers_ready(
     return False
 
 
+async def register_gateway_worker(
+    gateway_port: int,
+    worker_id: str,
+    endpoint: str,
+    gpu_group: str,
+) -> None:
+    url = f"http://127.0.0.1:{gateway_port + 1000}/internal/workers/{worker_id}"
+    async with httpx.AsyncClient() as client:
+        resp = await client.put(
+            url,
+            json={"endpoint": endpoint, "gpu_group": gpu_group},
+            timeout=5.0,
+        )
+        assert resp.status_code == 200, resp.text
+
+
 # ============ Fixtures ============
 
 class ServiceCluster:
@@ -178,7 +193,17 @@ class ServiceCluster:
             assert ok, f"Mock Worker {i} (port {port}) failed to start"
 
         # 启动 Gateway
-        self.pm.start_gateway(self.gateway_port, worker_addresses)
+        self.pm.start_gateway(self.gateway_port)
+        ok = await wait_for_service(f"http://127.0.0.1:{self.gateway_port}/health")
+        assert ok, f"Gateway failed to start on port {self.gateway_port}"
+
+        for i, endpoint in enumerate(worker_addresses):
+            await register_gateway_worker(
+                self.gateway_port,
+                worker_id=f"mock-worker-{i}",
+                endpoint=endpoint,
+                gpu_group=f"gpu-{i}",
+            )
 
         # 等 Gateway + 所有 Worker 就绪
         ok = await wait_for_gateway_workers_ready(

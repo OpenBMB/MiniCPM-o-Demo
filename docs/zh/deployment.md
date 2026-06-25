@@ -233,7 +233,11 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python worker.py \
 
 # Gateway
 PYTHONPATH=. .venv/base/bin/python gateway.py \
-    --port 8006 --workers localhost:22400
+    --port 8006 --internal-port 8007
+
+curl -X PUT http://127.0.0.1:8007/internal/workers/local-worker \
+    -H 'content-type: application/json' \
+    --data '{"endpoint":"127.0.0.1:22400","gpu_group":"gpu-0"}'
 ```
 
 ### CLI 参数
@@ -253,7 +257,7 @@ python worker.py \
 ```bash
 python gateway.py \
     --port 8006 \
-    --workers localhost:22400,localhost:22401 \
+    --internal-port 8007 \
     --http
 ```
 

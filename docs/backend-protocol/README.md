@@ -40,12 +40,16 @@ PYTHONPATH=. .venv/base/bin/python worker.py \
 
 # 3) gateway（公网 /v1/realtime 入口）
 PYTHONPATH=. .venv/base/bin/python gateway.py \
-    --host 0.0.0.0 --port 8006 --http --workers localhost:22400
+    --host 0.0.0.0 --port 8006 --internal-port 8007 --http
+
+curl -X PUT http://127.0.0.1:8007/internal/workers/local-worker \
+    -H 'content-type: application/json' \
+    --data '{"endpoint":"127.0.0.1:22400","gpu_group":"gpu-0"}'
 ```
 
 多 worker：每个 worker 各配一个 backend（再起 `--port 22501` 的 backend + `--port 22401
---backend-server-url http://127.0.0.1:22501` 的 worker），gateway `--workers
-localhost:22400,localhost:22401`。
+--backend-server-url http://127.0.0.1:22501` 的 worker），然后向 gateway internal
+registry 分别 `PUT /internal/workers/<worker-id>` 注册各自 endpoint。
 
 健康检查：
 
@@ -68,4 +72,3 @@ PYTHONPATH=. .venv/base/bin/python tests/e2e_realtime.py video        # full_dup
 ```
 
 实现了别的 backend 后，把 worker 的 `--backend-server-url` 指向它、重跑同一个测试即可验证。
-

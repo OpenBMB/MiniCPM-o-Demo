@@ -56,6 +56,10 @@ class WorkerConnection:
     host: str
     port: int
     gpu_id: int
+    gpu_group: Optional[str] = None
+    labels: Dict[str, str] = field(default_factory=dict)
+    registered_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
     status: GatewayWorkerStatus = GatewayWorkerStatus.OFFLINE
     current_ticket_id: Optional[str] = None
     total_requests: int = 0
@@ -69,6 +73,10 @@ class WorkerConnection:
     @property
     def url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def endpoint(self) -> str:
+        return f"{self.host}:{self.port}"
 
     @property
     def is_idle(self) -> bool:
@@ -93,6 +101,8 @@ class WorkerConnection:
             host=self.host,
             port=self.port,
             gpu_id=self.gpu_id,
+            gpu_group=self.gpu_group,
+            labels=dict(self.labels),
             status=self.status,
             current_ticket_id=self.current_ticket_id,
             total_requests=self.total_requests,
@@ -259,28 +269,96 @@ class WorkerPool:
         # 健康检查任务
         self._health_check_task: Optional[asyncio.Task] = None
 
+        self._next_dynamic_gpu_id = 0
+
         # 解析 Worker 地址
         for i, addr in enumerate(worker_addresses):
-            if ":" in addr:
-                host, port_str = addr.rsplit(":", 1)
-                port = int(port_str)
-            else:
-                host = addr
-                port = 10031 + i
-
             worker_id = f"worker_{i}"
-            gpu_id = i
-
+            host, port = self._parse_endpoint(addr, default_port=10031 + i)
             self.workers[worker_id] = WorkerConnection(
                 worker_id=worker_id,
                 host=host,
                 port=port,
-                gpu_id=gpu_id,
+                gpu_id=i,
+                gpu_group=f"static-{i}",
                 capabilities=list(DEFAULT_WORKER_CAPABILITIES),
             )
+            self._next_dynamic_gpu_id = i + 1
 
         logger.info(f"WorkerPool initialized with {len(self.workers)} workers, "
                      f"max_queue_size={max_queue_size}")
+
+    @staticmethod
+    def _parse_endpoint(endpoint: str, default_port: Optional[int] = None) -> Tuple[str, int]:
+        value = endpoint.strip()
+        if not value:
+            raise ValueError("endpoint must not be empty")
+        if "://" in value:
+            raise ValueError("endpoint must be host:port without scheme")
+        if ":" in value:
+            host, port_str = value.rsplit(":", 1)
+            if not host or not port_str:
+                raise ValueError("endpoint must be host:port")
+            port = int(port_str)
+        elif default_port is not None:
+            host = value
+            port = default_port
+        else:
+            raise ValueError("endpoint must include a port")
+        if port <= 0 or port > 65535:
+            raise ValueError("endpoint port out of range")
+        return host, port
+
+    async def register_worker(
+        self,
+        *,
+        worker_id: str,
+        endpoint: str,
+        gpu_group: Optional[str] = None,
+        labels: Optional[Dict[str, str]] = None,
+    ) -> WorkerConnection:
+        """Register or update a worker endpoint at runtime."""
+        worker_id = worker_id.strip()
+        if not worker_id:
+            raise ValueError("worker_id must not be empty")
+
+        host, port = self._parse_endpoint(endpoint)
+        now = datetime.now()
+        worker = self.workers.get(worker_id)
+
+        if worker is None:
+            worker = WorkerConnection(
+                worker_id=worker_id,
+                host=host,
+                port=port,
+                gpu_id=self._next_dynamic_gpu_id,
+                gpu_group=gpu_group,
+                labels=dict(labels or {}),
+                capabilities=list(DEFAULT_WORKER_CAPABILITIES),
+                registered_at=now,
+                updated_at=now,
+            )
+            self.workers[worker_id] = worker
+            self._next_dynamic_gpu_id += 1
+            logger.info("Registered worker %s at %s", worker_id, worker.endpoint)
+        else:
+            endpoint_changed = worker.host != host or worker.port != port
+            worker.host = host
+            worker.port = port
+            worker.gpu_group = gpu_group
+            worker.labels = dict(labels or {})
+            worker.updated_at = now
+            if endpoint_changed:
+                worker.status = GatewayWorkerStatus.OFFLINE
+                worker.current_ticket_id = None
+                worker.current_request_type = None
+                worker.task_started_at = None
+                worker._gateway_dispatched = False
+            logger.info("Updated worker %s at %s", worker_id, worker.endpoint)
+
+        await self._refresh_worker_status(worker)
+        self._dispatch_next()
+        return worker
 
     async def start(self) -> None:
         """启动连接池"""
@@ -378,12 +456,17 @@ class WorkerPool:
 
     # ========== 路由策略 ==========
 
-    def _gpu_busy_counts(self) -> Dict[int, int]:
+    @staticmethod
+    def _gpu_group_key(worker: WorkerConnection) -> str:
+        return worker.gpu_group or f"gpu_id:{worker.gpu_id}"
+
+    def _gpu_busy_counts(self) -> Dict[str, int]:
         """Count busy workers per GPU for load-aware scheduling."""
-        counts: Dict[int, int] = {}
+        counts: Dict[str, int] = {}
         for w in self.workers.values():
             if w.is_busy:
-                counts[w.gpu_id] = counts.get(w.gpu_id, 0) + 1
+                key = self._gpu_group_key(w)
+                counts[key] = counts.get(key, 0) + 1
         return counts
 
     def _get_idle_worker(self, request_type: Optional[str] = None) -> Optional[WorkerConnection]:
@@ -395,7 +478,7 @@ class WorkerPool:
         )
         return min(
             idle_workers,
-            key=lambda w: (gpu_busy.get(w.gpu_id, 0), w.worker_id),
+            key=lambda w: (gpu_busy.get(self._gpu_group_key(w), 0), w.worker_id),
             default=None,
         )
 

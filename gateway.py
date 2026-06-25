@@ -9,8 +9,7 @@
 启动方式：
     cd /user/sunweiyue/lib/swy-dev/minicpmo45_service
     PYTHONPATH=. .venv/base/bin/python gateway.py \\
-        --port 10024 \\
-        --workers localhost:22400,localhost:22401
+        --port 10024 --internal-port 10025
 """
 
 import os
@@ -39,6 +38,7 @@ from gateway_modules.models import (
     GatewayWorkerStatus,
     ServiceStatus,
     WorkersResponse,
+    WorkerRegistrationRequest,
     QueueStatus,
     EtaConfig,
     EtaStatus,
@@ -143,7 +143,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期"""
     global worker_pool, ref_audio_registry, _cleanup_task
 
-    workers = GATEWAY_CONFIG.get("workers", ["localhost:10031"])
+    workers = GATEWAY_CONFIG.get("workers", [])
     max_queue = GATEWAY_CONFIG.get("max_queue_size", 1000)
     timeout = GATEWAY_CONFIG.get("timeout", 300.0)
 
@@ -206,6 +206,14 @@ app = FastAPI(
     description="MiniCPMO45 多模态推理网关",
     version="1.0.0-alpha.2",
     lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+)
+
+internal_app = FastAPI(
+    title="MiniCPMO45 Gateway Internal",
+    description="Internal worker registration API",
+    version="1.0.0-alpha.2",
     docs_url=None,
     redoc_url=None,
 )
@@ -314,6 +322,36 @@ async def list_workers():
         total=len(worker_pool.workers),
         workers=worker_pool.get_all_workers(),
     )
+
+
+@internal_app.get("/health")
+async def internal_health():
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@internal_app.put("/internal/workers/{worker_id}")
+async def register_worker(worker_id: str, payload: WorkerRegistrationRequest):
+    """Register or update a worker endpoint from the internal control plane."""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    try:
+        worker = await worker_pool.register_worker(
+            worker_id=worker_id,
+            endpoint=payload.endpoint,
+            gpu_group=payload.gpu_group,
+            labels=payload.labels,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "worker": worker.to_info(),
+    }
 
 
 
@@ -1449,9 +1487,8 @@ def main():
 
     parser = argparse.ArgumentParser(description="MiniCPMO45 Gateway")
     parser.add_argument("--port", type=int, default=None, help=f"Gateway port (default: {cfg.gateway_port})")
+    parser.add_argument("--internal-port", type=int, default=8007, help="Internal worker registration port")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
-    parser.add_argument("--workers", type=str, default=None, help="Worker addresses, comma-separated")
-    parser.add_argument("--num-workers", type=int, default=None, help="Number of workers (auto-generate addresses)")
     parser.add_argument("--max-queue-size", type=int, default=None, help="Max queue size")
     parser.add_argument("--timeout", type=float, default=None, help="Request timeout (s)")
     # 协议选择：默认 HTTPS，--http 可降级为 HTTP
@@ -1472,20 +1509,11 @@ def main():
 
     port = args.port or cfg.gateway_port
 
-    # Worker 地址：优先命令行，否则根据 num_workers 自动生成
-    if args.workers:
-        worker_list = args.workers.split(",")
-    elif args.num_workers:
-        worker_list = cfg.worker_addresses(args.num_workers)
-    else:
-        # 默认 1 个 Worker
-        worker_list = cfg.worker_addresses(1)
-
     if args.lang:
         GATEWAY_CONFIG["default_lang"] = args.lang
 
     GATEWAY_CONFIG.update({
-        "workers": worker_list,
+        "workers": [],
         "max_queue_size": args.max_queue_size or cfg.max_queue_size,
         "timeout": args.timeout or cfg.request_timeout,
         "eta_config": {
@@ -1500,7 +1528,8 @@ def main():
 
     proto_label = "HTTPS" if use_https else "HTTP"
     logger.info(f"Starting Gateway on port {port} ({proto_label})")
-    logger.info(f"Workers: {worker_list}")
+    logger.info(f"Starting internal registry on port {args.internal_port} (HTTP)")
+    logger.info("Workers: dynamic registration only")
 
     ssl_kwargs = {}
     if use_https:
@@ -1519,13 +1548,25 @@ def main():
     # Bump WS max payload from uvicorn's 16 MiB default to 128 MiB so that
     # base64-encoded video attachments coming in from the browser can be
     # proxied to a worker without being rejected with code 1009.
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=port,
-        ws_max_size=128 * 1024 * 1024,
-        **ssl_kwargs,
-    )
+    async def serve() -> None:
+        public_config = uvicorn.Config(
+            app,
+            host=args.host,
+            port=port,
+            ws_max_size=128 * 1024 * 1024,
+            **ssl_kwargs,
+        )
+        internal_config = uvicorn.Config(
+            internal_app,
+            host=args.host,
+            port=args.internal_port,
+            log_level="info",
+        )
+        public_server = uvicorn.Server(public_config)
+        internal_server = uvicorn.Server(internal_config)
+        await asyncio.gather(public_server.serve(), internal_server.serve())
+
+    asyncio.run(serve())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,70 @@
+# Dynamic worker registration smoke deployment.
+#
+# This file is intentionally standalone so it can be used on a shared GPU host
+# without touching the full two-worker compose topology.
+
+services:
+  worker-backend-0:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker-backend
+    image: minicpm-wb:dynamic-reg
+    container_name: minicpm-dynamic-reg-wb-0
+    environment:
+      GPU_ID: "0"
+      BACKEND_PORT: "22500"
+      WORKER_PORT: "22400"
+      MODEL_PATH: /models/MiniCPM-o-4_5
+      GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
+      WORKER_ID: "worker-backend-0"
+      WORKER_ENDPOINT: "worker-backend-0:22400"
+      WORKER_GPU_GROUP: "gpu-${SMOKE_GPU_ID:-1}"
+    volumes:
+      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SMOKE_GPU_ID:-1}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:22400/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    image: minicpm-gateway:dynamic-reg
+    container_name: minicpm-dynamic-reg-gateway
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8006"
+      - "--internal-port"
+      - "8007"
+      - "--https"
+      - "--ssl-certfile"
+      - "/app/certs/cert.pem"
+      - "--ssl-keyfile"
+      - "/app/certs/key.pem"
+    ports:
+      - "${GATEWAY_HOST_PORT:-18006}:8006"
+    expose:
+      - "8007"
+    volumes:
+      - ${DATA_HOST_PATH:-./data}:/app/data
+      - ${CERTS_HOST_PATH:-./certs}:/app/certs:ro
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}
