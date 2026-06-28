@@ -1,0 +1,480 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0080",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 6.88,
+            "shape": [
+              110080
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "请展示故事里能看见的东西。\n讲到积木城堡这一段，要让主角勇敢一点，这样故事更有趣。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "请",
+                "start_sec": 0.0,
+                "end_sec": 0.24
+              },
+              {
+                "text": "展",
+                "start_sec": 0.24,
+                "end_sec": 0.42
+              },
+              {
+                "text": "示",
+                "start_sec": 0.42,
+                "end_sec": 0.6
+              },
+              {
+                "text": "故",
+                "start_sec": 0.6,
+                "end_sec": 0.72
+              },
+              {
+                "text": "事",
+                "start_sec": 0.72,
+                "end_sec": 0.84
+              },
+              {
+                "text": "里",
+                "start_sec": 0.84,
+                "end_sec": 1.08
+              },
+              {
+                "text": "能",
+                "start_sec": 1.08,
+                "end_sec": 1.2
+              },
+              {
+                "text": "看",
+                "start_sec": 1.2,
+                "end_sec": 1.38
+              },
+              {
+                "text": "见",
+                "start_sec": 1.38,
+                "end_sec": 1.5
+              },
+              {
+                "text": "的",
+                "start_sec": 1.5,
+                "end_sec": 1.68
+              },
+              {
+                "text": "东",
+                "start_sec": 1.68,
+                "end_sec": 1.8
+              },
+              {
+                "text": "西",
+                "start_sec": 1.8,
+                "end_sec": 2.46
+              },
+              {
+                "text": "讲",
+                "start_sec": 2.46,
+                "end_sec": 2.64
+              },
+              {
+                "text": "到",
+                "start_sec": 2.64,
+                "end_sec": 2.88
+              },
+              {
+                "text": "积",
+                "start_sec": 2.88,
+                "end_sec": 3.0
+              },
+              {
+                "text": "木",
+                "start_sec": 3.0,
+                "end_sec": 3.18
+              },
+              {
+                "text": "城",
+                "start_sec": 3.18,
+                "end_sec": 3.36
+              },
+              {
+                "text": "堡",
+                "start_sec": 3.36,
+                "end_sec": 3.54
+              },
+              {
+                "text": "这",
+                "start_sec": 3.54,
+                "end_sec": 3.66
+              },
+              {
+                "text": "一",
+                "start_sec": 3.66,
+                "end_sec": 3.78
+              },
+              {
+                "text": "段",
+                "start_sec": 3.78,
+                "end_sec": 4.08
+              },
+              {
+                "text": "要",
+                "start_sec": 4.08,
+                "end_sec": 4.26
+              },
+              {
+                "text": "让",
+                "start_sec": 4.26,
+                "end_sec": 4.44
+              },
+              {
+                "text": "主",
+                "start_sec": 4.44,
+                "end_sec": 4.62
+              },
+              {
+                "text": "角",
+                "start_sec": 4.62,
+                "end_sec": 4.86
+              },
+              {
+                "text": "勇",
+                "start_sec": 4.86,
+                "end_sec": 4.98
+              },
+              {
+                "text": "敢",
+                "start_sec": 4.98,
+                "end_sec": 5.1
+              },
+              {
+                "text": "一",
+                "start_sec": 5.1,
+                "end_sec": 5.22
+              },
+              {
+                "text": "点",
+                "start_sec": 5.22,
+                "end_sec": 5.52
+              },
+              {
+                "text": "这",
+                "start_sec": 5.52,
+                "end_sec": 5.7
+              },
+              {
+                "text": "样",
+                "start_sec": 5.7,
+                "end_sec": 5.88
+              },
+              {
+                "text": "故",
+                "start_sec": 5.88,
+                "end_sec": 6.0
+              },
+              {
+                "text": "事",
+                "start_sec": 6.0,
+                "end_sec": 6.18
+              },
+              {
+                "text": "更",
+                "start_sec": 6.18,
+                "end_sec": 6.36
+              },
+              {
+                "text": "有",
+                "start_sec": 6.36,
+                "end_sec": 6.54
+              },
+              {
+                "text": "趣",
+                "start_sec": 6.54,
+                "end_sec": 6.86
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0080_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"积木城堡\", \"reason\": \"这是故事中明确出现的具象场景物，可以被展示。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 4.16,
+            "shape": [
+              66560
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，我会抓住故事里具体能看见的东西来配合。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.24
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.24,
+                "end_sec": 0.9
+              },
+              {
+                "text": "我",
+                "start_sec": 0.9,
+                "end_sec": 1.14
+              },
+              {
+                "text": "会",
+                "start_sec": 1.14,
+                "end_sec": 1.38
+              },
+              {
+                "text": "抓",
+                "start_sec": 1.38,
+                "end_sec": 1.5
+              },
+              {
+                "text": "住",
+                "start_sec": 1.5,
+                "end_sec": 1.68
+              },
+              {
+                "text": "故",
+                "start_sec": 1.68,
+                "end_sec": 1.8
+              },
+              {
+                "text": "事",
+                "start_sec": 1.8,
+                "end_sec": 1.92
+              },
+              {
+                "text": "里",
+                "start_sec": 1.92,
+                "end_sec": 2.1
+              },
+              {
+                "text": "具",
+                "start_sec": 2.1,
+                "end_sec": 2.22
+              },
+              {
+                "text": "体",
+                "start_sec": 2.22,
+                "end_sec": 2.46
+              },
+              {
+                "text": "能",
+                "start_sec": 2.46,
+                "end_sec": 2.58
+              },
+              {
+                "text": "看",
+                "start_sec": 2.58,
+                "end_sec": 2.76
+              },
+              {
+                "text": "见",
+                "start_sec": 2.76,
+                "end_sec": 2.94
+              },
+              {
+                "text": "的",
+                "start_sec": 2.94,
+                "end_sec": 3.06
+              },
+              {
+                "text": "东",
+                "start_sec": 3.06,
+                "end_sec": 3.18
+              },
+              {
+                "text": "西",
+                "start_sec": 3.18,
+                "end_sec": 3.36
+              },
+              {
+                "text": "来",
+                "start_sec": 3.36,
+                "end_sec": 3.6
+              },
+              {
+                "text": "配",
+                "start_sec": 3.6,
+                "end_sec": 3.72
+              },
+              {
+                "text": "合。",
+                "start_sec": 3.72,
+                "end_sec": 4.14
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续讲述内容，希望我根据这条规则识别其中可以被呈现出来的具体对象。这个请求不是普通闲聊，也不是让我立刻编故事，而是在为后续对话设定一个持续生效的展示配置。我需要先记住这条配置，并进入持续展示/监听模式；之后在用户继续说话时，我要边听边判断，只有出现符合规则的具体可见对象时，才在后台调用 display_object_on_board(name) 进行展示。对于不符合规则的表达，我应当直接跳过，保持安静，不打断用户，也不需要对每一句都展开长篇回应。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 3.54
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0080_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "积木城堡"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

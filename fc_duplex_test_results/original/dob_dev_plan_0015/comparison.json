@@ -1,0 +1,106 @@
+{
+  "sample_id": "dob_dev_plan_0015",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0015.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0015/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 19.11562967300415,
+  "gt": {
+    "n_tokens": 1562,
+    "spoken_text": "好的，我已经按你的描述把该呈现的早餐物品处理好了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，并不是要我把这句话当成普通聊天来回应，而是要我按照这个规则识别后续内容里可以被呈现的对象。我意识到这是一条会持续生效的配置，需要让我进入持续展示/监听模式：一边听用户连续描述，一边判断哪些内容符合当前规则。现在我需要先记住这条配置，并明确后续只要听到符合规则的具体可见对象，就在后台调用 display_object_on_board，把对应名称展示出来；如果听到的内容不符合这条规则，只需要跳过，保持安静，不打断用户，也不必对每一句都做冗长回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水果篮"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "吐司机"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "咖啡杯"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "牛奶盒"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0015_call_01",
+      "dob_dev_plan_0015_call_02",
+      "dob_dev_plan_0015_call_03",
+      "dob_dev_plan_0015_call_04"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1337,
+    "spoken_text": "好的，我已经按你的描述把需要呈现的早餐物品处理好了",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，并不是要我把这句话当成普通聊天来回应，而是要我按照这个规则识别后续内容里可以被呈现的对象。我意识到这是一条会持续生效的配置，需要让我进入持续展示/监听模式：一边听用户连续描述，一边判断哪些内容符合当前规则。现在我需要先记住这条配置，并明确后续只要听到符合规则的具体可见对象，就在后台调用 display_object_on_board，把对应名称展示出来；如果听到的内容不符合这条规则，只需要跳过，保持安静，不打断用户，也不必对每一句都做冗长回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0015_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水果篮"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0015_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "吐司机"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0015_call_03",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "咖啡杯"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0015_call_04",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "牛奶盒"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 27,
+    "n_audio_units": 23
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4947,
+    "gt_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><input_event_slot><tool_response_event><tool_call_id>dob_dev_plan_0015_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"水果篮\", \"reason\": \"这是桌",
+    "pred_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit><unit><user_audio_slot><|audio_placeholder|><|audio_place"
+  }
+}

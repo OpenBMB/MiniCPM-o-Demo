@@ -1,0 +1,693 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0023",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 14.72,
+            "shape": [
+              235520
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "请展示我提到的可见厨房相关物品。\n小朋友看这里，先用木勺慢慢搅，等柠檬片转起来，闻起来会更清爽一点；如果觉得还不够，可以调到甜一点，再观察颜色变化。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "请",
+                "start_sec": 0.0,
+                "end_sec": 0.48
+              },
+              {
+                "text": "展",
+                "start_sec": 0.48,
+                "end_sec": 0.66
+              },
+              {
+                "text": "示",
+                "start_sec": 0.66,
+                "end_sec": 0.84
+              },
+              {
+                "text": "我",
+                "start_sec": 0.84,
+                "end_sec": 1.02
+              },
+              {
+                "text": "提",
+                "start_sec": 1.02,
+                "end_sec": 1.14
+              },
+              {
+                "text": "到",
+                "start_sec": 1.14,
+                "end_sec": 1.32
+              },
+              {
+                "text": "的",
+                "start_sec": 1.32,
+                "end_sec": 1.56
+              },
+              {
+                "text": "可",
+                "start_sec": 1.56,
+                "end_sec": 1.8
+              },
+              {
+                "text": "见",
+                "start_sec": 1.8,
+                "end_sec": 1.98
+              },
+              {
+                "text": "厨",
+                "start_sec": 1.98,
+                "end_sec": 2.16
+              },
+              {
+                "text": "房",
+                "start_sec": 2.16,
+                "end_sec": 2.4
+              },
+              {
+                "text": "相",
+                "start_sec": 2.4,
+                "end_sec": 2.52
+              },
+              {
+                "text": "关",
+                "start_sec": 2.52,
+                "end_sec": 2.7
+              },
+              {
+                "text": "物",
+                "start_sec": 2.7,
+                "end_sec": 2.88
+              },
+              {
+                "text": "品",
+                "start_sec": 2.88,
+                "end_sec": 3.6
+              },
+              {
+                "text": "小",
+                "start_sec": 3.6,
+                "end_sec": 3.78
+              },
+              {
+                "text": "朋",
+                "start_sec": 3.78,
+                "end_sec": 3.96
+              },
+              {
+                "text": "友",
+                "start_sec": 3.96,
+                "end_sec": 4.08
+              },
+              {
+                "text": "看",
+                "start_sec": 4.08,
+                "end_sec": 4.32
+              },
+              {
+                "text": "这",
+                "start_sec": 4.32,
+                "end_sec": 4.44
+              },
+              {
+                "text": "里",
+                "start_sec": 4.44,
+                "end_sec": 4.86
+              },
+              {
+                "text": "先",
+                "start_sec": 4.86,
+                "end_sec": 5.16
+              },
+              {
+                "text": "用",
+                "start_sec": 5.16,
+                "end_sec": 5.4
+              },
+              {
+                "text": "木",
+                "start_sec": 5.4,
+                "end_sec": 5.58
+              },
+              {
+                "text": "勺",
+                "start_sec": 5.58,
+                "end_sec": 5.88
+              },
+              {
+                "text": "慢",
+                "start_sec": 5.88,
+                "end_sec": 6.06
+              },
+              {
+                "text": "慢",
+                "start_sec": 6.06,
+                "end_sec": 6.24
+              },
+              {
+                "text": "搅",
+                "start_sec": 6.24,
+                "end_sec": 6.84
+              },
+              {
+                "text": "等",
+                "start_sec": 6.84,
+                "end_sec": 7.14
+              },
+              {
+                "text": "柠",
+                "start_sec": 7.14,
+                "end_sec": 7.26
+              },
+              {
+                "text": "檬",
+                "start_sec": 7.26,
+                "end_sec": 7.38
+              },
+              {
+                "text": "片",
+                "start_sec": 7.38,
+                "end_sec": 7.68
+              },
+              {
+                "text": "转",
+                "start_sec": 7.68,
+                "end_sec": 7.86
+              },
+              {
+                "text": "起",
+                "start_sec": 7.86,
+                "end_sec": 7.98
+              },
+              {
+                "text": "来",
+                "start_sec": 7.98,
+                "end_sec": 8.46
+              },
+              {
+                "text": "闻",
+                "start_sec": 8.46,
+                "end_sec": 8.64
+              },
+              {
+                "text": "起",
+                "start_sec": 8.64,
+                "end_sec": 8.76
+              },
+              {
+                "text": "来",
+                "start_sec": 8.76,
+                "end_sec": 8.94
+              },
+              {
+                "text": "会",
+                "start_sec": 8.94,
+                "end_sec": 9.06
+              },
+              {
+                "text": "更",
+                "start_sec": 9.06,
+                "end_sec": 9.3
+              },
+              {
+                "text": "清",
+                "start_sec": 9.3,
+                "end_sec": 9.42
+              },
+              {
+                "text": "爽",
+                "start_sec": 9.42,
+                "end_sec": 9.6
+              },
+              {
+                "text": "一",
+                "start_sec": 9.6,
+                "end_sec": 9.72
+              },
+              {
+                "text": "点",
+                "start_sec": 9.72,
+                "end_sec": 10.56
+              },
+              {
+                "text": "如",
+                "start_sec": 10.56,
+                "end_sec": 10.68
+              },
+              {
+                "text": "果",
+                "start_sec": 10.68,
+                "end_sec": 10.8
+              },
+              {
+                "text": "觉",
+                "start_sec": 10.8,
+                "end_sec": 10.98
+              },
+              {
+                "text": "得",
+                "start_sec": 10.98,
+                "end_sec": 11.1
+              },
+              {
+                "text": "还",
+                "start_sec": 11.1,
+                "end_sec": 11.22
+              },
+              {
+                "text": "不",
+                "start_sec": 11.22,
+                "end_sec": 11.34
+              },
+              {
+                "text": "够",
+                "start_sec": 11.34,
+                "end_sec": 11.64
+              },
+              {
+                "text": "可",
+                "start_sec": 11.64,
+                "end_sec": 11.76
+              },
+              {
+                "text": "以",
+                "start_sec": 11.76,
+                "end_sec": 11.94
+              },
+              {
+                "text": "调",
+                "start_sec": 11.94,
+                "end_sec": 12.06
+              },
+              {
+                "text": "到",
+                "start_sec": 12.06,
+                "end_sec": 12.3
+              },
+              {
+                "text": "甜",
+                "start_sec": 12.3,
+                "end_sec": 12.48
+              },
+              {
+                "text": "一",
+                "start_sec": 12.48,
+                "end_sec": 12.6
+              },
+              {
+                "text": "点",
+                "start_sec": 12.6,
+                "end_sec": 12.96
+              },
+              {
+                "text": "再",
+                "start_sec": 12.96,
+                "end_sec": 13.26
+              },
+              {
+                "text": "观",
+                "start_sec": 13.26,
+                "end_sec": 13.38
+              },
+              {
+                "text": "察",
+                "start_sec": 13.38,
+                "end_sec": 13.62
+              },
+              {
+                "text": "颜",
+                "start_sec": 13.62,
+                "end_sec": 13.74
+              },
+              {
+                "text": "色",
+                "start_sec": 13.74,
+                "end_sec": 13.98
+              },
+              {
+                "text": "变",
+                "start_sec": 13.98,
+                "end_sec": 14.1
+              },
+              {
+                "text": "化",
+                "start_sec": 14.1,
+                "end_sec": 14.7
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0023_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"木勺\", \"reason\": \"用户明确提到的可见厨具，符合展示规则。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0023_call_02",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"柠檬片\", \"reason\": \"用户明确提到的可见食材，符合展示规则。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 5.12,
+            "shape": [
+              81920
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，这样讲给小朋友听会很清楚，也方便他们观察变化。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.36
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.36,
+                "end_sec": 1.08
+              },
+              {
+                "text": "这",
+                "start_sec": 1.08,
+                "end_sec": 1.2
+              },
+              {
+                "text": "样",
+                "start_sec": 1.2,
+                "end_sec": 1.44
+              },
+              {
+                "text": "讲",
+                "start_sec": 1.44,
+                "end_sec": 1.56
+              },
+              {
+                "text": "给",
+                "start_sec": 1.56,
+                "end_sec": 1.74
+              },
+              {
+                "text": "小",
+                "start_sec": 1.74,
+                "end_sec": 1.86
+              },
+              {
+                "text": "朋",
+                "start_sec": 1.86,
+                "end_sec": 1.98
+              },
+              {
+                "text": "友",
+                "start_sec": 1.98,
+                "end_sec": 2.1
+              },
+              {
+                "text": "听",
+                "start_sec": 2.1,
+                "end_sec": 2.28
+              },
+              {
+                "text": "会",
+                "start_sec": 2.28,
+                "end_sec": 2.46
+              },
+              {
+                "text": "很",
+                "start_sec": 2.46,
+                "end_sec": 2.64
+              },
+              {
+                "text": "清",
+                "start_sec": 2.64,
+                "end_sec": 2.76
+              },
+              {
+                "text": "楚，",
+                "start_sec": 2.76,
+                "end_sec": 3.42
+              },
+              {
+                "text": "也",
+                "start_sec": 3.42,
+                "end_sec": 3.66
+              },
+              {
+                "text": "方",
+                "start_sec": 3.66,
+                "end_sec": 3.78
+              },
+              {
+                "text": "便",
+                "start_sec": 3.78,
+                "end_sec": 4.02
+              },
+              {
+                "text": "他",
+                "start_sec": 4.02,
+                "end_sec": 4.14
+              },
+              {
+                "text": "们",
+                "start_sec": 4.14,
+                "end_sec": 4.26
+              },
+              {
+                "text": "观",
+                "start_sec": 4.26,
+                "end_sec": 4.44
+              },
+              {
+                "text": "察",
+                "start_sec": 4.44,
+                "end_sec": 4.62
+              },
+              {
+                "text": "变",
+                "start_sec": 4.62,
+                "end_sec": 4.74
+              },
+              {
+                "text": "化。",
+                "start_sec": 4.74,
+                "end_sec": 5.1
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条展示规则，我理解他的用意是：接下来他说话时，我要从连续内容中识别符合规则的具体可见对象，并把它们呈现出来。这不是普通闲聊，而是在设定一条持续生效的工作配置，要求我进入持续展示/监听模式。我需要先响应并记住这条配置，明确后续会按规则在后台调用 display_object_on_board(name)；当用户继续讲述时，我只在听到符合条件的对象时调用 display_object_on_board，没有符合的内容就保持安静，不打断，也不对每句话都长篇分析。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 5.88
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0023_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "木勺"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 7.68
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0023_call_02",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "柠檬片"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

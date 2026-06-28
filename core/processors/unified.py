@@ -104,7 +104,8 @@ for audio_chunk in audio_stream:
 ```
 """
 
-from typing import Optional, Generator, List, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, Optional, Generator, List, TYPE_CHECKING
 import os
 import time
 import logging
@@ -121,9 +122,22 @@ from core.schemas import (
     # Streaming
     StreamingRequest, StreamingChunk, StreamingResponse, RollbackResult,
     # Duplex
-    DuplexConfig, DuplexGenerateResult,
+    DuplexConfig, DuplexGenerateResult, DuplexOfflineInput, DuplexOfflineOutput,
     # Common
     Message, Role,
+)
+from core.schemas.fc_duplex import (
+    FcClosedSpan,
+    FcDuplexConfig,
+    FcDuplexOfflineInput,
+    FcDuplexOfflineOutput,
+    FcDuplexPrepareRequest,
+    FcDuplexPrefillRequest,
+    FcDuplexStepResult,
+    FcDuplexUnitInfo,
+    FcFinalizeUnitRequest,
+    FcNonSpokenGenerateRequest,
+    FcSpokenGenerateRequest,
 )
 
 if TYPE_CHECKING:
@@ -1165,6 +1179,335 @@ class DuplexView:
             )
 
 
+class ToolCallIdGenerator:
+    """Simple unique tool call id generator."""
+
+    def __init__(self, prefix: str = "fc_call"):
+        self.prefix = prefix
+        self._next = 1
+
+    def next_id(self) -> str:
+        value = f"{self.prefix}_{self._next:06d}"
+        self._next += 1
+        return value
+
+
+class FixedToolCallIdGenerator:
+    """Deterministic generator for offline train/infer consistency tests."""
+
+    def __init__(self, ids: Iterable[str]):
+        self._ids = list(ids)
+        self._index = 0
+
+    def next_id(self) -> str:
+        if self._index >= len(self._ids):
+            raise ValueError("fixed tool_call_id generator exhausted")
+        value = self._ids[self._index]
+        self._index += 1
+        return value
+
+
+@dataclass
+class ToolCallState:
+    id: str
+    tool_call: Optional[Dict[str, Any]] = None
+    parse_error: Optional[str] = None
+    wire: Optional[str] = None
+    started_sent: bool = False
+    response_received: bool = False
+
+
+class ToolCallStateManager:
+    """View-level tool call id and response state manager."""
+
+    def __init__(self, id_generator: Optional[Any] = None):
+        self.id_generator = id_generator or ToolCallIdGenerator()
+        self._states: Dict[str, ToolCallState] = {}
+        self._pending_started: List[str] = []
+        self._pending_error_responses: List[Dict[str, Any]] = []
+
+    @property
+    def tool_calls(self) -> List[Dict[str, Any]]:
+        calls = []
+        for state in self._states.values():
+            if state.tool_call is not None and not state.parse_error:
+                calls.append({
+                    "tool_call_id": state.id,
+                    **state.tool_call,
+                })
+        return calls
+
+    def _next_unique_id(self) -> str:
+        call_id = self.id_generator.next_id()
+        if call_id in self._states:
+            raise ValueError(f"duplicate generated tool_call_id: {call_id}")
+        return call_id
+
+    def register_tool_call(self, tool_call: Dict[str, Any], wire: Optional[str] = None) -> str:
+        call_id = self._next_unique_id()
+        self._states[call_id] = ToolCallState(id=call_id, tool_call=tool_call, wire=wire)
+        self._pending_started.append(call_id)
+        return call_id
+
+    def register_parse_error(self, error: str, wire: Optional[str] = None) -> str:
+        call_id = self._next_unique_id()
+        self._states[call_id] = ToolCallState(id=call_id, parse_error=error, wire=wire)
+        self._pending_started.append(call_id)
+        self._pending_error_responses.append({
+            "type": "tool_response",
+            "call_id": call_id,
+            "content": f"工具调用解析失败，无法执行该工具调用。错误信息：{error}",
+        })
+        return call_id
+
+    def consume_pending_started_events(self) -> List[Dict[str, Any]]:
+        events = []
+        while self._pending_started:
+            call_id = self._pending_started.pop(0)
+            state = self._states[call_id]
+            state.started_sent = True
+            events.append({"type": "tool_started", "call_id": call_id})
+        return events
+
+    def consume_pending_error_responses(self) -> List[Dict[str, Any]]:
+        events = list(self._pending_error_responses)
+        self._pending_error_responses.clear()
+        return events
+
+    def validate_and_mark_responses(self, tool_responses) -> List[Dict[str, Any]]:
+        if not tool_responses:
+            return []
+        converted = []
+        for response in tool_responses:
+            if hasattr(response, "model_dump"):
+                item = response.model_dump()
+            elif isinstance(response, dict):
+                item = dict(response)
+            else:
+                call_id, content = response
+                item = {"call_id": call_id, "content": content}
+            call_id = item.get("call_id") or item.get("tool_call_id") or item.get("id")
+            if call_id not in self._states:
+                raise ValueError(f"unknown tool_call_id: {call_id}")
+            state = self._states[call_id]
+            if state.response_received:
+                raise ValueError(f"duplicate tool_response for tool_call_id: {call_id}")
+            state.response_received = True
+            item["call_id"] = call_id
+            item.setdefault("type", "tool_response")
+            converted.append(item)
+        return converted
+
+
+class FcDuplexView:
+    """FC slot Duplex 模式视图。"""
+
+    def __init__(self, model: "MiniCPMO", config: Optional[FcDuplexConfig] = None):
+        self._model = model
+        self.config = config or FcDuplexConfig()
+        self.tool_call_manager = ToolCallStateManager()
+
+    @staticmethod
+    def _audio_from_base64(audio_data: Optional[str]) -> Optional[np.ndarray]:
+        if not audio_data:
+            return None
+        audio_bytes = base64.b64decode(audio_data)
+        return np.frombuffer(audio_bytes, dtype=np.float32)
+
+    @staticmethod
+    def _step_result(data: dict) -> FcDuplexStepResult:
+        spans = [FcClosedSpan(**span) for span in data.get("closed_spans", []) or []]
+        return FcDuplexStepResult(
+            token_ids=data.get("token_ids", []),
+            terminated=data.get("terminated", False),
+            close_reason=data.get("close_reason"),
+            closed_spans=spans,
+            text=data.get("text", ""),
+            metadata={
+                k: v
+                for k, v in data.items()
+                if k not in {"token_ids", "terminated", "close_reason", "closed_spans", "text"}
+            },
+        )
+
+    @staticmethod
+    def _unit_info(data: dict) -> FcDuplexUnitInfo:
+        spans = [FcClosedSpan(**span) for span in data.get("closed_spans", []) or []]
+        return FcDuplexUnitInfo(
+            unit=data.get("unit", 0),
+            n_audio=data.get("n_audio", 0),
+            has_event=data.get("has_event", False),
+            is_listen=data.get("is_listen"),
+            is_speaking=data.get("is_speaking", False),
+            spoken_ids=data.get("spoken_ids", []),
+            non_spoken_ids=data.get("non_spoken_ids", []),
+            non_spoken_terminator=data.get("non_spoken_terminator"),
+            closed_spans=spans,
+        )
+
+    def prepare(self, request: FcDuplexPrepareRequest, tool_call_id_generator: Optional[Any] = None) -> dict:
+        self.tool_call_manager = ToolCallStateManager(tool_call_id_generator)
+        return self._model.fc_duplex_prepare(system_prompt=request.system_prompt, tools=request.tools)
+
+    def streaming_prefill(self, request: FcDuplexPrefillRequest) -> dict:
+        import librosa
+
+        audio_waveform = self._audio_from_base64(request.audio_data)
+        if request.audio_path and audio_waveform is None:
+            audio_waveform, _ = librosa.load(request.audio_path, sr=request.sample_rate, mono=True)
+        tool_events = []
+        tool_events.extend(self.tool_call_manager.consume_pending_started_events())
+        tool_events.extend(self.tool_call_manager.consume_pending_error_responses())
+        tool_events.extend(self.tool_call_manager.validate_and_mark_responses(request.tool_responses))
+        return self._model.fc_duplex_streaming_prefill(
+            audio_waveform=audio_waveform,
+            frame_list=request.frame_list,
+            tool_responses=tool_events or None,
+            sample_rate=request.sample_rate,
+        )
+
+    def streaming_spoken_generate(self, request: FcSpokenGenerateRequest) -> dict:
+        return self._model.fc_duplex_streaming_spoken_generate(
+            max_tokens=request.max_tokens,
+            decode_mode=request.decode_mode,
+        )
+
+    def streaming_non_spoken_generate(self, request: FcNonSpokenGenerateRequest) -> FcDuplexStepResult:
+        result = self._model.fc_duplex_streaming_non_spoken_generate(
+            decode_mode=request.decode_mode,
+            max_tokens=request.max_tokens,
+            close_reason=request.close_reason,
+        )
+        self._attach_tool_call_ids(result)
+        return self._step_result(result)
+
+    def _attach_tool_call_ids(self, result: dict) -> None:
+        for span in result.get("closed_spans", []) or []:
+            if span.get("type") != "tool_call":
+                continue
+            tool_call = span.get("tool_call")
+            wire = span.get("wire")
+            error = span.get("error")
+            if isinstance(tool_call, dict) and tool_call.get("error"):
+                error = tool_call.get("error")
+            if error or not isinstance(tool_call, dict) or not tool_call.get("name"):
+                call_id = self.tool_call_manager.register_parse_error(
+                    error or "tool call parse failed",
+                    wire=wire,
+                )
+                span["tool_call_id"] = call_id
+                span["error"] = error or "tool call parse failed"
+                continue
+            call_id = self.tool_call_manager.register_tool_call(tool_call, wire=wire)
+            span["tool_call_id"] = call_id
+            tool_call["tool_call_id"] = call_id
+
+    def finalize_unit(self, request: Optional[FcFinalizeUnitRequest] = None) -> FcDuplexUnitInfo:
+        del request
+        return self._unit_info(self._model.fc_duplex_finalize_unit())
+
+    def decode_output(self, output_ids: Optional[List[int]] = None, tools=None) -> dict:
+        return self._model.fc_duplex_decode_output_ids(output_ids=output_ids, tools=tools)
+
+    def cleanup(self) -> None:
+        self._model.fc_duplex_cleanup()
+
+    def offline_inference(
+        self,
+        task_input: FcDuplexOfflineInput,
+        non_spoken_budget_per_unit: Optional[int] = None,
+    ) -> FcDuplexOfflineOutput:
+        import librosa
+
+        start_time = time.time()
+        budget = (
+            task_input.config.non_spoken_budget_per_unit
+            if non_spoken_budget_per_unit is None
+            else non_spoken_budget_per_unit
+        )
+        units_info = []
+
+        try:
+            id_generator = FixedToolCallIdGenerator(task_input.tool_call_ids) if task_input.tool_call_ids else None
+            self.prepare(
+                FcDuplexPrepareRequest(
+                    system_prompt=task_input.system_prompt,
+                    tools=task_input.tools,
+                ),
+                tool_call_id_generator=id_generator,
+            )
+
+            audio = self._audio_from_base64(task_input.audio_data)
+            sample_rate = task_input.config.sample_rate
+            if task_input.user_audio_path and audio is None:
+                audio, _ = librosa.load(task_input.user_audio_path, sr=sample_rate, mono=True)
+            if audio is None:
+                audio = np.zeros(sample_rate, dtype=np.float32)
+
+            samples_per_unit = max(1, int(round(task_input.config.unit_sec * sample_rate)))
+            chunks = [
+                audio[i:i + samples_per_unit]
+                for i in range(0, len(audio), samples_per_unit)
+            ] or [np.zeros(samples_per_unit, dtype=np.float32)]
+            n_audio_units = len(chunks)
+            total_units = max(1, n_audio_units + task_input.config.extra_response_units)
+            silence = np.zeros(samples_per_unit, dtype=np.float32)
+
+            for unit_idx in range(total_units):
+                chunk = chunks[unit_idx] if unit_idx < n_audio_units else silence
+                if len(chunk) < samples_per_unit:
+                    chunk = np.pad(chunk, (0, samples_per_unit - len(chunk)))
+
+                responses = task_input.tool_responses_by_unit.get(unit_idx)
+                self.streaming_prefill(FcDuplexPrefillRequest(
+                    audio_data=base64.b64encode(chunk.astype(np.float32).tobytes()).decode("utf-8"),
+                    tool_responses=responses,
+                    sample_rate=sample_rate,
+                ))
+                self.streaming_spoken_generate(FcSpokenGenerateRequest(
+                    max_tokens=task_input.config.max_spoken_tokens,
+                    decode_mode=task_input.config.decode_mode,
+                ))
+
+                terminated = False
+                for _ in range(budget):
+                    step = self.streaming_non_spoken_generate(FcNonSpokenGenerateRequest(
+                        max_tokens=1,
+                        decode_mode=task_input.config.decode_mode,
+                    ))
+                    if step.terminated:
+                        terminated = True
+                        break
+                if not terminated:
+                    self.streaming_non_spoken_generate(FcNonSpokenGenerateRequest(
+                        max_tokens=0,
+                        decode_mode=task_input.config.decode_mode,
+                        close_reason="budget_reached",
+                    ))
+                units_info.append(self.finalize_unit())
+
+            decoded = self.decode_output(tools=task_input.tools)
+            return FcDuplexOfflineOutput(
+                success=True,
+                output_ids=decoded.get("output_ids", []),
+                output_render=decoded.get("output_render", ""),
+                spoken_text=decoded.get("spoken_text", ""),
+                think_text=decoded.get("think_text", ""),
+                tool_calls=self.tool_call_manager.tool_calls or decoded.get("tool_calls", []),
+                units_info=units_info,
+                total_units=len(units_info),
+                n_audio_units=n_audio_units,
+                total_duration_ms=(time.time() - start_time) * 1000,
+            )
+        except Exception as exc:
+            logger.exception("FC duplex offline inference failed")
+            return FcDuplexOfflineOutput(
+                success=False,
+                error=str(exc),
+                total_duration_ms=(time.time() - start_time) * 1000,
+            )
+
+
 # ============================================================
 # UnifiedProcessor：统一入口
 # ============================================================
@@ -1242,6 +1585,7 @@ class UnifiedProcessor(BaseProcessor):
         self._chat_view: Optional[ChatView] = None
         self._half_duplex_view: Optional[HalfDuplexView] = None
         self._duplex_view: Optional[DuplexView] = None
+        self._fc_duplex_view: Optional[FcDuplexView] = None
 
         # Current mode
         self._current_mode: Optional[ProcessorMode] = None
@@ -1420,6 +1764,7 @@ class UnifiedProcessor(BaseProcessor):
         self._chat_view = ChatView(self.model, self.ref_audio_path)
         self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
         self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
+        self._fc_duplex_view = FcDuplexView(self.model)
 
         total_time = time.time() - start
         logger.info(f"UnifiedProcessor initialization complete in {total_time:.1f}s")
@@ -1490,6 +1835,15 @@ class UnifiedProcessor(BaseProcessor):
 
         return self._duplex_view
 
+    def set_fc_duplex_mode(self) -> FcDuplexView:
+        """Return FC slot Duplex view.
+
+        FC duplex uses its own runtime on the same model instance and does not
+        reuse the old ``ProcessorMode.DUPLEX`` switching path.
+        """
+        self._sync_compile_state(True)
+        return self._fc_duplex_view
+
     # ==================== KV Cache State ====================
 
     @property
@@ -1546,3 +1900,8 @@ class UnifiedProcessor(BaseProcessor):
     def duplex(self) -> DuplexView:
         """Duplex view (does not switch mode, only returns the view)."""
         return self._duplex_view
+
+    @property
+    def fc_duplex(self) -> FcDuplexView:
+        """FC slot Duplex view (does not switch old Duplex mode)."""
+        return self._fc_duplex_view

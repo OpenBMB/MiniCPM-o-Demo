@@ -18,6 +18,7 @@ import json
 import logging
 import math
 import os
+import re
 import tempfile
 import threading
 import time
@@ -26,6 +27,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from threading import Thread
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -97,6 +99,9 @@ class MiniCPMOPreTrainedModel(Qwen3PreTrainedModel):
 
 
 class MiniCPMO(MiniCPMOPreTrainedModel):
+    # Compatible with newer transformers model loading code.
+    all_tied_weights_keys: dict = {}
+
     def __init__(self, config):
         super().__init__(config)
 
@@ -159,6 +164,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         
         # 双工能力组件（组合模式，通过 init_unified 初始化）
         self.duplex: Optional["DuplexCapability"] = None
+        self.fc_duplex: Optional["FcDuplexCapability"] = None
         
         # 双工生成配置（传递给 DuplexCapability）
         self._duplex_config = {
@@ -174,6 +180,13 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             "force_listen_count": 0,
             "tts_temperature": 0.8,
             "tts_repetition_penalty": 1.05,
+        }
+        self._fc_duplex_config = {
+            "temperature": 0.7,
+            "tool_format": "minicpm4_xml",
+            "default_unit_sec": 1.0,
+            "max_spoken_tokens_per_unit": 24,
+            "extra_response_units": 4,
         }
 
     def _ensure_asset_dir(self, asset_subpath: str, model_dir: Optional[str] = None) -> str:
@@ -340,6 +353,17 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         if pt_path is not None:
             logger.info(f"Loading extra weights: {pt_path}")
             state_dict = torch.load(pt_path, map_location="cpu")
+            embed_key = "llm.model.embed_tokens.weight"
+            if embed_key in state_dict:
+                checkpoint_vocab = int(state_dict[embed_key].shape[0])
+                current_vocab = int(self.llm.get_input_embeddings().weight.shape[0])
+                if checkpoint_vocab > current_vocab:
+                    logger.info(
+                        "Resizing LLM token embeddings before loading extra weights: %d -> %d",
+                        current_vocab,
+                        checkpoint_vocab,
+                    )
+                    self.llm.resize_token_embeddings(checkpoint_vocab)
             info = self.load_state_dict(state_dict, strict=False)
             logger.info(f"Weights loaded — missing: {len(info.missing_keys)}, unexpected: {len(info.unexpected_keys)}")
             if info.unexpected_keys:
@@ -349,6 +373,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         # Update duplex config
         if duplex_config:
             self._duplex_config.update(duplex_config)
+            fc_keys = set(self._fc_duplex_config)
+            self._fc_duplex_config.update({k: v for k, v in duplex_config.items() if k in fc_keys})
 
         # Preload TTS vocoder
         self.init_token2wav(streaming=True)
@@ -358,6 +384,11 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             model=self,
             device=device,
             **self._duplex_config,
+        )
+        self.fc_duplex = FcDuplexCapability(
+            model=self,
+            device=device,
+            **self._fc_duplex_config,
         )
 
         self._unified_initialized = True
@@ -4061,6 +4092,63 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         if self.duplex is None:
             return False
         return self.duplex.is_session_stop_set()
+
+    # ==================== FC Duplex 透传方法 ====================
+
+    def _require_fc_duplex(self) -> "FcDuplexCapability":
+        if self.fc_duplex is None:
+            raise RuntimeError("FC Duplex 未初始化，请先调用 init_unified()")
+        return self.fc_duplex
+
+    def fc_duplex_prepare(self, system_prompt: str, tools=None) -> dict:
+        return self._require_fc_duplex().prepare(system_prompt=system_prompt, tools=tools)
+
+    def fc_duplex_streaming_prefill(
+        self,
+        audio_waveform: Optional[np.ndarray] = None,
+        frame_list: Optional[List] = None,
+        tool_responses=None,
+        sample_rate: int = 16000,
+        max_slice_nums: int = 1,
+    ) -> dict:
+        return self._require_fc_duplex().streaming_prefill(
+            audio_waveform=audio_waveform,
+            frame_list=frame_list,
+            tool_responses=tool_responses,
+            sample_rate=sample_rate,
+            max_slice_nums=max_slice_nums,
+        )
+
+    def fc_duplex_streaming_spoken_generate(
+        self,
+        max_tokens: int = 24,
+        decode_mode: str = "greedy",
+    ) -> dict:
+        return self._require_fc_duplex().streaming_spoken_generate(
+            max_tokens=max_tokens,
+            decode_mode=decode_mode,
+        )
+
+    def fc_duplex_streaming_non_spoken_generate(
+        self,
+        decode_mode: str = "greedy",
+        max_tokens: int = 1,
+        close_reason: Optional[str] = None,
+    ) -> dict:
+        return self._require_fc_duplex().streaming_non_spoken_generate(
+            decode_mode=decode_mode,
+            max_tokens=max_tokens,
+            close_reason=close_reason,
+        )
+
+    def fc_duplex_finalize_unit(self) -> dict:
+        return self._require_fc_duplex().finalize_unit()
+
+    def fc_duplex_decode_output_ids(self, output_ids=None, tools=None) -> dict:
+        return self._require_fc_duplex().decode_output_ids(output_ids=output_ids, tools=tools)
+
+    def fc_duplex_cleanup(self) -> None:
+        self._require_fc_duplex().cleanup()
     
     def duplex_chat(
         self,
@@ -4212,6 +4300,705 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 "audio_chunks": audio_chunks,
                 "error": str(e),
             }
+
+
+class FcDuplexCapability:
+    """FC slot duplex capability.
+
+    This is a parallel implementation to ``DuplexCapability`` for the new
+    FC slot protocol. It keeps similar lifecycle method names while splitting
+    generation into spoken and non-spoken phases.
+    """
+
+    def __init__(
+        self,
+        model: "MiniCPMO",
+        device: str = "cuda",
+        temperature: float = 0.7,
+        tool_format: str = "minicpm4_xml",
+        forbidden_token_ids=None,
+        **kwargs,
+    ):
+        self.model = model
+        self.device = device
+        self.temperature = temperature
+        self.tool_format = tool_format
+        self.extra_config = kwargs
+
+        if not hasattr(self.model, "processor") or self.model.processor is None:
+            self.model.processor = MiniCPMOProcessor.from_pretrained(
+                self.model.config._name_or_path, trust_remote_code=True
+            )
+        self.processor = self.model.processor
+        self.tokenizer = self.processor.tokenizer
+
+        if forbidden_token_ids is None:
+            tts_pad_id = self.tokenizer.convert_tokens_to_ids("<|tts_pad|>")
+            bad_token_ids = getattr(self.tokenizer, "bad_token_ids", [])
+            forbidden_token_ids = [tts_pad_id] + list(bad_token_ids)
+        self.forbidden_token_ids = forbidden_token_ids
+        self.decoder = StreamDecoder(
+            llm=self.model.llm,
+            tokenizer=self.tokenizer,
+            forbidden_token_ids=self.forbidden_token_ids,
+        )
+
+        self._sdk_tokenizer = None
+        self._registry = None
+        self._serializer = None
+        self._normalize_tool_response_content = None
+        self.K = None
+        self.ids = {}
+        self.id2name = {}
+        self.max_special_id = 0
+        self._resized = False
+
+        self._reset_streaming_state()
+        logger.info("[FcDuplexCapability] initialized")
+
+    @property
+    def protocol(self):
+        """Compatibility accessor: this object owns the protocol helpers."""
+        self._ensure_protocol()
+        return self
+
+    def _ensure_protocol(self):
+        if self._registry is not None:
+            return
+        from minicpm_o5_sdk import (
+            get_o5_tool_serializer,
+            load_builtin_o45_fc_tokenizer,
+            normalize_tool_response_content,
+        )
+        from minicpm_o5_sdk.protocols.duplex.special_tokens import (
+            O5SpecialTokenKey,
+            O5SpecialTokenRegistry,
+        )
+
+        self.K = O5SpecialTokenKey
+        self._normalize_tool_response_content = normalize_tool_response_content
+        self._sdk_tokenizer = load_builtin_o45_fc_tokenizer()
+        self._registry = O5SpecialTokenRegistry.from_tokenizer(self._sdk_tokenizer)
+        self._serializer = get_o5_tool_serializer(self.tool_format)
+
+        self.ids = {}
+        self.id2name = {}
+        for key in self.K:
+            try:
+                resolved = self._registry.get(key)
+            except Exception:
+                continue
+            self.ids[key.value] = resolved.token_id
+            self.id2name[resolved.token_id] = resolved.display_name
+        self.max_special_id = max(self.id2name) if self.id2name else 0
+        logger.info(
+            "[FcDuplexCapability] protocol ready: %d special tokens, max_id=%d",
+            len(self.id2name),
+            self.max_special_id,
+        )
+
+    def sid(self, key) -> int:
+        self._ensure_protocol()
+        return self._registry.get(key).token_id
+
+    def is_special(self, tid: int) -> bool:
+        self._ensure_protocol()
+        return tid in self.id2name
+
+    def encode_text(self, text: str) -> list:
+        self._ensure_protocol()
+        if not text:
+            return []
+        return [t.token_id for t in self._sdk_tokenizer.encode_ordinary_with_offsets(text)]
+
+    def decode_text(self, ids: list) -> str:
+        self._ensure_protocol()
+        if not ids:
+            return ""
+        return self._sdk_tokenizer.decode_ordinary(ids)
+
+    def _flush(self, buf: list) -> str:
+        try:
+            return self.decode_text(buf)
+        except Exception:
+            parts = []
+            for tid in buf:
+                try:
+                    parts.append(self.decode_text([tid]))
+                except Exception:
+                    parts.append(f"<id:{tid}>")
+            return "".join(parts)
+
+    def safe_decode_text(self, ids: list) -> str:
+        self._ensure_protocol()
+        out = []
+        buf = []
+        for tid in ids:
+            if self.is_special(tid):
+                if buf:
+                    out.append(self._flush(buf))
+                    buf = []
+                out.append(self.id2name[tid])
+            else:
+                buf.append(tid)
+        if buf:
+            out.append(self._flush(buf))
+        return "".join(out)
+
+    def render_token_stream(self, ids: list) -> str:
+        return self.safe_decode_text(ids)
+
+    def _normalize_tools(self, tools):
+        if not tools:
+            return None
+        if not isinstance(tools, (list, tuple)):
+            tools = [tools]
+        if all(not isinstance(t, dict) for t in tools):
+            return list(tools)
+        try:
+            from minicpm_o5_sdk import OpenAIToolDefinition
+
+            return [OpenAIToolDefinition.model_validate(t) if isinstance(t, dict) else t for t in tools]
+        except Exception:
+            return list(tools)
+
+    def _system_prefill_ids(self, system_prompt: str, tools=None) -> list:
+        self._ensure_protocol()
+        tools = self._normalize_tools(tools)
+        ids = [self.sid(self.K.IM_START)]
+        ids += self.encode_text(system_prompt or "")
+        if tools:
+            block = self._serializer.render_tool_system_block(list(tools))
+            ids += self.encode_text(block.preamble)
+            ids += self.encode_text(block.definitions)
+            ids += self.encode_text(block.guidelines)
+        ids += [self.sid(self.K.IM_END)]
+        return ids
+
+    def _user_video_slot_ids(self, n_image: int = 0, n_slice: int = 0) -> list:
+        self._ensure_protocol()
+        if n_image <= 0 and n_slice <= 0:
+            return []
+        ids = [self.sid(self.K.USER_VIDEO_SLOT_START)]
+        if n_image > 0:
+            ids += [self.sid(self.K.IMAGE_START)]
+            ids += [self.sid(self.K.IMAGE_PLACEHOLDER)] * n_image
+            ids += [self.sid(self.K.IMAGE_END)]
+        if n_slice > 0:
+            ids += [self.sid(self.K.SLICE_START)]
+            ids += [self.sid(self.K.IMAGE_PLACEHOLDER)] * n_slice
+            ids += [self.sid(self.K.SLICE_END)]
+        ids += [self.sid(self.K.USER_VIDEO_SLOT_END)]
+        return ids
+
+    def _user_audio_slot_ids(self, n_audio: int = 0) -> list:
+        self._ensure_protocol()
+        if n_audio <= 0:
+            return []
+        return (
+            [self.sid(self.K.USER_AUDIO_SLOT_START)]
+            + [self.sid(self.K.AUDIO_PLACEHOLDER)] * n_audio
+            + [self.sid(self.K.USER_AUDIO_SLOT_END)]
+        )
+
+    def _input_event_slot_ids(self, tool_responses=None) -> list:
+        self._ensure_protocol()
+        if not tool_responses:
+            return []
+        ids = [self.sid(self.K.INPUT_EVENT_SLOT_START)]
+        for item in tool_responses:
+            if isinstance(item, dict):
+                call_id = item.get("call_id") or item.get("id") or item.get("tool_call_id")
+                event_type = item.get("type") or item.get("event") or "tool_response"
+                raw = item.get("content") if "content" in item else item.get("response")
+            else:
+                call_id, raw = item
+                event_type = "tool_response"
+            if not call_id:
+                raise ValueError("tool event missing call_id/tool_call_id")
+            ids += [self.sid(self.K.TOOL_RESPONSE_EVENT_START), self.sid(self.K.TOOL_CALL_ID_START)]
+            ids += self.encode_text(str(call_id))
+            ids += [self.sid(self.K.TOOL_CALL_ID_END)]
+            if event_type in ("tool_started", "started"):
+                ids += [self.sid(self.K.TOOL_STARTED), self.sid(self.K.TOOL_RESPONSE_EVENT_END)]
+                continue
+            content = self._normalize_tool_response_content(raw)
+            ids += [self.sid(self.K.TOOL_RESPONSE_START)]
+            ids += self.encode_text(content)
+            ids += [self.sid(self.K.TOOL_RESPONSE_END), self.sid(self.K.TOOL_RESPONSE_EVENT_END)]
+        ids += [self.sid(self.K.INPUT_EVENT_SLOT_END)]
+        return ids
+
+    def _unit_input_ids(self, n_audio=0, n_image=0, n_slice=0, tool_responses=None) -> list:
+        return (
+            self._user_video_slot_ids(n_image, n_slice)
+            + self._user_audio_slot_ids(n_audio)
+            + self._input_event_slot_ids(tool_responses or [])
+        )
+
+    def _resize_embeddings(self) -> dict:
+        self._ensure_protocol()
+        need = self.max_special_id + 1
+        emb = self.model.llm.get_input_embeddings()
+        cur = emb.weight.shape[0]
+        info = {"old_vocab": int(cur), "new_vocab": int(cur), "resized": False, "need": int(need)}
+        if cur < need:
+            self.model.llm.resize_token_embeddings(need)
+            new_cur = self.model.llm.get_input_embeddings().weight.shape[0]
+            info.update({"new_vocab": int(new_cur), "resized": True})
+            logger.warning(
+                "[FcDuplexCapability] resized token embeddings %d -> %d; new rows must be trained",
+                cur,
+                new_cur,
+            )
+        self._resized = True
+        return info
+
+    def _feed_ids(self, ids: list, want_logits: bool = False):
+        if not ids:
+            return None
+        self.output_ids.extend(ids)
+        out = self.decoder.feed(self.decoder.embed_tokens(ids), return_logits=want_logits)
+        return out[0] if want_logits else None
+
+    def _feed_audio(self, audio_waveform, sample_rate: int = 16000) -> int:
+        if audio_waveform is None or len(audio_waveform) == 0:
+            return 0
+        audio = np.asarray(audio_waveform, dtype=np.float32)
+        data = self.processor.process_audio([audio])
+        embeds_nested = self.model.get_audio_embedding(
+            data,
+            chunk_length=self.model.config.audio_chunk_length,
+        )
+        if not embeds_nested:
+            return 0
+        audio_embeds = torch.cat([t for group in embeds_nested for t in group], dim=0)
+        n_audio = int(audio_embeds.shape[0])
+        self.output_ids.extend([self.sid(self.K.AUDIO_PLACEHOLDER)] * n_audio)
+        self.decoder.feed(audio_embeds)
+        return n_audio
+
+    def _sample(self, logits, decode_mode: str) -> int:
+        if decode_mode in ("greedy", "argmax"):
+            return int(torch.argmax(logits[0]).item())
+        probs = torch.softmax(logits[0] / max(float(self.temperature), 1e-5), dim=-1)
+        return int(torch.multinomial(probs, 1).item())
+
+    def _lookup_tool_definition(self, wire_text: str, tool_definitions):
+        tool_definitions = self._normalize_tools(tool_definitions)
+        if not tool_definitions:
+            return None
+        match = re.search(r'name="([^"]+)"', wire_text) or re.search(r'"name"\s*:\s*"([^"]+)"', wire_text)
+        if match:
+            target = match.group(1)
+            for definition in tool_definitions:
+                if getattr(getattr(definition, "function", None), "name", None) == target:
+                    return definition
+        return tool_definitions[0]
+
+    def _safe_deserialize_tool_call(self, wire: str, tool_definitions=None) -> dict:
+        self._ensure_protocol()
+        definition = self._lookup_tool_definition(wire, tool_definitions or self._tools)
+        result = {"wire": wire, "name": None, "arguments": None, "error": None}
+        if definition is None:
+            result["error"] = "no tool definition available to deserialize"
+            return result
+        try:
+            call = self._serializer.deserialize_tool_call(wire, definition=definition)
+            result["name"] = call.function.name
+            result["arguments"] = call.function.arguments
+        except Exception as exc:
+            result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
+
+    def _reset_streaming_state(self) -> None:
+        self.decoder.reset()
+        self.output_ids = []
+        self.units_info = []
+        self._tools = None
+        self._current_unit_idx = 0
+        self._current_unit_open = False
+        self._current_unit_info = None
+        self._spoken_slot_open = False
+        self._non_spoken_slot_open = False
+        self._spoken_logits = None
+        self._non_spoken_logits = None
+        self._non_spoken_mode = None
+        self._think_buf = []
+        self._tool_call_buf = []
+
+    def prepare(self, system_prompt: str, tools=None) -> dict:
+        self._ensure_protocol()
+        resize_info = self._resize_embeddings()
+        self._reset_streaming_state()
+        self._tools = self._normalize_tools(tools)
+        self.model.init_streaming_processor()
+        prefill_ids = self._system_prefill_ids(system_prompt, self._tools)
+        self._feed_ids(prefill_ids)
+        return {
+            "prefill_ids": prefill_ids,
+            "resize_info": resize_info,
+            "output_render": self.render_token_stream(prefill_ids),
+        }
+
+    def _ensure_previous_unit_closed(self) -> None:
+        if self._non_spoken_slot_open:
+            self.streaming_non_spoken_generate(close_reason="budget_reached")
+        if self._spoken_slot_open:
+            self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_END)])
+            self._spoken_slot_open = False
+        if self._current_unit_open:
+            self.finalize_unit()
+
+    def streaming_prefill(
+        self,
+        audio_waveform=None,
+        frame_list=None,
+        tool_responses=None,
+        sample_rate: int = 16000,
+        max_slice_nums: int = 1,
+    ) -> dict:
+        self._ensure_protocol()
+        self._ensure_previous_unit_closed()
+        unit = self._current_unit_idx
+        self._current_unit_info = {
+            "unit": unit,
+            "n_audio": 0,
+            "has_event": bool(tool_responses),
+            "is_listen": None,
+            "is_speaking": False,
+            "spoken_ids": [],
+            "non_spoken_ids": [],
+            "non_spoken_terminator": None,
+            "closed_spans": [],
+        }
+        self._feed_ids([self.sid(self.K.UNIT_START)])
+        self._current_unit_open = True
+
+        # TODO: convert frame_list to image embeddings if FC video support is needed.
+        del frame_list, max_slice_nums
+
+        if audio_waveform is not None and len(audio_waveform) > 0:
+            self._feed_ids([self.sid(self.K.USER_AUDIO_SLOT_START)])
+            n_audio = self._feed_audio(audio_waveform, sample_rate=sample_rate)
+            self._current_unit_info["n_audio"] = n_audio
+            self._feed_ids([self.sid(self.K.USER_AUDIO_SLOT_END)])
+
+        if tool_responses:
+            self._feed_ids(self._input_event_slot_ids(tool_responses))
+
+        self._spoken_logits = self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_START)], want_logits=True)
+        self._spoken_slot_open = True
+        return dict(self._current_unit_info)
+
+    def streaming_spoken_generate(self, max_tokens: int = 24, decode_mode: str = "greedy") -> dict:
+        self._ensure_protocol()
+        if not self._spoken_slot_open:
+            raise RuntimeError("spoken slot is not open; call streaming_prefill() first")
+
+        K = self.K
+        spoken_terms = {self.sid(K.SPOKEN_SLOT_EOS), self.sid(K.SPOKEN_TURN_EOS), self.sid(K.LISTEN)}
+        spoken_ids = []
+        text_ids = []
+        is_listen = False
+        is_speaking = False
+        turn_eos = False
+        logits = self._spoken_logits
+
+        for _ in range(max_tokens):
+            nid = self._sample(logits, decode_mode)
+            if nid == self.sid(K.AI_SPOKEN_SLOT_END):
+                break
+            spoken_ids.append(nid)
+            self.output_ids.append(nid)
+            if nid == self.sid(K.LISTEN):
+                is_listen = True
+            elif nid == self.sid(K.SPEAK):
+                is_speaking = True
+            elif nid == self.sid(K.SPOKEN_TURN_EOS):
+                turn_eos = True
+            elif not self.is_special(nid):
+                text_ids.append(nid)
+            logits = self.decoder.feed(self.decoder.embed_token(nid), return_logits=True)[0]
+            if nid in spoken_terms:
+                break
+
+        self._feed_ids([self.sid(K.AI_SPOKEN_SLOT_END)])
+        self._spoken_slot_open = False
+        text = self._flush(text_ids) if text_ids else ""
+        if self._current_unit_info is not None:
+            self._current_unit_info["is_listen"] = bool(is_listen)
+            self._current_unit_info["is_speaking"] = bool(is_speaking)
+            self._current_unit_info["spoken_ids"] = spoken_ids
+        return {
+            "is_listen": bool(is_listen),
+            "is_speaking": bool(is_speaking),
+            "spoken_ids": spoken_ids,
+            "spoken_text": text,
+            "spoken_turn_eos": bool(turn_eos),
+        }
+
+    def _open_non_spoken_slot(self):
+        if self._non_spoken_slot_open:
+            return
+        self._non_spoken_logits = self._feed_ids([self.sid(self.K.AI_NON_SPOKEN_SLOT_START)], want_logits=True)
+        self._non_spoken_slot_open = True
+
+    def _close_non_spoken_slot(self, reason: str) -> dict:
+        self._ensure_protocol()
+        self._open_non_spoken_slot()
+        term_key = {
+            "eos": self.K.NON_SPOKEN_EOS,
+            "no_action": self.K.NO_ACTION,
+            "budget_reached": self.K.NON_SPOKEN_BUDGET_REACHED,
+            "hold": self.K.NON_SPOKEN_HOLD,
+            "abort": self.K.NON_SPOKEN_ABORT,
+        }.get(reason)
+        if term_key is None:
+            raise ValueError(f"unsupported non-spoken close reason: {reason}")
+        tid = self.sid(term_key)
+        self.output_ids.append(tid)
+        self.decoder.feed(self.decoder.embed_token(tid))
+        self._feed_ids([self.sid(self.K.AI_NON_SPOKEN_SLOT_END)])
+        self._non_spoken_slot_open = False
+        if self._current_unit_info is not None:
+            self._current_unit_info["non_spoken_ids"].append(tid)
+            self._current_unit_info["non_spoken_terminator"] = reason
+        return {"token_ids": [tid], "terminated": True, "close_reason": reason, "closed_spans": [], "text": ""}
+
+    def _track_non_spoken_token(self, nid: int) -> list:
+        closed_spans = []
+        K = self.K
+        if self._non_spoken_mode is None:
+            if nid == self.sid(K.THINK_START):
+                self._non_spoken_mode = "think"
+                self._think_buf = []
+            elif nid == self.sid(K.TOOL_CALL_START):
+                self._non_spoken_mode = "tool_call"
+                self._tool_call_buf = []
+        elif self._non_spoken_mode == "think":
+            if nid == self.sid(K.THINK_END):
+                text = self._flush(self._think_buf) if self._think_buf else ""
+                closed_spans.append({"type": "think", "text": text})
+                self._non_spoken_mode = None
+                self._think_buf = []
+            elif not self.is_special(nid):
+                self._think_buf.append(nid)
+        elif self._non_spoken_mode == "tool_call":
+            if nid == self.sid(K.TOOL_CALL_END):
+                wire = self._flush(self._tool_call_buf) if self._tool_call_buf else ""
+                closed_spans.append({
+                    "type": "tool_call",
+                    "wire": wire,
+                    "tool_call": self._safe_deserialize_tool_call(wire),
+                })
+                self._non_spoken_mode = None
+                self._tool_call_buf = []
+            elif not self.is_special(nid):
+                self._tool_call_buf.append(nid)
+        return closed_spans
+
+    def streaming_non_spoken_generate(
+        self,
+        decode_mode: str = "greedy",
+        max_tokens: int = 1,
+        close_reason: Optional[str] = None,
+    ) -> dict:
+        self._ensure_protocol()
+        if close_reason is not None:
+            return self._close_non_spoken_slot(close_reason)
+
+        self._open_non_spoken_slot()
+        K = self.K
+        natural_terms = {
+            self.sid(K.NON_SPOKEN_EOS): "eos",
+            self.sid(K.NO_ACTION): "no_action",
+            self.sid(K.NON_SPOKEN_ABORT): "abort",
+        }
+        token_ids = []
+        closed_spans = []
+        text_ids = []
+        terminated = False
+        close = None
+        logits = self._non_spoken_logits
+
+        for _ in range(max_tokens):
+            nid = self._sample(logits, decode_mode)
+            if nid == self.sid(K.AI_NON_SPOKEN_SLOT_END):
+                close = "eos"
+                terminated = True
+                break
+            token_ids.append(nid)
+            self.output_ids.append(nid)
+            if self._current_unit_info is not None:
+                self._current_unit_info["non_spoken_ids"].append(nid)
+            closed_spans.extend(self._track_non_spoken_token(nid))
+            if not self.is_special(nid):
+                text_ids.append(nid)
+            self._non_spoken_logits = self.decoder.feed(self.decoder.embed_token(nid), return_logits=True)[0]
+            logits = self._non_spoken_logits
+            if nid in natural_terms:
+                close = natural_terms[nid]
+                terminated = True
+                break
+
+        if terminated:
+            self._feed_ids([self.sid(K.AI_NON_SPOKEN_SLOT_END)])
+            self._non_spoken_slot_open = False
+            if self._current_unit_info is not None:
+                self._current_unit_info["non_spoken_terminator"] = close
+                self._current_unit_info["closed_spans"].extend(closed_spans)
+        elif self._current_unit_info is not None:
+            self._current_unit_info["closed_spans"].extend(closed_spans)
+
+        return {
+            "token_ids": token_ids,
+            "terminated": terminated,
+            "close_reason": close,
+            "closed_spans": closed_spans,
+            "text": self._flush(text_ids) if text_ids else "",
+        }
+
+    def finalize_unit(self) -> dict:
+        if not self._current_unit_open:
+            return {}
+        if self._non_spoken_slot_open:
+            self.streaming_non_spoken_generate(close_reason="budget_reached")
+        if self._spoken_slot_open:
+            self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_END)])
+            self._spoken_slot_open = False
+        self._feed_ids([self.sid(self.K.UNIT_END)])
+        info = dict(self._current_unit_info or {"unit": self._current_unit_idx})
+        self.units_info.append(info)
+        self._current_unit_idx += 1
+        self._current_unit_info = None
+        self._current_unit_open = False
+        return info
+
+    def decode_output_ids(self, output_ids=None, tools=None) -> dict:
+        self._ensure_protocol()
+        ids = list(self.output_ids if output_ids is None else output_ids)
+        K = self.K
+        unit_start = self.sid(K.UNIT_START)
+        unit_end = self.sid(K.UNIT_END)
+        spk_start = self.sid(K.AI_SPOKEN_SLOT_START)
+        spk_end = self.sid(K.AI_SPOKEN_SLOT_END)
+        nsp_start = self.sid(K.AI_NON_SPOKEN_SLOT_START)
+        nsp_end = self.sid(K.AI_NON_SPOKEN_SLOT_END)
+        listen = self.sid(K.LISTEN)
+        speak = self.sid(K.SPEAK)
+        spoken_eos = {self.sid(K.SPOKEN_SLOT_EOS), self.sid(K.SPOKEN_TURN_EOS)}
+        think_start = self.sid(K.THINK_START)
+        think_end = self.sid(K.THINK_END)
+        tc_start = self.sid(K.TOOL_CALL_START)
+        tc_end = self.sid(K.TOOL_CALL_END)
+        no_action = self.sid(K.NO_ACTION)
+        nsp_terms = {
+            self.sid(K.NON_SPOKEN_EOS): "eos",
+            self.sid(K.NON_SPOKEN_BUDGET_REACHED): "budget_reached",
+            self.sid(K.NON_SPOKEN_HOLD): "hold",
+            self.sid(K.NON_SPOKEN_ABORT): "abort",
+        }
+
+        units = []
+        cur = None
+        slot = None
+        spoken_buf = []
+        mode = None
+        think_buf = []
+        tc_buf = []
+        think_completed = []
+        tool_calls = []
+
+        def new_unit():
+            return {"is_listen": None, "spoken_text": "", "non_spoken_terminator": None, "raw_non_spoken": ""}
+
+        for tid in ids:
+            if tid == unit_start:
+                cur = new_unit()
+                slot = None
+                continue
+            if tid == unit_end:
+                if cur is not None:
+                    units.append(cur)
+                cur = None
+                slot = None
+                continue
+            if cur is None:
+                continue
+            if tid == spk_start:
+                slot = "spoken"
+                spoken_buf = []
+                if cur["is_listen"] is None:
+                    cur["is_listen"] = False
+                continue
+            if tid == spk_end:
+                cur["spoken_text"] += self._flush(spoken_buf) if spoken_buf else ""
+                spoken_buf = []
+                slot = None
+                continue
+            if tid == nsp_start:
+                slot = "non_spoken"
+                continue
+            if tid == nsp_end:
+                slot = None
+                continue
+            if slot == "spoken":
+                if tid == listen:
+                    cur["is_listen"] = True
+                elif tid == speak:
+                    cur["is_listen"] = False
+                elif tid in spoken_eos:
+                    pass
+                elif not self.is_special(tid):
+                    spoken_buf.append(tid)
+                continue
+            if slot == "non_spoken":
+                cur["raw_non_spoken"] += self.id2name[tid] if self.is_special(tid) else self._flush([tid])
+                if mode is None:
+                    if tid == think_start:
+                        mode = "think"
+                        think_buf = []
+                    elif tid == tc_start:
+                        mode = "tool_call"
+                        tc_buf = []
+                    elif tid == no_action:
+                        cur["non_spoken_terminator"] = "no_action"
+                    elif tid in nsp_terms:
+                        cur["non_spoken_terminator"] = nsp_terms[tid]
+                elif mode == "think":
+                    if tid == think_end:
+                        think_completed.append(self._flush(think_buf) if think_buf else "")
+                        mode = None
+                    elif tid in nsp_terms:
+                        cur["non_spoken_terminator"] = nsp_terms[tid]
+                    elif not self.is_special(tid):
+                        think_buf.append(tid)
+                elif mode == "tool_call":
+                    if tid == tc_end:
+                        tool_calls.append(self._safe_deserialize_tool_call(self._flush(tc_buf), tools or self._tools))
+                        mode = None
+                    elif tid in nsp_terms:
+                        cur["non_spoken_terminator"] = nsp_terms[tid]
+                    elif not self.is_special(tid):
+                        tc_buf.append(tid)
+
+        if mode == "think" and think_buf:
+            think_completed.append(self._flush(think_buf))
+        elif mode == "tool_call" and tc_buf:
+            tool_calls.append(self._safe_deserialize_tool_call(self._flush(tc_buf), tools or self._tools))
+
+        return {
+            "units": units,
+            "spoken_text": "".join(u["spoken_text"] for u in units),
+            "think_text": "".join(think_completed),
+            "tool_calls": tool_calls,
+            "output_ids": ids,
+            "output_render": self.render_token_stream(ids),
+        }
+
+    def cleanup(self) -> None:
+        self._reset_streaming_state()
 
 
 class DuplexCapability:
@@ -5777,13 +6564,16 @@ class MiniCPMWhisperEncoderLayer(nn.Module):
     ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.self_attn_layer_norm(hidden_states)
-        hidden_states, attn_weights, past_key_values = self.self_attn(
+        _attn_out = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
             past_key_value=past_key_values,
         )
+        hidden_states = _attn_out[0]
+        attn_weights = _attn_out[1] if len(_attn_out) > 1 else None
+        past_key_values = _attn_out[2] if len(_attn_out) > 2 else past_key_values
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -6203,9 +6993,9 @@ class MiniCPMTTS(PreTrainedModel):
         self.num_vq = config.num_vq
         self.num_audio_tokens = config.num_audio_tokens
 
-        self.top_p = config.top_p
-        self.top_k = config.top_k
-        self.repetition_penalty = config.repetition_penalty
+        self.top_p = getattr(config, "top_p", 0.8)
+        self.top_k = getattr(config, "top_k", 20)
+        self.repetition_penalty = getattr(config, "repetition_penalty", 1.05)
 
         self.interleaved = config.interleaved
         self.attention_type = config.attention_type

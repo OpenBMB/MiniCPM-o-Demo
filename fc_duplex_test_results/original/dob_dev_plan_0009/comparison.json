@@ -1,0 +1,106 @@
+{
+  "sample_id": "dob_dev_plan_0009",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0009.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0009/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 19.803723096847534,
+  "gt": {
+    "n_tokens": 1566,
+    "spoken_text": "好的，这样的早餐摆放听起来清楚又顺手。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，我不是只听完再普通回应，而是要根据这条规则识别其中适合呈现的具体内容。我意识到这是一项会持续生效的配置，要求我进入持续展示/监听模式，在后续连续话语里边听边判断，而不是把开头这句当成闲聊。我需要先记住这个规则，并明确后续一旦听到符合规则、确实可以被看见和呈现的对象，就在后台调用 display_object_on_board(name) 来展示；如果听到的内容不满足规则，或者只是评价、安排、感受、说法上的补充，我就应当跳过，保持安静，不打断用户，也不对每一句都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "咖啡杯"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "牛奶盒"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "保温杯"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "面包片"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0009_call_01",
+      "dob_dev_plan_0009_call_02",
+      "dob_dev_plan_0009_call_03",
+      "dob_dev_plan_0009_call_04"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1366,
+    "spoken_text": "好的，这样的早餐摆放听起来清楚又顺手。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，我不是只听完再普通回应，而是要根据这条规则识别其中适合呈现的具体内容。我意识到这是一项会持续生效的配置，要求我进入持续展示/监听模式，在后续连续话语里边听边判断，而不是把开头这句当成闲聊。我需要先记住这个规则，并明确后续一旦听到符合规则、确实可以被看见和呈现的对象，就在后台调用 display_object_on_board(name) 来展示；如果听到的内容不满足规则，或者只是评价、安排、感受、说法上的补充，我就应当跳过，保持安静，不打断用户，也不对每一句都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0009_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "咖啡杯"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0009_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "牛奶盒"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0009_call_03",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "保温杯"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0009_call_04",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "面包片"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 28,
+    "n_audio_units": 24
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": true,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4962,
+    "gt_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><input_event_slot><tool_response_event><tool_call_id>dob_dev_plan_0009_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"咖啡杯\", \"reason\": \"这是桌",
+    "pred_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><tool_call><function name=\"display_object_on_board\"><param name=\"name\">牛奶盒</param></function></too"
+  }
+}

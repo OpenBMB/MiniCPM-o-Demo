@@ -1,0 +1,465 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0053",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 8.0,
+            "shape": [
+              128000
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "请展示会议空间里能实际使用的物品。\n我们先把马克笔备好，这样参与感更强，后半段节奏更轻松。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "请",
+                "start_sec": 0.01,
+                "end_sec": 0.54
+              },
+              {
+                "text": "展",
+                "start_sec": 0.54,
+                "end_sec": 0.66
+              },
+              {
+                "text": "示",
+                "start_sec": 0.66,
+                "end_sec": 0.84
+              },
+              {
+                "text": "会",
+                "start_sec": 0.84,
+                "end_sec": 0.9
+              },
+              {
+                "text": "议",
+                "start_sec": 0.9,
+                "end_sec": 1.08
+              },
+              {
+                "text": "空",
+                "start_sec": 1.08,
+                "end_sec": 1.2
+              },
+              {
+                "text": "间",
+                "start_sec": 1.2,
+                "end_sec": 1.32
+              },
+              {
+                "text": "里",
+                "start_sec": 1.32,
+                "end_sec": 1.56
+              },
+              {
+                "text": "能",
+                "start_sec": 1.56,
+                "end_sec": 1.74
+              },
+              {
+                "text": "实",
+                "start_sec": 1.74,
+                "end_sec": 1.92
+              },
+              {
+                "text": "际",
+                "start_sec": 1.92,
+                "end_sec": 2.04
+              },
+              {
+                "text": "使",
+                "start_sec": 2.04,
+                "end_sec": 2.22
+              },
+              {
+                "text": "用",
+                "start_sec": 2.22,
+                "end_sec": 2.34
+              },
+              {
+                "text": "的",
+                "start_sec": 2.34,
+                "end_sec": 2.46
+              },
+              {
+                "text": "物",
+                "start_sec": 2.46,
+                "end_sec": 2.64
+              },
+              {
+                "text": "品",
+                "start_sec": 2.64,
+                "end_sec": 3.3
+              },
+              {
+                "text": "我",
+                "start_sec": 3.3,
+                "end_sec": 3.48
+              },
+              {
+                "text": "们",
+                "start_sec": 3.48,
+                "end_sec": 3.6
+              },
+              {
+                "text": "先",
+                "start_sec": 3.6,
+                "end_sec": 3.72
+              },
+              {
+                "text": "把",
+                "start_sec": 3.72,
+                "end_sec": 3.9
+              },
+              {
+                "text": "马",
+                "start_sec": 3.9,
+                "end_sec": 4.08
+              },
+              {
+                "text": "克",
+                "start_sec": 4.08,
+                "end_sec": 4.2
+              },
+              {
+                "text": "笔",
+                "start_sec": 4.2,
+                "end_sec": 4.38
+              },
+              {
+                "text": "备",
+                "start_sec": 4.38,
+                "end_sec": 4.5
+              },
+              {
+                "text": "好",
+                "start_sec": 4.5,
+                "end_sec": 4.86
+              },
+              {
+                "text": "这",
+                "start_sec": 4.86,
+                "end_sec": 5.04
+              },
+              {
+                "text": "样",
+                "start_sec": 5.04,
+                "end_sec": 5.28
+              },
+              {
+                "text": "参",
+                "start_sec": 5.28,
+                "end_sec": 5.4
+              },
+              {
+                "text": "与",
+                "start_sec": 5.4,
+                "end_sec": 5.46
+              },
+              {
+                "text": "感",
+                "start_sec": 5.46,
+                "end_sec": 5.64
+              },
+              {
+                "text": "更",
+                "start_sec": 5.64,
+                "end_sec": 5.82
+              },
+              {
+                "text": "强",
+                "start_sec": 5.82,
+                "end_sec": 6.3
+              },
+              {
+                "text": "后",
+                "start_sec": 6.3,
+                "end_sec": 6.48
+              },
+              {
+                "text": "半",
+                "start_sec": 6.48,
+                "end_sec": 6.6
+              },
+              {
+                "text": "段",
+                "start_sec": 6.6,
+                "end_sec": 6.84
+              },
+              {
+                "text": "节",
+                "start_sec": 6.84,
+                "end_sec": 6.9
+              },
+              {
+                "text": "奏",
+                "start_sec": 6.9,
+                "end_sec": 7.08
+              },
+              {
+                "text": "更",
+                "start_sec": 7.08,
+                "end_sec": 7.26
+              },
+              {
+                "text": "轻",
+                "start_sec": 7.26,
+                "end_sec": 7.44
+              },
+              {
+                "text": "松",
+                "start_sec": 7.44,
+                "end_sec": 7.98
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0053_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"马克笔\", \"reason\": \"这是会议空间中可以实际备好并使用的具体物品。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 2.4,
+            "shape": [
+              38400
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，我已经按你的要求留意了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.18
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.18,
+                "end_sec": 0.78
+              },
+              {
+                "text": "我",
+                "start_sec": 0.78,
+                "end_sec": 0.96
+              },
+              {
+                "text": "已",
+                "start_sec": 0.96,
+                "end_sec": 1.08
+              },
+              {
+                "text": "经",
+                "start_sec": 1.08,
+                "end_sec": 1.2
+              },
+              {
+                "text": "按",
+                "start_sec": 1.2,
+                "end_sec": 1.32
+              },
+              {
+                "text": "你",
+                "start_sec": 1.32,
+                "end_sec": 1.44
+              },
+              {
+                "text": "的",
+                "start_sec": 1.44,
+                "end_sec": 1.56
+              },
+              {
+                "text": "要",
+                "start_sec": 1.56,
+                "end_sec": 1.62
+              },
+              {
+                "text": "求",
+                "start_sec": 1.62,
+                "end_sec": 1.8
+              },
+              {
+                "text": "留",
+                "start_sec": 1.8,
+                "end_sec": 1.92
+              },
+              {
+                "text": "意",
+                "start_sec": 1.92,
+                "end_sec": 2.1
+              },
+              {
+                "text": "了。",
+                "start_sec": 2.1,
+                "end_sec": 2.38
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条简短规则，我理解他的用意是让我关注后续话语中符合这个规则的具体可见对象。这里不是普通闲聊，也不是让我现在随便回应一句就结束，而是在给我设定一个持续生效的配置：接下来我需要进入持续展示/监听模式，边听用户继续说，边判断哪些内容应该被呈现。我需要先响应并记住这条规则，明确后续只要出现符合条件的具体对象，就在后台调用 display_object_on_board(name) 来展示；如果听到的内容不符合这条规则，我就保持安静，不打断用户，也不对每一句都展开长篇分析，只做稳定、持续的监听和按需处理。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 4.38
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0053_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "马克笔"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

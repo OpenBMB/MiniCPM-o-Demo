@@ -1,0 +1,688 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0039",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 13.6,
+            "shape": [
+              217600
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "请按我说的内容展示交通出行相关的可见元素。\n我从这边出发，先这样走，路线更顺一点；往前会经过斑马线，再继续到公交站牌附近停一下，我心里还把这种守规矩叫斑马线精神。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "请",
+                "start_sec": 0.0,
+                "end_sec": 0.3
+              },
+              {
+                "text": "按",
+                "start_sec": 0.3,
+                "end_sec": 0.48
+              },
+              {
+                "text": "我",
+                "start_sec": 0.48,
+                "end_sec": 0.6
+              },
+              {
+                "text": "说",
+                "start_sec": 0.6,
+                "end_sec": 0.72
+              },
+              {
+                "text": "的",
+                "start_sec": 0.72,
+                "end_sec": 0.9
+              },
+              {
+                "text": "内",
+                "start_sec": 0.9,
+                "end_sec": 1.02
+              },
+              {
+                "text": "容",
+                "start_sec": 1.02,
+                "end_sec": 1.2
+              },
+              {
+                "text": "展",
+                "start_sec": 1.2,
+                "end_sec": 1.32
+              },
+              {
+                "text": "示",
+                "start_sec": 1.32,
+                "end_sec": 1.5
+              },
+              {
+                "text": "交",
+                "start_sec": 1.5,
+                "end_sec": 1.62
+              },
+              {
+                "text": "通",
+                "start_sec": 1.62,
+                "end_sec": 1.86
+              },
+              {
+                "text": "出",
+                "start_sec": 1.86,
+                "end_sec": 1.98
+              },
+              {
+                "text": "行",
+                "start_sec": 1.98,
+                "end_sec": 2.16
+              },
+              {
+                "text": "相",
+                "start_sec": 2.16,
+                "end_sec": 2.28
+              },
+              {
+                "text": "关",
+                "start_sec": 2.28,
+                "end_sec": 2.4
+              },
+              {
+                "text": "的",
+                "start_sec": 2.4,
+                "end_sec": 2.58
+              },
+              {
+                "text": "可",
+                "start_sec": 2.58,
+                "end_sec": 2.7
+              },
+              {
+                "text": "见",
+                "start_sec": 2.7,
+                "end_sec": 2.94
+              },
+              {
+                "text": "元",
+                "start_sec": 2.94,
+                "end_sec": 3.06
+              },
+              {
+                "text": "素",
+                "start_sec": 3.06,
+                "end_sec": 3.66
+              },
+              {
+                "text": "我",
+                "start_sec": 3.66,
+                "end_sec": 3.9
+              },
+              {
+                "text": "从",
+                "start_sec": 3.9,
+                "end_sec": 4.08
+              },
+              {
+                "text": "这",
+                "start_sec": 4.08,
+                "end_sec": 4.2
+              },
+              {
+                "text": "边",
+                "start_sec": 4.2,
+                "end_sec": 4.38
+              },
+              {
+                "text": "出",
+                "start_sec": 4.38,
+                "end_sec": 4.5
+              },
+              {
+                "text": "发",
+                "start_sec": 4.5,
+                "end_sec": 4.86
+              },
+              {
+                "text": "先",
+                "start_sec": 4.86,
+                "end_sec": 5.1
+              },
+              {
+                "text": "这",
+                "start_sec": 5.1,
+                "end_sec": 5.22
+              },
+              {
+                "text": "样",
+                "start_sec": 5.22,
+                "end_sec": 5.4
+              },
+              {
+                "text": "走",
+                "start_sec": 5.4,
+                "end_sec": 5.7
+              },
+              {
+                "text": "路",
+                "start_sec": 5.7,
+                "end_sec": 5.88
+              },
+              {
+                "text": "线",
+                "start_sec": 5.88,
+                "end_sec": 6.06
+              },
+              {
+                "text": "更",
+                "start_sec": 6.06,
+                "end_sec": 6.18
+              },
+              {
+                "text": "顺",
+                "start_sec": 6.18,
+                "end_sec": 6.36
+              },
+              {
+                "text": "一",
+                "start_sec": 6.36,
+                "end_sec": 6.48
+              },
+              {
+                "text": "点",
+                "start_sec": 6.48,
+                "end_sec": 7.14
+              },
+              {
+                "text": "往",
+                "start_sec": 7.14,
+                "end_sec": 7.38
+              },
+              {
+                "text": "前",
+                "start_sec": 7.38,
+                "end_sec": 7.56
+              },
+              {
+                "text": "会",
+                "start_sec": 7.56,
+                "end_sec": 7.74
+              },
+              {
+                "text": "经",
+                "start_sec": 7.74,
+                "end_sec": 7.86
+              },
+              {
+                "text": "过",
+                "start_sec": 7.86,
+                "end_sec": 8.04
+              },
+              {
+                "text": "斑",
+                "start_sec": 8.04,
+                "end_sec": 8.16
+              },
+              {
+                "text": "马",
+                "start_sec": 8.16,
+                "end_sec": 8.28
+              },
+              {
+                "text": "线",
+                "start_sec": 8.28,
+                "end_sec": 8.64
+              },
+              {
+                "text": "再",
+                "start_sec": 8.64,
+                "end_sec": 8.88
+              },
+              {
+                "text": "继",
+                "start_sec": 8.88,
+                "end_sec": 9.06
+              },
+              {
+                "text": "续",
+                "start_sec": 9.06,
+                "end_sec": 9.18
+              },
+              {
+                "text": "到",
+                "start_sec": 9.18,
+                "end_sec": 9.36
+              },
+              {
+                "text": "公",
+                "start_sec": 9.36,
+                "end_sec": 9.48
+              },
+              {
+                "text": "交",
+                "start_sec": 9.48,
+                "end_sec": 9.6
+              },
+              {
+                "text": "站",
+                "start_sec": 9.6,
+                "end_sec": 9.78
+              },
+              {
+                "text": "牌",
+                "start_sec": 9.78,
+                "end_sec": 9.9
+              },
+              {
+                "text": "附",
+                "start_sec": 9.9,
+                "end_sec": 10.02
+              },
+              {
+                "text": "近",
+                "start_sec": 10.02,
+                "end_sec": 10.2
+              },
+              {
+                "text": "停",
+                "start_sec": 10.2,
+                "end_sec": 10.32
+              },
+              {
+                "text": "一",
+                "start_sec": 10.32,
+                "end_sec": 10.44
+              },
+              {
+                "text": "下",
+                "start_sec": 10.44,
+                "end_sec": 10.98
+              },
+              {
+                "text": "我",
+                "start_sec": 10.98,
+                "end_sec": 11.16
+              },
+              {
+                "text": "心",
+                "start_sec": 11.16,
+                "end_sec": 11.34
+              },
+              {
+                "text": "里",
+                "start_sec": 11.34,
+                "end_sec": 11.46
+              },
+              {
+                "text": "还",
+                "start_sec": 11.46,
+                "end_sec": 11.58
+              },
+              {
+                "text": "把",
+                "start_sec": 11.58,
+                "end_sec": 11.76
+              },
+              {
+                "text": "这",
+                "start_sec": 11.76,
+                "end_sec": 11.88
+              },
+              {
+                "text": "种",
+                "start_sec": 11.88,
+                "end_sec": 12.06
+              },
+              {
+                "text": "守",
+                "start_sec": 12.06,
+                "end_sec": 12.24
+              },
+              {
+                "text": "规",
+                "start_sec": 12.24,
+                "end_sec": 12.36
+              },
+              {
+                "text": "矩",
+                "start_sec": 12.36,
+                "end_sec": 12.48
+              },
+              {
+                "text": "叫",
+                "start_sec": 12.48,
+                "end_sec": 12.66
+              },
+              {
+                "text": "斑",
+                "start_sec": 12.66,
+                "end_sec": 12.78
+              },
+              {
+                "text": "马",
+                "start_sec": 12.78,
+                "end_sec": 12.9
+              },
+              {
+                "text": "线",
+                "start_sec": 12.9,
+                "end_sec": 13.08
+              },
+              {
+                "text": "精",
+                "start_sec": 13.08,
+                "end_sec": 13.2
+              },
+              {
+                "text": "神",
+                "start_sec": 13.2,
+                "end_sec": 13.58
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0039_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"斑马线\", \"reason\": \"这里说行进过程中会经过一个具体可见的道路元素，符合展示规则。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0039_call_02",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"公交站牌\", \"reason\": \"这里提到路线继续到达的具体可见交通设施，符合展示规则。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 2.72,
+            "shape": [
+              43520
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，我已经按你的描述处理好了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.18
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.18,
+                "end_sec": 0.96
+              },
+              {
+                "text": "我",
+                "start_sec": 0.96,
+                "end_sec": 1.2
+              },
+              {
+                "text": "已",
+                "start_sec": 1.2,
+                "end_sec": 1.32
+              },
+              {
+                "text": "经",
+                "start_sec": 1.32,
+                "end_sec": 1.44
+              },
+              {
+                "text": "按",
+                "start_sec": 1.44,
+                "end_sec": 1.56
+              },
+              {
+                "text": "你",
+                "start_sec": 1.56,
+                "end_sec": 1.68
+              },
+              {
+                "text": "的",
+                "start_sec": 1.68,
+                "end_sec": 1.8
+              },
+              {
+                "text": "描",
+                "start_sec": 1.8,
+                "end_sec": 1.92
+              },
+              {
+                "text": "述",
+                "start_sec": 1.92,
+                "end_sec": 2.1
+              },
+              {
+                "text": "处",
+                "start_sec": 2.1,
+                "end_sec": 2.22
+              },
+              {
+                "text": "理",
+                "start_sec": 2.22,
+                "end_sec": 2.34
+              },
+              {
+                "text": "好",
+                "start_sec": 2.34,
+                "end_sec": 2.46
+              },
+              {
+                "text": "了。",
+                "start_sec": 2.46,
+                "end_sec": 2.7
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一句规则说明，我理解他的用意是：接下来他会继续说一段内容，而我需要根据这条规则，从后续话语里识别那些符合要求、能够被具体呈现的对象。这个请求不是普通闲聊，也不是让我现在总结路线，而是在给我设定一个持续生效的工作配置。我需要先记住这条配置，并意识到自己要进入持续展示/监听模式：后续用户连续讲话时，我要一边听一边判断，只有当出现符合规则的具体可见对象时，才在后台调用 display_object_on_board(name) 来展示它；如果听到的内容不符合这条规则，就保持安静，不打断用户，也不需要对每一句都展开长篇回应。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 8.64
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0039_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "斑马线"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 10.2
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0039_call_02",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "公交站牌"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

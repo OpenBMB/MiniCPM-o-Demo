@@ -1,0 +1,140 @@
+{
+  "sample_id": "dob_dev_plan_0065",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0065.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0065/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 26.701661825180054,
+  "gt": {
+    "n_tokens": 2074,
+    "spoken_text": "好的，我已经按你的布置思路抓到这些需要呈现的物品了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续描述一个场景或流程，而我的任务不是普通聊天式回应，而是根据这条规则识别其中符合条件的具体可见对象。也就是说，用户是在为后续对话设定一个持续生效的展示规则，让我进入持续展示/监听模式，边听边判断哪些内容需要被呈现。此时我需要先响应并记住这个配置，明确后续只要听到符合规则的具体对象，就应在后台调用 display_object_on_board(name) 来展示；如果听到的是不符合规则的表达、目的、状态或其他不该处理的内容，就保持安静，不打断用户，也不需要对每一句都长篇分析。接下来我会持续监听用户的连续讲话，按规则只处理真正需要展示的对象。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "投影仪"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水杯"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "收纳盒"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "绿植"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "马克笔"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "便签纸"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0065_call_01",
+      "dob_dev_plan_0065_call_02",
+      "dob_dev_plan_0065_call_03",
+      "dob_dev_plan_0065_call_04",
+      "dob_dev_plan_0065_call_05",
+      "dob_dev_plan_0065_call_06"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1721,
+    "spoken_text": "好的，我已经按你的布置思路抓到这些需要呈现",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续描述一个场景或流程，而我的任务不是普通聊天式回应，而是根据这条规则识别其中符合条件的具体可见对象。也就是说，用户是在为后续对话设定一个持续生效的展示规则，让我进入持续展示/监听模式，边听边判断哪些内容需要被呈现。此时我需要先响应并记住这个配置，明确后续只要听到符合规则的具体对象，就应在后台调用 display_object_on_board(name) 来展示；如果听到的是不符合规则的表达、目的、状态或其他不该处理的内容，就保持安静，不打断用户，也不需要对每一句都长篇分析。接下来我会持续监听用户的连续讲话，按规则只处理真正需要展示的对象。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0065_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "投影仪"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0065_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水杯"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0065_call_03",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "收纳盒"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0065_call_04",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "绿植"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0065_call_05",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "马克笔"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0065_call_06",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "便签纸"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 41,
+    "n_audio_units": 37
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 6004,
+    "gt_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0065_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"投影仪\", \"reason\": \"这里是在讨论会议空间前区需要确认摆放或使用的实际设备。\"}</tool_response></tool_response_event><tool_response_event><tool_ca",
+    "pred_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0065_call_01</tool_call_id><|tool_started|></tool_response_event></input_event_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>"
+  }
+}

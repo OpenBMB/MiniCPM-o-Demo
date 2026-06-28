@@ -1,0 +1,1161 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0098",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 33.92,
+            "shape": [
+              542720
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "听到具体可见的对象就展示出来。\n我接着刚才的思路说，今天这轮头脑风暴先别急着定结论，重点是把协同关系和优先级理清。当前瓶颈主要在数据口径反复变化，数据库那边的依赖也要提前确认，不然评估会来回摇摆。我的想法是先拆成近期验证和长期演进两段，近期保证沟通顺畅，长期再沉淀一套更稳的策略。如果中间出现分歧，就按影响范围和紧急程度排序，别把所有问题混在一起，这样推进时阻力会小一些，复盘也更容易对齐。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "听",
+                "start_sec": 0.0,
+                "end_sec": 0.48
+              },
+              {
+                "text": "到",
+                "start_sec": 0.48,
+                "end_sec": 0.78
+              },
+              {
+                "text": "具",
+                "start_sec": 0.78,
+                "end_sec": 0.9
+              },
+              {
+                "text": "体",
+                "start_sec": 0.9,
+                "end_sec": 1.08
+              },
+              {
+                "text": "可",
+                "start_sec": 1.08,
+                "end_sec": 1.26
+              },
+              {
+                "text": "见",
+                "start_sec": 1.26,
+                "end_sec": 1.38
+              },
+              {
+                "text": "的",
+                "start_sec": 1.38,
+                "end_sec": 1.5
+              },
+              {
+                "text": "对",
+                "start_sec": 1.5,
+                "end_sec": 1.62
+              },
+              {
+                "text": "象",
+                "start_sec": 1.62,
+                "end_sec": 1.86
+              },
+              {
+                "text": "就",
+                "start_sec": 1.86,
+                "end_sec": 2.04
+              },
+              {
+                "text": "展",
+                "start_sec": 2.04,
+                "end_sec": 2.16
+              },
+              {
+                "text": "示",
+                "start_sec": 2.16,
+                "end_sec": 2.34
+              },
+              {
+                "text": "出",
+                "start_sec": 2.34,
+                "end_sec": 2.46
+              },
+              {
+                "text": "来",
+                "start_sec": 2.46,
+                "end_sec": 3.0
+              },
+              {
+                "text": "我",
+                "start_sec": 3.0,
+                "end_sec": 3.24
+              },
+              {
+                "text": "接",
+                "start_sec": 3.24,
+                "end_sec": 3.42
+              },
+              {
+                "text": "着",
+                "start_sec": 3.42,
+                "end_sec": 3.6
+              },
+              {
+                "text": "刚",
+                "start_sec": 3.6,
+                "end_sec": 3.72
+              },
+              {
+                "text": "才",
+                "start_sec": 3.72,
+                "end_sec": 3.84
+              },
+              {
+                "text": "的",
+                "start_sec": 3.84,
+                "end_sec": 3.96
+              },
+              {
+                "text": "思",
+                "start_sec": 3.96,
+                "end_sec": 4.08
+              },
+              {
+                "text": "路",
+                "start_sec": 4.08,
+                "end_sec": 4.26
+              },
+              {
+                "text": "说",
+                "start_sec": 4.26,
+                "end_sec": 4.56
+              },
+              {
+                "text": "今",
+                "start_sec": 4.56,
+                "end_sec": 4.74
+              },
+              {
+                "text": "天",
+                "start_sec": 4.74,
+                "end_sec": 4.92
+              },
+              {
+                "text": "这",
+                "start_sec": 4.92,
+                "end_sec": 5.1
+              },
+              {
+                "text": "轮",
+                "start_sec": 5.1,
+                "end_sec": 5.28
+              },
+              {
+                "text": "头",
+                "start_sec": 5.28,
+                "end_sec": 5.46
+              },
+              {
+                "text": "脑",
+                "start_sec": 5.46,
+                "end_sec": 5.64
+              },
+              {
+                "text": "风",
+                "start_sec": 5.64,
+                "end_sec": 5.76
+              },
+              {
+                "text": "暴",
+                "start_sec": 5.76,
+                "end_sec": 6.0
+              },
+              {
+                "text": "先",
+                "start_sec": 6.0,
+                "end_sec": 6.18
+              },
+              {
+                "text": "别",
+                "start_sec": 6.18,
+                "end_sec": 6.36
+              },
+              {
+                "text": "急",
+                "start_sec": 6.36,
+                "end_sec": 6.48
+              },
+              {
+                "text": "着",
+                "start_sec": 6.48,
+                "end_sec": 6.66
+              },
+              {
+                "text": "定",
+                "start_sec": 6.66,
+                "end_sec": 6.84
+              },
+              {
+                "text": "结",
+                "start_sec": 6.84,
+                "end_sec": 6.96
+              },
+              {
+                "text": "论",
+                "start_sec": 6.96,
+                "end_sec": 7.44
+              },
+              {
+                "text": "重",
+                "start_sec": 7.44,
+                "end_sec": 7.62
+              },
+              {
+                "text": "点",
+                "start_sec": 7.62,
+                "end_sec": 7.8
+              },
+              {
+                "text": "是",
+                "start_sec": 7.8,
+                "end_sec": 7.98
+              },
+              {
+                "text": "把",
+                "start_sec": 7.98,
+                "end_sec": 8.22
+              },
+              {
+                "text": "协",
+                "start_sec": 8.22,
+                "end_sec": 8.34
+              },
+              {
+                "text": "同",
+                "start_sec": 8.34,
+                "end_sec": 8.58
+              },
+              {
+                "text": "关",
+                "start_sec": 8.58,
+                "end_sec": 8.7
+              },
+              {
+                "text": "系",
+                "start_sec": 8.7,
+                "end_sec": 8.88
+              },
+              {
+                "text": "和",
+                "start_sec": 8.88,
+                "end_sec": 9.06
+              },
+              {
+                "text": "优",
+                "start_sec": 9.06,
+                "end_sec": 9.24
+              },
+              {
+                "text": "先",
+                "start_sec": 9.24,
+                "end_sec": 9.36
+              },
+              {
+                "text": "级",
+                "start_sec": 9.36,
+                "end_sec": 9.6
+              },
+              {
+                "text": "理",
+                "start_sec": 9.6,
+                "end_sec": 9.72
+              },
+              {
+                "text": "清",
+                "start_sec": 9.72,
+                "end_sec": 10.32
+              },
+              {
+                "text": "当",
+                "start_sec": 10.32,
+                "end_sec": 10.5
+              },
+              {
+                "text": "前",
+                "start_sec": 10.5,
+                "end_sec": 10.74
+              },
+              {
+                "text": "瓶",
+                "start_sec": 10.74,
+                "end_sec": 10.86
+              },
+              {
+                "text": "颈",
+                "start_sec": 10.86,
+                "end_sec": 11.16
+              },
+              {
+                "text": "主",
+                "start_sec": 11.16,
+                "end_sec": 11.28
+              },
+              {
+                "text": "要",
+                "start_sec": 11.28,
+                "end_sec": 11.4
+              },
+              {
+                "text": "在",
+                "start_sec": 11.4,
+                "end_sec": 11.64
+              },
+              {
+                "text": "数",
+                "start_sec": 11.64,
+                "end_sec": 11.76
+              },
+              {
+                "text": "据",
+                "start_sec": 11.76,
+                "end_sec": 12.0
+              },
+              {
+                "text": "口",
+                "start_sec": 12.0,
+                "end_sec": 12.12
+              },
+              {
+                "text": "径",
+                "start_sec": 12.12,
+                "end_sec": 12.36
+              },
+              {
+                "text": "反",
+                "start_sec": 12.36,
+                "end_sec": 12.54
+              },
+              {
+                "text": "复",
+                "start_sec": 12.54,
+                "end_sec": 12.72
+              },
+              {
+                "text": "变",
+                "start_sec": 12.72,
+                "end_sec": 12.84
+              },
+              {
+                "text": "化",
+                "start_sec": 12.84,
+                "end_sec": 13.38
+              },
+              {
+                "text": "数",
+                "start_sec": 13.38,
+                "end_sec": 13.5
+              },
+              {
+                "text": "据",
+                "start_sec": 13.5,
+                "end_sec": 13.62
+              },
+              {
+                "text": "库",
+                "start_sec": 13.62,
+                "end_sec": 13.8
+              },
+              {
+                "text": "那",
+                "start_sec": 13.8,
+                "end_sec": 13.92
+              },
+              {
+                "text": "边",
+                "start_sec": 13.92,
+                "end_sec": 14.04
+              },
+              {
+                "text": "的",
+                "start_sec": 14.04,
+                "end_sec": 14.22
+              },
+              {
+                "text": "依",
+                "start_sec": 14.22,
+                "end_sec": 14.34
+              },
+              {
+                "text": "赖",
+                "start_sec": 14.34,
+                "end_sec": 14.46
+              },
+              {
+                "text": "也",
+                "start_sec": 14.46,
+                "end_sec": 14.58
+              },
+              {
+                "text": "要",
+                "start_sec": 14.58,
+                "end_sec": 14.76
+              },
+              {
+                "text": "提",
+                "start_sec": 14.76,
+                "end_sec": 14.88
+              },
+              {
+                "text": "前",
+                "start_sec": 14.88,
+                "end_sec": 15.06
+              },
+              {
+                "text": "确",
+                "start_sec": 15.06,
+                "end_sec": 15.24
+              },
+              {
+                "text": "认",
+                "start_sec": 15.24,
+                "end_sec": 15.6
+              },
+              {
+                "text": "不",
+                "start_sec": 15.6,
+                "end_sec": 15.72
+              },
+              {
+                "text": "然",
+                "start_sec": 15.72,
+                "end_sec": 15.96
+              },
+              {
+                "text": "评",
+                "start_sec": 15.96,
+                "end_sec": 16.08
+              },
+              {
+                "text": "估",
+                "start_sec": 16.08,
+                "end_sec": 16.26
+              },
+              {
+                "text": "会",
+                "start_sec": 16.26,
+                "end_sec": 16.5
+              },
+              {
+                "text": "来",
+                "start_sec": 16.5,
+                "end_sec": 16.62
+              },
+              {
+                "text": "回",
+                "start_sec": 16.62,
+                "end_sec": 16.86
+              },
+              {
+                "text": "摇",
+                "start_sec": 16.86,
+                "end_sec": 16.98
+              },
+              {
+                "text": "摆",
+                "start_sec": 16.98,
+                "end_sec": 17.4
+              },
+              {
+                "text": "我",
+                "start_sec": 17.4,
+                "end_sec": 17.58
+              },
+              {
+                "text": "的",
+                "start_sec": 17.58,
+                "end_sec": 17.7
+              },
+              {
+                "text": "想",
+                "start_sec": 17.7,
+                "end_sec": 17.82
+              },
+              {
+                "text": "法",
+                "start_sec": 17.82,
+                "end_sec": 18.06
+              },
+              {
+                "text": "是",
+                "start_sec": 18.06,
+                "end_sec": 18.36
+              },
+              {
+                "text": "先",
+                "start_sec": 18.36,
+                "end_sec": 18.66
+              },
+              {
+                "text": "拆",
+                "start_sec": 18.66,
+                "end_sec": 18.84
+              },
+              {
+                "text": "成",
+                "start_sec": 18.84,
+                "end_sec": 19.02
+              },
+              {
+                "text": "近",
+                "start_sec": 19.02,
+                "end_sec": 19.2
+              },
+              {
+                "text": "期",
+                "start_sec": 19.2,
+                "end_sec": 19.38
+              },
+              {
+                "text": "验",
+                "start_sec": 19.38,
+                "end_sec": 19.5
+              },
+              {
+                "text": "证",
+                "start_sec": 19.5,
+                "end_sec": 19.74
+              },
+              {
+                "text": "和",
+                "start_sec": 19.74,
+                "end_sec": 19.92
+              },
+              {
+                "text": "长",
+                "start_sec": 19.92,
+                "end_sec": 20.04
+              },
+              {
+                "text": "期",
+                "start_sec": 20.04,
+                "end_sec": 20.28
+              },
+              {
+                "text": "演",
+                "start_sec": 20.28,
+                "end_sec": 20.4
+              },
+              {
+                "text": "进",
+                "start_sec": 20.4,
+                "end_sec": 20.58
+              },
+              {
+                "text": "两",
+                "start_sec": 20.58,
+                "end_sec": 20.7
+              },
+              {
+                "text": "段",
+                "start_sec": 20.7,
+                "end_sec": 21.18
+              },
+              {
+                "text": "近",
+                "start_sec": 21.18,
+                "end_sec": 21.3
+              },
+              {
+                "text": "期",
+                "start_sec": 21.3,
+                "end_sec": 21.54
+              },
+              {
+                "text": "保",
+                "start_sec": 21.54,
+                "end_sec": 21.66
+              },
+              {
+                "text": "证",
+                "start_sec": 21.66,
+                "end_sec": 21.9
+              },
+              {
+                "text": "沟",
+                "start_sec": 21.9,
+                "end_sec": 22.02
+              },
+              {
+                "text": "通",
+                "start_sec": 22.02,
+                "end_sec": 22.2
+              },
+              {
+                "text": "顺",
+                "start_sec": 22.2,
+                "end_sec": 22.32
+              },
+              {
+                "text": "畅",
+                "start_sec": 22.32,
+                "end_sec": 22.86
+              },
+              {
+                "text": "长",
+                "start_sec": 22.86,
+                "end_sec": 22.98
+              },
+              {
+                "text": "期",
+                "start_sec": 22.98,
+                "end_sec": 23.16
+              },
+              {
+                "text": "再",
+                "start_sec": 23.16,
+                "end_sec": 23.34
+              },
+              {
+                "text": "沉",
+                "start_sec": 23.34,
+                "end_sec": 23.52
+              },
+              {
+                "text": "淀",
+                "start_sec": 23.52,
+                "end_sec": 23.7
+              },
+              {
+                "text": "一",
+                "start_sec": 23.7,
+                "end_sec": 23.82
+              },
+              {
+                "text": "套",
+                "start_sec": 23.82,
+                "end_sec": 24.0
+              },
+              {
+                "text": "更",
+                "start_sec": 24.0,
+                "end_sec": 24.12
+              },
+              {
+                "text": "稳",
+                "start_sec": 24.12,
+                "end_sec": 24.24
+              },
+              {
+                "text": "的",
+                "start_sec": 24.24,
+                "end_sec": 24.42
+              },
+              {
+                "text": "策",
+                "start_sec": 24.42,
+                "end_sec": 24.54
+              },
+              {
+                "text": "略",
+                "start_sec": 24.54,
+                "end_sec": 24.96
+              },
+              {
+                "text": "如",
+                "start_sec": 24.96,
+                "end_sec": 25.08
+              },
+              {
+                "text": "果",
+                "start_sec": 25.08,
+                "end_sec": 25.26
+              },
+              {
+                "text": "中",
+                "start_sec": 25.26,
+                "end_sec": 25.38
+              },
+              {
+                "text": "间",
+                "start_sec": 25.38,
+                "end_sec": 25.56
+              },
+              {
+                "text": "出",
+                "start_sec": 25.56,
+                "end_sec": 25.68
+              },
+              {
+                "text": "现",
+                "start_sec": 25.68,
+                "end_sec": 25.92
+              },
+              {
+                "text": "分",
+                "start_sec": 25.92,
+                "end_sec": 26.04
+              },
+              {
+                "text": "歧",
+                "start_sec": 26.04,
+                "end_sec": 26.28
+              },
+              {
+                "text": "就",
+                "start_sec": 26.28,
+                "end_sec": 26.46
+              },
+              {
+                "text": "按",
+                "start_sec": 26.46,
+                "end_sec": 26.64
+              },
+              {
+                "text": "影",
+                "start_sec": 26.64,
+                "end_sec": 26.76
+              },
+              {
+                "text": "响",
+                "start_sec": 26.76,
+                "end_sec": 26.94
+              },
+              {
+                "text": "范",
+                "start_sec": 26.94,
+                "end_sec": 27.06
+              },
+              {
+                "text": "围",
+                "start_sec": 27.06,
+                "end_sec": 27.24
+              },
+              {
+                "text": "和",
+                "start_sec": 27.24,
+                "end_sec": 27.48
+              },
+              {
+                "text": "紧",
+                "start_sec": 27.48,
+                "end_sec": 27.6
+              },
+              {
+                "text": "急",
+                "start_sec": 27.6,
+                "end_sec": 27.78
+              },
+              {
+                "text": "程",
+                "start_sec": 27.78,
+                "end_sec": 27.9
+              },
+              {
+                "text": "度",
+                "start_sec": 27.9,
+                "end_sec": 28.08
+              },
+              {
+                "text": "排",
+                "start_sec": 28.08,
+                "end_sec": 28.2
+              },
+              {
+                "text": "序",
+                "start_sec": 28.2,
+                "end_sec": 28.56
+              },
+              {
+                "text": "别",
+                "start_sec": 28.56,
+                "end_sec": 28.8
+              },
+              {
+                "text": "把",
+                "start_sec": 28.8,
+                "end_sec": 28.98
+              },
+              {
+                "text": "所",
+                "start_sec": 28.98,
+                "end_sec": 29.1
+              },
+              {
+                "text": "有",
+                "start_sec": 29.1,
+                "end_sec": 29.22
+              },
+              {
+                "text": "问",
+                "start_sec": 29.22,
+                "end_sec": 29.34
+              },
+              {
+                "text": "题",
+                "start_sec": 29.34,
+                "end_sec": 29.58
+              },
+              {
+                "text": "混",
+                "start_sec": 29.58,
+                "end_sec": 29.7
+              },
+              {
+                "text": "在",
+                "start_sec": 29.7,
+                "end_sec": 29.82
+              },
+              {
+                "text": "一",
+                "start_sec": 29.82,
+                "end_sec": 29.94
+              },
+              {
+                "text": "起",
+                "start_sec": 29.94,
+                "end_sec": 30.3
+              },
+              {
+                "text": "这",
+                "start_sec": 30.3,
+                "end_sec": 30.42
+              },
+              {
+                "text": "样",
+                "start_sec": 30.42,
+                "end_sec": 30.6
+              },
+              {
+                "text": "推",
+                "start_sec": 30.6,
+                "end_sec": 30.78
+              },
+              {
+                "text": "进",
+                "start_sec": 30.78,
+                "end_sec": 30.9
+              },
+              {
+                "text": "时",
+                "start_sec": 30.9,
+                "end_sec": 31.2
+              },
+              {
+                "text": "阻",
+                "start_sec": 31.2,
+                "end_sec": 31.32
+              },
+              {
+                "text": "力",
+                "start_sec": 31.32,
+                "end_sec": 31.44
+              },
+              {
+                "text": "会",
+                "start_sec": 31.44,
+                "end_sec": 31.62
+              },
+              {
+                "text": "小",
+                "start_sec": 31.62,
+                "end_sec": 31.74
+              },
+              {
+                "text": "一",
+                "start_sec": 31.74,
+                "end_sec": 31.86
+              },
+              {
+                "text": "些",
+                "start_sec": 31.86,
+                "end_sec": 32.34
+              },
+              {
+                "text": "复",
+                "start_sec": 32.34,
+                "end_sec": 32.46
+              },
+              {
+                "text": "盘",
+                "start_sec": 32.46,
+                "end_sec": 32.64
+              },
+              {
+                "text": "也",
+                "start_sec": 32.64,
+                "end_sec": 32.76
+              },
+              {
+                "text": "更",
+                "start_sec": 32.76,
+                "end_sec": 32.88
+              },
+              {
+                "text": "容",
+                "start_sec": 32.88,
+                "end_sec": 33.0
+              },
+              {
+                "text": "易",
+                "start_sec": 33.0,
+                "end_sec": 33.18
+              },
+              {
+                "text": "对",
+                "start_sec": 33.18,
+                "end_sec": 33.36
+              },
+              {
+                "text": "齐",
+                "start_sec": 33.36,
+                "end_sec": 33.9
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 6.72,
+            "shape": [
+              107520
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "明白，这段主要是在梳理思路和推进方式，我先不添加内容。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "明",
+                "start_sec": 1.04,
+                "end_sec": 1.5
+              },
+              {
+                "text": "白，",
+                "start_sec": 1.5,
+                "end_sec": 2.34
+              },
+              {
+                "text": "这",
+                "start_sec": 2.34,
+                "end_sec": 2.58
+              },
+              {
+                "text": "段",
+                "start_sec": 2.58,
+                "end_sec": 2.82
+              },
+              {
+                "text": "主",
+                "start_sec": 2.82,
+                "end_sec": 2.94
+              },
+              {
+                "text": "要",
+                "start_sec": 2.94,
+                "end_sec": 3.06
+              },
+              {
+                "text": "是",
+                "start_sec": 3.06,
+                "end_sec": 3.18
+              },
+              {
+                "text": "在",
+                "start_sec": 3.18,
+                "end_sec": 3.36
+              },
+              {
+                "text": "梳",
+                "start_sec": 3.36,
+                "end_sec": 3.48
+              },
+              {
+                "text": "理",
+                "start_sec": 3.48,
+                "end_sec": 3.72
+              },
+              {
+                "text": "思",
+                "start_sec": 3.72,
+                "end_sec": 3.84
+              },
+              {
+                "text": "路",
+                "start_sec": 3.84,
+                "end_sec": 4.02
+              },
+              {
+                "text": "和",
+                "start_sec": 4.02,
+                "end_sec": 4.14
+              },
+              {
+                "text": "推",
+                "start_sec": 4.14,
+                "end_sec": 4.32
+              },
+              {
+                "text": "进",
+                "start_sec": 4.32,
+                "end_sec": 4.5
+              },
+              {
+                "text": "方",
+                "start_sec": 4.5,
+                "end_sec": 4.62
+              },
+              {
+                "text": "式，",
+                "start_sec": 4.62,
+                "end_sec": 5.16
+              },
+              {
+                "text": "我",
+                "start_sec": 5.16,
+                "end_sec": 5.46
+              },
+              {
+                "text": "先",
+                "start_sec": 5.46,
+                "end_sec": 5.58
+              },
+              {
+                "text": "不",
+                "start_sec": 5.58,
+                "end_sec": 5.76
+              },
+              {
+                "text": "添",
+                "start_sec": 5.76,
+                "end_sec": 5.88
+              },
+              {
+                "text": "加",
+                "start_sec": 5.88,
+                "end_sec": 6.12
+              },
+              {
+                "text": "内",
+                "start_sec": 6.12,
+                "end_sec": 6.24
+              },
+              {
+                "text": "容。",
+                "start_sec": 6.24,
+                "end_sec": 6.7
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条简短规则，我理解他的用意是：后面他可能会连续说一段内容，我要从中识别真正符合规则、能够被直接看见的具体对象，并在需要时呈现出来。我意识到这不是普通寒暄，也不是让我立刻展开回答，而是在给我设定一条持续生效的配置，让我进入持续展示/监听模式，边听边按规则处理。接下来我需要先响应并记住这个配置，明确后续对话中只要捕捉到符合条件的对象，就在后台调用 display_object_on_board(name)；如果听到的是不符合规则的表达、关系、目标、安排或说法，我就保持安静，不打断用户，也不对每一句都做长篇分析。"
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

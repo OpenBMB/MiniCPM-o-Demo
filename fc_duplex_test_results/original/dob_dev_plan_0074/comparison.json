@@ -1,0 +1,106 @@
+{
+  "sample_id": "dob_dev_plan_0074",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0074.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0074/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 19.443926334381104,
+  "gt": {
+    "n_tokens": 1578,
+    "spoken_text": "好的，这段讲解里的重点对象我已经留意到了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他会连续讲述一段内容，而我需要按照这条规则，从话语里识别那些适合被直接呈现的实体。这不是普通闲聊，也不是让我只回答这一句，而是在给我设定一个后续持续生效的工作方式。我需要先响应并记住这个配置，明确这条规则会让我在后续对话中持续调用 display_object_on_board(name) 这个工具。接下来我应进入持续展示/监听模式：用户继续说话时，我边听边判断，只有出现符合规则、具备清晰外形并被直接提到的内容，才在后台调用 display_object_on_board 展示；如果听到的是不适合直接呈现的说法，我就跳过，保持安静，不打断用户，也不对每句话都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "星星"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "地图"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "指南针"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "太阳系模型"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0074_call_01",
+      "dob_dev_plan_0074_call_02",
+      "dob_dev_plan_0074_call_03",
+      "dob_dev_plan_0074_call_04"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1341,
+    "spoken_text": "好的，这段讲解里的重点对象我已经",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他会连续讲述一段内容，而我需要按照这条规则，从话语里识别那些适合被直接呈现的实体。这不是普通闲聊，也不是让我只回答这一句，而是在给我设定一个后续持续生效的工作方式。我需要先响应并记住这个配置，明确这条规则会让我在后续对话中持续调用 display_object_on_board(name) 这个工具。接下来我应进入持续展示/监听模式：用户继续说话时，我边听边判断，只有出现符合规则、具备清晰外形并被直接提到的内容，才在后台调用 display_object_on_board 展示；如果听到的是不适合直接呈现的说法，我就跳过，保持安静，不打断用户，也不对每句话都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0074_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "星星"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0074_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "地图"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0074_call_03",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "指南针"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0074_call_04",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "太阳系模型"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 26,
+    "n_audio_units": 22
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4594,
+    "gt_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0074_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"星星\", \"reason\": \"讲解开头直接提到夜里能看到的星星，是具体可见对象。\"}</tool_response></tool_response_event><tool_response_event><tool_call_",
+    "pred_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0074_call_01</tool_call_id><|tool_started|></tool_response_event></input_event_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>"
+  }
+}

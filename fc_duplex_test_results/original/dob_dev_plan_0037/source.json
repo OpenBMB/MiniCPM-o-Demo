@@ -1,0 +1,668 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0037",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 12.64,
+            "shape": [
+              202240
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "展示出行讲解里能看到的具体元素。\n出门后先叫一辆出租车，到前面换成自行车，这样路线更顺一点；我常说保持斑马线精神，是提醒大家按规矩走。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "展",
+                "start_sec": 0.0,
+                "end_sec": 0.36
+              },
+              {
+                "text": "示",
+                "start_sec": 0.36,
+                "end_sec": 0.6
+              },
+              {
+                "text": "出",
+                "start_sec": 0.6,
+                "end_sec": 0.72
+              },
+              {
+                "text": "行",
+                "start_sec": 0.72,
+                "end_sec": 0.96
+              },
+              {
+                "text": "讲",
+                "start_sec": 0.96,
+                "end_sec": 1.14
+              },
+              {
+                "text": "解",
+                "start_sec": 1.14,
+                "end_sec": 1.26
+              },
+              {
+                "text": "里",
+                "start_sec": 1.26,
+                "end_sec": 1.5
+              },
+              {
+                "text": "能",
+                "start_sec": 1.5,
+                "end_sec": 1.62
+              },
+              {
+                "text": "看",
+                "start_sec": 1.62,
+                "end_sec": 1.8
+              },
+              {
+                "text": "到",
+                "start_sec": 1.8,
+                "end_sec": 1.98
+              },
+              {
+                "text": "的",
+                "start_sec": 1.98,
+                "end_sec": 2.16
+              },
+              {
+                "text": "具",
+                "start_sec": 2.16,
+                "end_sec": 2.28
+              },
+              {
+                "text": "体",
+                "start_sec": 2.28,
+                "end_sec": 2.46
+              },
+              {
+                "text": "元",
+                "start_sec": 2.46,
+                "end_sec": 2.58
+              },
+              {
+                "text": "素",
+                "start_sec": 2.58,
+                "end_sec": 3.12
+              },
+              {
+                "text": "出",
+                "start_sec": 3.12,
+                "end_sec": 3.3
+              },
+              {
+                "text": "门",
+                "start_sec": 3.3,
+                "end_sec": 3.48
+              },
+              {
+                "text": "后",
+                "start_sec": 3.48,
+                "end_sec": 3.78
+              },
+              {
+                "text": "先",
+                "start_sec": 3.78,
+                "end_sec": 3.96
+              },
+              {
+                "text": "叫",
+                "start_sec": 3.96,
+                "end_sec": 4.2
+              },
+              {
+                "text": "一",
+                "start_sec": 4.2,
+                "end_sec": 4.32
+              },
+              {
+                "text": "辆",
+                "start_sec": 4.32,
+                "end_sec": 4.44
+              },
+              {
+                "text": "出",
+                "start_sec": 4.44,
+                "end_sec": 4.62
+              },
+              {
+                "text": "租",
+                "start_sec": 4.62,
+                "end_sec": 4.74
+              },
+              {
+                "text": "车",
+                "start_sec": 4.74,
+                "end_sec": 5.16
+              },
+              {
+                "text": "到",
+                "start_sec": 5.16,
+                "end_sec": 5.4
+              },
+              {
+                "text": "前",
+                "start_sec": 5.4,
+                "end_sec": 5.58
+              },
+              {
+                "text": "面",
+                "start_sec": 5.58,
+                "end_sec": 5.82
+              },
+              {
+                "text": "换",
+                "start_sec": 5.82,
+                "end_sec": 5.94
+              },
+              {
+                "text": "成",
+                "start_sec": 5.94,
+                "end_sec": 6.18
+              },
+              {
+                "text": "自",
+                "start_sec": 6.18,
+                "end_sec": 6.3
+              },
+              {
+                "text": "行",
+                "start_sec": 6.3,
+                "end_sec": 6.42
+              },
+              {
+                "text": "车",
+                "start_sec": 6.42,
+                "end_sec": 6.84
+              },
+              {
+                "text": "这",
+                "start_sec": 6.84,
+                "end_sec": 7.02
+              },
+              {
+                "text": "样",
+                "start_sec": 7.02,
+                "end_sec": 7.2
+              },
+              {
+                "text": "路",
+                "start_sec": 7.2,
+                "end_sec": 7.32
+              },
+              {
+                "text": "线",
+                "start_sec": 7.32,
+                "end_sec": 7.5
+              },
+              {
+                "text": "更",
+                "start_sec": 7.5,
+                "end_sec": 7.62
+              },
+              {
+                "text": "顺",
+                "start_sec": 7.62,
+                "end_sec": 7.86
+              },
+              {
+                "text": "一",
+                "start_sec": 7.86,
+                "end_sec": 7.98
+              },
+              {
+                "text": "点",
+                "start_sec": 7.98,
+                "end_sec": 8.46
+              },
+              {
+                "text": "我",
+                "start_sec": 8.46,
+                "end_sec": 8.7
+              },
+              {
+                "text": "常",
+                "start_sec": 8.7,
+                "end_sec": 8.88
+              },
+              {
+                "text": "说",
+                "start_sec": 8.88,
+                "end_sec": 9.24
+              },
+              {
+                "text": "保",
+                "start_sec": 9.24,
+                "end_sec": 9.42
+              },
+              {
+                "text": "持",
+                "start_sec": 9.42,
+                "end_sec": 9.66
+              },
+              {
+                "text": "斑",
+                "start_sec": 9.66,
+                "end_sec": 9.84
+              },
+              {
+                "text": "马",
+                "start_sec": 9.84,
+                "end_sec": 10.02
+              },
+              {
+                "text": "线",
+                "start_sec": 10.02,
+                "end_sec": 10.26
+              },
+              {
+                "text": "精",
+                "start_sec": 10.26,
+                "end_sec": 10.38
+              },
+              {
+                "text": "神",
+                "start_sec": 10.38,
+                "end_sec": 10.74
+              },
+              {
+                "text": "是",
+                "start_sec": 10.74,
+                "end_sec": 11.04
+              },
+              {
+                "text": "提",
+                "start_sec": 11.04,
+                "end_sec": 11.16
+              },
+              {
+                "text": "醒",
+                "start_sec": 11.16,
+                "end_sec": 11.34
+              },
+              {
+                "text": "大",
+                "start_sec": 11.34,
+                "end_sec": 11.46
+              },
+              {
+                "text": "家",
+                "start_sec": 11.46,
+                "end_sec": 11.7
+              },
+              {
+                "text": "按",
+                "start_sec": 11.7,
+                "end_sec": 11.94
+              },
+              {
+                "text": "规",
+                "start_sec": 11.94,
+                "end_sec": 12.06
+              },
+              {
+                "text": "矩",
+                "start_sec": 12.06,
+                "end_sec": 12.24
+              },
+              {
+                "text": "走",
+                "start_sec": 12.24,
+                "end_sec": 12.62
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0037_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"出租车\", \"reason\": \"这里说“先叫一辆出租车”，明确出现了具体可见的出行对象。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0037_call_02",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"自行车\", \"reason\": \"这里说“换成自行车”，明确出现了另一个具体可见的出行对象。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 5.28,
+            "shape": [
+              84480
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "明白，这段路线里的具体出行元素我已经按规则处理了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "明",
+                "start_sec": 0.0,
+                "end_sec": 0.3
+              },
+              {
+                "text": "白，",
+                "start_sec": 0.3,
+                "end_sec": 1.26
+              },
+              {
+                "text": "这",
+                "start_sec": 1.26,
+                "end_sec": 1.5
+              },
+              {
+                "text": "段",
+                "start_sec": 1.5,
+                "end_sec": 1.68
+              },
+              {
+                "text": "路",
+                "start_sec": 1.68,
+                "end_sec": 1.86
+              },
+              {
+                "text": "线",
+                "start_sec": 1.86,
+                "end_sec": 1.98
+              },
+              {
+                "text": "里",
+                "start_sec": 1.98,
+                "end_sec": 2.16
+              },
+              {
+                "text": "的",
+                "start_sec": 2.16,
+                "end_sec": 2.28
+              },
+              {
+                "text": "具",
+                "start_sec": 2.28,
+                "end_sec": 2.4
+              },
+              {
+                "text": "体",
+                "start_sec": 2.4,
+                "end_sec": 2.58
+              },
+              {
+                "text": "出",
+                "start_sec": 2.58,
+                "end_sec": 2.7
+              },
+              {
+                "text": "行",
+                "start_sec": 2.7,
+                "end_sec": 2.94
+              },
+              {
+                "text": "元",
+                "start_sec": 2.94,
+                "end_sec": 3.06
+              },
+              {
+                "text": "素",
+                "start_sec": 3.06,
+                "end_sec": 3.36
+              },
+              {
+                "text": "我",
+                "start_sec": 3.36,
+                "end_sec": 3.54
+              },
+              {
+                "text": "已",
+                "start_sec": 3.54,
+                "end_sec": 3.66
+              },
+              {
+                "text": "经",
+                "start_sec": 3.66,
+                "end_sec": 3.78
+              },
+              {
+                "text": "按",
+                "start_sec": 3.78,
+                "end_sec": 4.02
+              },
+              {
+                "text": "规",
+                "start_sec": 4.02,
+                "end_sec": 4.08
+              },
+              {
+                "text": "则",
+                "start_sec": 4.08,
+                "end_sec": 4.32
+              },
+              {
+                "text": "处",
+                "start_sec": 4.32,
+                "end_sec": 4.44
+              },
+              {
+                "text": "理",
+                "start_sec": 4.44,
+                "end_sec": 4.56
+              },
+              {
+                "text": "了。",
+                "start_sec": 4.56,
+                "end_sec": 5.26
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续讲一段内容，而我需要根据这条规则识别其中具体、可见、适合呈现的对象。这里不是普通闲聊，也不是让我立刻展开解释，而是在给我设定一个后续持续生效的展示规则。我需要先响应并记住这个配置，明确自己要进入持续展示/监听模式；之后用户继续说话时，我要一边听一边判断，只有出现符合规则的具体可见对象时，才在后台调用 display_object_on_board(name) 进行展示。对于不符合规则的表达、抽象评价、借喻或固定说法，我应当跳过，保持安静，不打断用户，也不需要对每一句都做长篇回应。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 5.16
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0037_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "出租车"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 6.84
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0037_call_02",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "自行车"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

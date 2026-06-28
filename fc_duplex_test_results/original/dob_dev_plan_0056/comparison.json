@@ -1,0 +1,72 @@
+{
+  "sample_id": "dob_dev_plan_0056",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0056.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0056/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 14.016762733459473,
+  "gt": {
+    "n_tokens": 1194,
+    "spoken_text": "好的，我会按这个布置思路继续留意实际物品。",
+    "think_text": "用户先给了我一条展示规则，我理解他的用意是：接下来他可能会连续说一段关于某个场景安排的话，我需要从中识别符合规则、具体可见并且能实际被放置或使用的对象。这里不是普通闲聊，也不是让我只回答这一句，而是在为后续对话设定一个持续生效的配置。我需要先响应并记住这条规则，明确它会让我进入持续展示/监听模式；后面用户继续讲话时，只要听到符合规则的具体对象，我就应在后台调用 display_object_on_board(name) 把它展示出来。对于不符合这条规则的表达，我只需要跳过，保持安静，不打断用户，也不需要对每句话都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "白板"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "马克笔"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0056_call_01",
+      "dob_dev_plan_0056_call_02"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1057,
+    "spoken_text": "好的，这个布置思路我记下了。",
+    "think_text": "用户先给了我一条展示规则，我理解他的用意是：接下来他可能会连续说一段关于某个场景安排的话，我需要从中识别符合规则、具体可见并且能实际被放置或使用的对象。这里不是普通闲聊，也不是让我只回答这一句，而是在为后续对话设定一个持续生效的配置。我需要先响应并记住这条规则，明确它会让我进入持续展示/监听模式；后面用户继续讲话时，只要听到符合规则的具体对象，我就应在后台调用 display_object_on_board(name) 把它展示出来。对于不符合这条规则的表达，我只需要跳过，保持安静，不打断用户，也不需要对每句话都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0056_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "白板"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0056_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "马克笔"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 16,
+    "n_audio_units": 12
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 3836,
+    "gt_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0056_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"白板\", \"reason\": \"这里说把白板放到某个位置，白板是会议空间中实际可摆放和使用的物品。\"}</tool_response></tool_response_event><tool_response_event><to",
+    "pred_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0056_call_01</tool_call_id><|tool_started|></tool_response_event></input_event_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "sample_id": "dob_dev_plan_0093",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0093.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0093/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 12.233131408691406,
+  "gt": {
+    "n_tokens": 930,
+    "spoken_text": "好的，我已按你的讲述处理。",
+    "think_text": "用户先给了我一条简短规则，我理解他的意思是：接下来他会继续说一段内容，我需要从后续话语里识别符合这条规则的具体可见对象，并在需要时呈现出来。这不是普通闲聊，也不是让我现在一次性回答，而是在给我设定一个会持续生效的展示配置。我需要先记住这个配置，明确自己要进入持续展示/监听模式；后面用户连续讲话时，我要边听边判断，只有听到真正符合规则、可以作为具体对象呈现的内容，才在后台调用 display_object_on_board(name)。如果听到的是不符合规则的说法、抽象概念、借用名称或只是词语的一部分，我就跳过，保持安静，不打断用户，也不对每句话都做冗长回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "长颈鹿"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0093_call_01"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 945,
+    "spoken_text": "好的，我已按你的讲述处理。",
+    "think_text": "用户先给了我一条简短规则，我理解他的意思是：接下来他会继续说一段内容，我需要从后续话语里识别符合这条规则的具体可见对象，并在需要时呈现出来。这不是普通闲聊，也不是让我现在一次性回答，而是在给我设定一个会持续生效的展示配置。我需要先记住这个配置，明确自己要进入持续展示/监听模式；后面用户连续讲话时，我要边听边判断，只有听到真正符合规则、可以作为具体对象呈现的内容，才在后台调用 display_object_on_board(name)。如果听到的是不符合规则的说法、抽象概念、借用名称或只是词语的一部分，我就跳过，保持安静，不打断用户，也不对每句话都做冗长回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0093_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "长颈鹿"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 11,
+    "n_audio_units": 7
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": true,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4265,
+    "gt_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><input_event_slot><tool_response_event><tool_call_id>dob_dev_plan_0093_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"长颈鹿\", \"reason\": \"这里直",
+    "pred_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit><unit><user_audio_slot><|audio_placeholder|><|audio_place"
+  }
+}

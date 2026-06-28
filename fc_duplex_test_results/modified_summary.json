@@ -1,0 +1,19 @@
+{
+  "group": "modified",
+  "total": 2,
+  "success": 2,
+  "token_stream_exact": 0,
+  "spoken_text_exact": 1,
+  "think_text_exact": 1,
+  "tool_calls_semantic_exact": 2,
+  "tool_call_ids_exact": 2,
+  "failed_samples": [],
+  "token_diff_samples": [
+    "dob_dev_plan_0001_modified_1",
+    "dob_dev_plan_0002_modified_2"
+  ],
+  "semantic_diff_samples": [
+    "dob_dev_plan_0001_modified_1",
+    "dob_dev_plan_0002_modified_2"
+  ]
+}

@@ -1,0 +1,683 @@
+[
+  {
+    "unit": 0,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151667,
+      20002,
+      60726,
+      115833,
+      101946,
+      98237,
+      99534,
+      104190,
+      3837,
+      35946,
+      101128,
+      100648,
+      11622,
+      36589,
+      20412,
+      5122,
+      104326,
+      42411,
+      104283,
+      13343,
+      3837,
+      111020,
+      91680,
+      49187,
+      43815,
+      100775,
+      3837,
+      103955,
+      30534,
+      100345,
+      102850,
+      104190,
+      102450,
+      90919,
+      102224,
+      43815,
+      85106,
+      99250,
+      104401,
+      1773,
+      99817,
+      99520,
+      100714,
+      100836,
+      100281,
+      3837,
+      104993,
+      104029,
+      99601,
+      104078,
+      102050,
+      3837,
+      68536,
+      101219,
+      104169,
+      105924,
+      46944,
+      36993,
+      100652,
+      107951,
+      104066,
+      75768,
+      1773,
+      35946,
+      85106,
+      60726,
+      102808,
+      62926,
+      105712,
+      99487,
+      85767,
+      3837,
+      100692,
+      105463,
+      105051,
+      15946,
+      100671,
+      104188,
+      101137,
+      104190,
+      106708,
+      101479,
+      64429,
+      3837,
+      80158,
+      110391,
+      110165,
+      47872,
+      11622,
+      3037,
+      5314,
+      4470,
+      23919,
+      3153,
+      8,
+      60596,
+      98,
+      54542,
+      1773,
+      104326,
+      104515,
+      101040,
+      100652,
+      101987,
+      14,
+      52702,
+      100144,
+      3837,
+      20002,
+      104005,
+      102881,
+      13343,
+      35946,
+      100652,
+      49187,
+      3837,
+      104011,
+      101137,
+      104190,
+      111167,
+      80158,
+      59879,
+      64429,
+      13072,
+      47872,
+      11622,
+      102011,
+      24968,
+      104011,
+      107132,
+      104190,
+      9370,
+      102124,
+      80158,
+      100662,
+      106305,
+      5373,
+      16530,
+      115458,
+      3837,
+      99744,
+      32664,
+      104588,
+      99700,
+      71268,
+      99190,
+      119256,
+      45861,
+      101042,
+      1773,
+      151668,
+      151751
+    ],
+    "non_spoken_terminator": "eos",
+    "closed_spans": [
+      {
+        "type": "think",
+        "tool_call_id": null,
+        "text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，我不是只听内容本身，而是要根据这条规则识别其中哪些内容需要被呈现。这里不是普通闲聊，也不是让我现在立即总结，而是在给我设定一个会持续生效的工作方式。我需要先响应并记住这个配置，明确后续对话中只要听到符合规则的具体可见对象，就应在后台调用 display_object_on_board(name) 来处理。接下来我要进入持续展示/监听模式，用户连续讲述时我持续听，遇到符合规则的对象就按对象名调用工具；遇到不符合规则的表达就保持安静、不打断，也不对每一句都做冗长分析。",
+        "wire": null,
+        "tool_call": null,
+        "error": null
+      }
+    ]
+  },
+  {
+    "unit": 1,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 2,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 3,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 4,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 5,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151657,
+      27,
+      1688,
+      829,
+      428,
+      5493,
+      5314,
+      4470,
+      23919,
+      3088,
+      903,
+      829,
+      428,
+      606,
+      755,
+      100876,
+      99313,
+      43268,
+      522,
+      903,
+      1472,
+      1688,
+      29,
+      151658,
+      151751
+    ],
+    "non_spoken_terminator": "eos",
+    "closed_spans": [
+      {
+        "type": "tool_call",
+        "tool_call_id": "dob_dev_plan_0036_call_01",
+        "text": null,
+        "wire": "<function name=\"display_object_on_board\"><param name=\"name\">斑马线</param></function>",
+        "tool_call": {
+          "wire": "<function name=\"display_object_on_board\"><param name=\"name\">斑马线</param></function>",
+          "name": "display_object_on_board",
+          "arguments": {
+            "name": "斑马线"
+          },
+          "error": null,
+          "tool_call_id": "dob_dev_plan_0036_call_01"
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "unit": 6,
+    "n_audio": 10,
+    "has_event": true,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 7,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 8,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151657,
+      27,
+      1688,
+      829,
+      428,
+      5493,
+      5314,
+      4470,
+      23919,
+      3088,
+      903,
+      829,
+      428,
+      606,
+      755,
+      102540,
+      70790,
+      99327,
+      522,
+      903,
+      1472,
+      1688,
+      29,
+      151658,
+      151751
+    ],
+    "non_spoken_terminator": "eos",
+    "closed_spans": [
+      {
+        "type": "tool_call",
+        "tool_call_id": "dob_dev_plan_0036_call_02",
+        "text": null,
+        "wire": "<function name=\"display_object_on_board\"><param name=\"name\">公交站牌</param></function>",
+        "tool_call": {
+          "wire": "<function name=\"display_object_on_board\"><param name=\"name\">公交站牌</param></function>",
+          "name": "display_object_on_board",
+          "arguments": {
+            "name": "公交站牌"
+          },
+          "error": null,
+          "tool_call_id": "dob_dev_plan_0036_call_02"
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "unit": 9,
+    "n_audio": 10,
+    "has_event": true,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 10,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 11,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 12,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 13,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151657,
+      27,
+      1688,
+      829,
+      428,
+      5493,
+      5314,
+      4470,
+      23919,
+      3088,
+      903,
+      829,
+      428,
+      606,
+      755,
+      99735,
+      114635,
+      522,
+      903,
+      1472,
+      1688,
+      29,
+      151658,
+      151751
+    ],
+    "non_spoken_terminator": "eos",
+    "closed_spans": [
+      {
+        "type": "tool_call",
+        "tool_call_id": "dob_dev_plan_0036_call_03",
+        "text": null,
+        "wire": "<function name=\"display_object_on_board\"><param name=\"name\">交通锥</param></function>",
+        "tool_call": {
+          "wire": "<function name=\"display_object_on_board\"><param name=\"name\">交通锥</param></function>",
+          "name": "display_object_on_board",
+          "arguments": {
+            "name": "交通锥"
+          },
+          "error": null,
+          "tool_call_id": "dob_dev_plan_0036_call_03"
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "unit": 14,
+    "n_audio": 10,
+    "has_event": true,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 15,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151657,
+      27,
+      1688,
+      829,
+      428,
+      5493,
+      5314,
+      4470,
+      23919,
+      3088,
+      903,
+      829,
+      428,
+      606,
+      755,
+      102440,
+      108286,
+      522,
+      903,
+      1472,
+      1688,
+      29,
+      151658,
+      151751
+    ],
+    "non_spoken_terminator": "eos",
+    "closed_spans": [
+      {
+        "type": "tool_call",
+        "tool_call_id": "dob_dev_plan_0036_call_04",
+        "text": null,
+        "wire": "<function name=\"display_object_on_board\"><param name=\"name\">白色货车</param></function>",
+        "tool_call": {
+          "wire": "<function name=\"display_object_on_board\"><param name=\"name\">白色货车</param></function>",
+          "name": "display_object_on_board",
+          "arguments": {
+            "name": "白色货车"
+          },
+          "error": null,
+          "tool_call_id": "dob_dev_plan_0036_call_04"
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "unit": 16,
+    "n_audio": 10,
+    "has_event": true,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 17,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 18,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 19,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": true,
+    "is_speaking": false,
+    "spoken_ids": [
+      151705
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 20,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": false,
+    "is_speaking": true,
+    "spoken_ids": [
+      151706,
+      99692,
+      3837,
+      108660,
+      151718
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 21,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": false,
+    "is_speaking": true,
+    "spoken_ids": [
+      151706,
+      59879,
+      103929,
+      104844,
+      53481,
+      151718
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  },
+  {
+    "unit": 22,
+    "n_audio": 10,
+    "has_event": false,
+    "is_listen": false,
+    "is_speaking": true,
+    "spoken_ids": [
+      151706,
+      104609,
+      34187,
+      85106,
+      104401,
+      151718
+    ],
+    "non_spoken_ids": [
+      151750
+    ],
+    "non_spoken_terminator": "no_action",
+    "closed_spans": []
+  }
+]

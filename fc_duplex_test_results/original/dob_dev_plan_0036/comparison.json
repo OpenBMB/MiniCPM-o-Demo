@@ -1,0 +1,106 @@
+{
+  "sample_id": "dob_dev_plan_0036",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0036.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0036/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 17.71065092086792,
+  "gt": {
+    "n_tokens": 1520,
+    "spoken_text": "好的，我已经按你的路线描述抓住了需要呈现的元素。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，我不是只听内容本身，而是要根据这条规则识别其中哪些内容需要被呈现。这里不是普通闲聊，也不是让我现在立即总结，而是在给我设定一个会持续生效的工作方式。我需要先响应并记住这个配置，明确后续对话中只要听到符合规则的具体可见对象，就应在后台调用 display_object_on_board(name) 来处理。接下来我要进入持续展示/监听模式，用户连续讲述时我持续听，遇到符合规则的对象就按对象名调用工具；遇到不符合规则的表达就保持安静、不打断，也不对每一句都做冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "斑马线"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "公交站牌"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "交通锥"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "白色货车"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0036_call_01",
+      "dob_dev_plan_0036_call_02",
+      "dob_dev_plan_0036_call_03",
+      "dob_dev_plan_0036_call_04"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1263,
+    "spoken_text": "好的，我已经按你的路线描述抓住了需要呈现",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，我不是只听内容本身，而是要根据这条规则识别其中哪些内容需要被呈现。这里不是普通闲聊，也不是让我现在立即总结，而是在给我设定一个会持续生效的工作方式。我需要先响应并记住这个配置，明确后续对话中只要听到符合规则的具体可见对象，就应在后台调用 display_object_on_board(name) 来处理。接下来我要进入持续展示/监听模式，用户连续讲述时我持续听，遇到符合规则的对象就按对象名调用工具；遇到不符合规则的表达就保持安静、不打断，也不对每一句都做冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0036_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "斑马线"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0036_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "公交站牌"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0036_call_03",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "交通锥"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0036_call_04",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "白色货车"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 23,
+    "n_audio_units": 19
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4602,
+    "gt_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><input_event_slot><tool_response_event><tool_call_id>dob_dev_plan_0036_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"斑马线\", \"reason\": \"这里是",
+    "pred_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit><unit><user_audio_slot><|audio_placeholder|><|audio_place"
+  }
+}

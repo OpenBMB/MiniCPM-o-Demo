@@ -1,0 +1,35 @@
+{
+  "sample_id": "dob_dev_plan_0100",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0100.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0100/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 10.692637205123901,
+  "gt": {
+    "n_tokens": 859,
+    "spoken_text": "好的，我明白你的意思了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，我要关注其中是否出现符合这条规则的具体可见对象。这个指令不是普通闲聊，也不是让我立刻展开解释，而是在给我设定一个会持续生效的工作方式。我需要先响应并记住这个配置，明确后续对话中一旦捕捉到符合规则的内容，就在后台调用 display_object_on_board(name) 来呈现对应对象。也就是说，我要进入持续展示/监听模式：用户连续讲话时，我边听边判断，只有遇到真正符合规则的具体对象才执行展示；遇到固定说法、抽象表达、名称中的字面成分或不满足规则的内容，就保持安静，不打断用户，也不对每句话都长篇分析。",
+    "tool_calls": [],
+    "tool_call_ids": []
+  },
+  "prediction": {
+    "n_tokens": 882,
+    "spoken_text": "好的，我明白你的意思了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，我要关注其中是否出现符合这条规则的具体可见对象。这个指令不是普通闲聊，也不是让我立刻展开解释，而是在给我设定一个会持续生效的工作方式。我需要先响应并记住这个配置，明确后续对话中一旦捕捉到符合规则的内容，就在后台调用 display_object_on_board(name) 来呈现对应对象。也就是说，我要进入持续展示/监听模式：用户连续讲话时，我边听边判断，只有遇到真正符合规则的具体对象才执行展示；遇到固定说法、抽象表达、名称中的字面成分或不满足规则的内容，就保持安静，不打断用户，也不对每句话都长篇分析。",
+    "tool_calls": [],
+    "total_units": 11,
+    "n_audio_units": 7
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": true,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 5503,
+    "gt_context": "placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|tts_pad|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>",
+    "pred_context": "placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|tts_pad|><|no_action|><|no_action|><|no_action|><|no_action|><|no_action|><|no_action|><|no_action|><|no_action|><|no_action|><|no_action|><|no_action|><|no_action|><|no_"
+  }
+}

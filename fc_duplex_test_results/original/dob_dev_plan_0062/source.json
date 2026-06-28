@@ -1,0 +1,884 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0062",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 20.96,
+            "shape": [
+              335360
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "请展示空间里的具象陈设。\n我进到客厅后，先看见靠近入口的台灯，亮度不用太抢。往里走，绿植放在转角，让画面更温暖一点；再抬眼是挂钟，提醒节奏别太散。最后视线落到书架，整体有家的氛围，也方便直播时稳定住观看方向。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "请",
+                "start_sec": 0.0,
+                "end_sec": 0.54
+              },
+              {
+                "text": "展",
+                "start_sec": 0.54,
+                "end_sec": 0.72
+              },
+              {
+                "text": "示",
+                "start_sec": 0.72,
+                "end_sec": 1.02
+              },
+              {
+                "text": "空",
+                "start_sec": 1.02,
+                "end_sec": 1.2
+              },
+              {
+                "text": "间",
+                "start_sec": 1.2,
+                "end_sec": 1.32
+              },
+              {
+                "text": "里",
+                "start_sec": 1.32,
+                "end_sec": 1.5
+              },
+              {
+                "text": "的",
+                "start_sec": 1.5,
+                "end_sec": 1.68
+              },
+              {
+                "text": "具",
+                "start_sec": 1.68,
+                "end_sec": 1.86
+              },
+              {
+                "text": "象",
+                "start_sec": 1.86,
+                "end_sec": 2.1
+              },
+              {
+                "text": "陈",
+                "start_sec": 2.1,
+                "end_sec": 2.28
+              },
+              {
+                "text": "设",
+                "start_sec": 2.28,
+                "end_sec": 2.88
+              },
+              {
+                "text": "我",
+                "start_sec": 2.88,
+                "end_sec": 3.12
+              },
+              {
+                "text": "进",
+                "start_sec": 3.12,
+                "end_sec": 3.3
+              },
+              {
+                "text": "到",
+                "start_sec": 3.3,
+                "end_sec": 3.48
+              },
+              {
+                "text": "客",
+                "start_sec": 3.48,
+                "end_sec": 3.6
+              },
+              {
+                "text": "厅",
+                "start_sec": 3.6,
+                "end_sec": 3.84
+              },
+              {
+                "text": "后",
+                "start_sec": 3.84,
+                "end_sec": 4.2
+              },
+              {
+                "text": "先",
+                "start_sec": 4.2,
+                "end_sec": 4.44
+              },
+              {
+                "text": "看",
+                "start_sec": 4.44,
+                "end_sec": 4.68
+              },
+              {
+                "text": "见",
+                "start_sec": 4.68,
+                "end_sec": 4.98
+              },
+              {
+                "text": "靠",
+                "start_sec": 4.98,
+                "end_sec": 5.1
+              },
+              {
+                "text": "近",
+                "start_sec": 5.1,
+                "end_sec": 5.34
+              },
+              {
+                "text": "入",
+                "start_sec": 5.34,
+                "end_sec": 5.46
+              },
+              {
+                "text": "口",
+                "start_sec": 5.46,
+                "end_sec": 5.58
+              },
+              {
+                "text": "的",
+                "start_sec": 5.58,
+                "end_sec": 5.76
+              },
+              {
+                "text": "台",
+                "start_sec": 5.76,
+                "end_sec": 5.94
+              },
+              {
+                "text": "灯",
+                "start_sec": 5.94,
+                "end_sec": 6.6
+              },
+              {
+                "text": "亮",
+                "start_sec": 6.6,
+                "end_sec": 6.78
+              },
+              {
+                "text": "度",
+                "start_sec": 6.78,
+                "end_sec": 7.02
+              },
+              {
+                "text": "不",
+                "start_sec": 7.02,
+                "end_sec": 7.14
+              },
+              {
+                "text": "用",
+                "start_sec": 7.14,
+                "end_sec": 7.26
+              },
+              {
+                "text": "太",
+                "start_sec": 7.26,
+                "end_sec": 7.5
+              },
+              {
+                "text": "抢",
+                "start_sec": 7.5,
+                "end_sec": 8.04
+              },
+              {
+                "text": "往",
+                "start_sec": 8.04,
+                "end_sec": 8.22
+              },
+              {
+                "text": "里",
+                "start_sec": 8.22,
+                "end_sec": 8.46
+              },
+              {
+                "text": "走",
+                "start_sec": 8.46,
+                "end_sec": 9.0
+              },
+              {
+                "text": "绿",
+                "start_sec": 9.0,
+                "end_sec": 9.12
+              },
+              {
+                "text": "植",
+                "start_sec": 9.12,
+                "end_sec": 9.36
+              },
+              {
+                "text": "放",
+                "start_sec": 9.36,
+                "end_sec": 9.54
+              },
+              {
+                "text": "在",
+                "start_sec": 9.54,
+                "end_sec": 9.72
+              },
+              {
+                "text": "转",
+                "start_sec": 9.72,
+                "end_sec": 9.84
+              },
+              {
+                "text": "角",
+                "start_sec": 9.84,
+                "end_sec": 10.32
+              },
+              {
+                "text": "让",
+                "start_sec": 10.32,
+                "end_sec": 10.56
+              },
+              {
+                "text": "画",
+                "start_sec": 10.56,
+                "end_sec": 10.74
+              },
+              {
+                "text": "面",
+                "start_sec": 10.74,
+                "end_sec": 10.92
+              },
+              {
+                "text": "更",
+                "start_sec": 10.92,
+                "end_sec": 11.16
+              },
+              {
+                "text": "温",
+                "start_sec": 11.16,
+                "end_sec": 11.28
+              },
+              {
+                "text": "暖",
+                "start_sec": 11.28,
+                "end_sec": 11.52
+              },
+              {
+                "text": "一",
+                "start_sec": 11.52,
+                "end_sec": 11.64
+              },
+              {
+                "text": "点",
+                "start_sec": 11.64,
+                "end_sec": 12.06
+              },
+              {
+                "text": "再",
+                "start_sec": 12.06,
+                "end_sec": 12.36
+              },
+              {
+                "text": "抬",
+                "start_sec": 12.36,
+                "end_sec": 12.54
+              },
+              {
+                "text": "眼",
+                "start_sec": 12.54,
+                "end_sec": 12.78
+              },
+              {
+                "text": "是",
+                "start_sec": 12.78,
+                "end_sec": 12.96
+              },
+              {
+                "text": "挂",
+                "start_sec": 12.96,
+                "end_sec": 13.14
+              },
+              {
+                "text": "钟",
+                "start_sec": 13.14,
+                "end_sec": 13.56
+              },
+              {
+                "text": "提",
+                "start_sec": 13.56,
+                "end_sec": 13.68
+              },
+              {
+                "text": "醒",
+                "start_sec": 13.68,
+                "end_sec": 13.98
+              },
+              {
+                "text": "节",
+                "start_sec": 13.98,
+                "end_sec": 14.1
+              },
+              {
+                "text": "奏",
+                "start_sec": 14.1,
+                "end_sec": 14.22
+              },
+              {
+                "text": "别",
+                "start_sec": 14.22,
+                "end_sec": 14.4
+              },
+              {
+                "text": "太",
+                "start_sec": 14.4,
+                "end_sec": 14.64
+              },
+              {
+                "text": "散",
+                "start_sec": 14.64,
+                "end_sec": 15.06
+              },
+              {
+                "text": "最",
+                "start_sec": 15.06,
+                "end_sec": 15.24
+              },
+              {
+                "text": "后",
+                "start_sec": 15.24,
+                "end_sec": 15.48
+              },
+              {
+                "text": "视",
+                "start_sec": 15.48,
+                "end_sec": 15.6
+              },
+              {
+                "text": "线",
+                "start_sec": 15.6,
+                "end_sec": 15.9
+              },
+              {
+                "text": "落",
+                "start_sec": 15.9,
+                "end_sec": 16.02
+              },
+              {
+                "text": "到",
+                "start_sec": 16.02,
+                "end_sec": 16.2
+              },
+              {
+                "text": "书",
+                "start_sec": 16.2,
+                "end_sec": 16.38
+              },
+              {
+                "text": "架",
+                "start_sec": 16.38,
+                "end_sec": 16.86
+              },
+              {
+                "text": "整",
+                "start_sec": 16.86,
+                "end_sec": 16.98
+              },
+              {
+                "text": "体",
+                "start_sec": 16.98,
+                "end_sec": 17.22
+              },
+              {
+                "text": "有",
+                "start_sec": 17.22,
+                "end_sec": 17.34
+              },
+              {
+                "text": "家",
+                "start_sec": 17.34,
+                "end_sec": 17.52
+              },
+              {
+                "text": "的",
+                "start_sec": 17.52,
+                "end_sec": 17.7
+              },
+              {
+                "text": "氛",
+                "start_sec": 17.7,
+                "end_sec": 17.82
+              },
+              {
+                "text": "围",
+                "start_sec": 17.82,
+                "end_sec": 18.18
+              },
+              {
+                "text": "也",
+                "start_sec": 18.18,
+                "end_sec": 18.42
+              },
+              {
+                "text": "方",
+                "start_sec": 18.42,
+                "end_sec": 18.6
+              },
+              {
+                "text": "便",
+                "start_sec": 18.6,
+                "end_sec": 18.84
+              },
+              {
+                "text": "直",
+                "start_sec": 18.84,
+                "end_sec": 18.96
+              },
+              {
+                "text": "播",
+                "start_sec": 18.96,
+                "end_sec": 19.14
+              },
+              {
+                "text": "时",
+                "start_sec": 19.14,
+                "end_sec": 19.44
+              },
+              {
+                "text": "稳",
+                "start_sec": 19.44,
+                "end_sec": 19.56
+              },
+              {
+                "text": "定",
+                "start_sec": 19.56,
+                "end_sec": 19.74
+              },
+              {
+                "text": "住",
+                "start_sec": 19.74,
+                "end_sec": 19.98
+              },
+              {
+                "text": "观",
+                "start_sec": 19.98,
+                "end_sec": 20.1
+              },
+              {
+                "text": "看",
+                "start_sec": 20.1,
+                "end_sec": 20.28
+              },
+              {
+                "text": "方",
+                "start_sec": 20.28,
+                "end_sec": 20.46
+              },
+              {
+                "text": "向",
+                "start_sec": 20.46,
+                "end_sec": 20.94
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0062_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"台灯\", \"reason\": \"这里明确提到空间中可见的具体陈设，应触发展示。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0062_call_02",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"绿植\", \"reason\": \"绿植是空间里的具象摆放物，符合展示规则。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0062_call_03",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"挂钟\", \"reason\": \"挂钟是可见的具体物件，应该被识别并展示。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 4,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0062_call_04",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"书架\", \"reason\": \"书架属于明确的具象家具，符合规则要求。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 3.36,
+            "shape": [
+              53760
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，相关的视觉锚点我都抓住了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.24
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.24,
+                "end_sec": 1.26
+              },
+              {
+                "text": "相",
+                "start_sec": 1.26,
+                "end_sec": 1.44
+              },
+              {
+                "text": "关",
+                "start_sec": 1.44,
+                "end_sec": 1.62
+              },
+              {
+                "text": "的",
+                "start_sec": 1.62,
+                "end_sec": 1.74
+              },
+              {
+                "text": "视",
+                "start_sec": 1.74,
+                "end_sec": 1.86
+              },
+              {
+                "text": "觉",
+                "start_sec": 1.86,
+                "end_sec": 2.1
+              },
+              {
+                "text": "锚",
+                "start_sec": 2.1,
+                "end_sec": 2.22
+              },
+              {
+                "text": "点",
+                "start_sec": 2.22,
+                "end_sec": 2.46
+              },
+              {
+                "text": "我",
+                "start_sec": 2.46,
+                "end_sec": 2.64
+              },
+              {
+                "text": "都",
+                "start_sec": 2.64,
+                "end_sec": 2.82
+              },
+              {
+                "text": "抓",
+                "start_sec": 2.82,
+                "end_sec": 2.94
+              },
+              {
+                "text": "住",
+                "start_sec": 2.94,
+                "end_sec": 3.12
+              },
+              {
+                "text": "了。",
+                "start_sec": 3.12,
+                "end_sec": 3.34
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条简短规则，我理解他的用意是：接下来他说话时，我要从连续内容里识别符合这条规则的、能够被看见并呈现出来的具体对象。这个开头不是普通闲聊，也不是让我立刻展开解释，而是在给我设定一个后续持续生效的展示配置。我需要先在内部记住这条配置，并进入持续展示/监听模式；后面只要用户连续讲话，我就边听边判断，遇到符合规则的具体对象，就在后台调用 display_object_on_board(name) 来展示。没有符合规则的内容时，我保持安静，不打断用户，也不需要对每一句都长篇回应，只稳定执行这条持续规则。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 6.6
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0062_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "台灯"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 9.36
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0062_call_02",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "绿植"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 13.56
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0062_call_03",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "挂钟"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 16.86
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0062_call_04",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "书架"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

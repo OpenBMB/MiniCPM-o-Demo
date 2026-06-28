@@ -1,0 +1,72 @@
+{
+  "sample_id": "dob_dev_plan_0029",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0029.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0029/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 13.683404445648193,
+  "gt": {
+    "n_tokens": 1181,
+    "spoken_text": "好的，我会按这个规则留意你提到的相关内容。",
+    "think_text": "用户先给了我一条简短规则，我理解他的意思是：接下来他会继续讲一段内容，我需要从中识别符合规则的具体可见对象，并把这些对象实时呈现出来。这不是普通闲聊，也不是只需要对这句话做一次性回答，而是在为后续对话设定一个持续生效的配置。我需要先记住这条规则，明确自己要进入持续展示/监听模式；后面用户连续讲话时，只要出现符合规则的具体对象，我就应在后台调用 display_object_on_board(name) 来展示它。对于不符合规则的抽象描述、评价性表达或过程说明，我要跳过并保持安静，不打断用户，也不需要对每一句都展开长篇分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "蜂蜜罐"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "木勺"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0029_call_01",
+      "dob_dev_plan_0029_call_02"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1052,
+    "spoken_text": "好的，我会按这个规则留意你提到的相关内容。",
+    "think_text": "用户先给了我一条简短规则，我理解他的意思是：接下来他会继续讲一段内容，我需要从中识别符合规则的具体可见对象，并把这些对象实时呈现出来。这不是普通闲聊，也不是只需要对这句话做一次性回答，而是在为后续对话设定一个持续生效的配置。我需要先记住这条规则，明确自己要进入持续展示/监听模式；后面用户连续讲话时，只要出现符合规则的具体对象，我就应在后台调用 display_object_on_board(name) 来展示它。对于不符合规则的抽象描述、评价性表达或过程说明，我要跳过并保持安静，不打断用户，也不需要对每一句都展开长篇分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0029_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "蜂蜜罐"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0029_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "木勺"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 17,
+    "n_audio_units": 13
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": true,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4602,
+    "gt_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><input_event_slot><tool_response_event><tool_call_id>dob_dev_plan_0029_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"蜂蜜罐\", \"reason\": \"这里明",
+    "pred_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit><unit><user_audio_slot><|audio_placeholder|><|audio_place"
+  }
+}

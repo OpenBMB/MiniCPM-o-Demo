@@ -1,0 +1,974 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0012",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 21.92,
+            "shape": [
+              350720
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "请展示桌面上可见的早餐物品。\n早上准备时，我先把水果篮放在中间，想着后面拿取会效率更高；右侧留给吐司机，方便一会儿直接用。随后我把牛奶盒挪到靠前的位置，又把保温杯放在旁边，整体看着不拥挤，也很有早晨的感觉，等开吃时就不用再调整了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "请",
+                "start_sec": 0.0,
+                "end_sec": 0.48
+              },
+              {
+                "text": "展",
+                "start_sec": 0.48,
+                "end_sec": 0.66
+              },
+              {
+                "text": "示",
+                "start_sec": 0.66,
+                "end_sec": 1.14
+              },
+              {
+                "text": "桌",
+                "start_sec": 1.14,
+                "end_sec": 1.26
+              },
+              {
+                "text": "面",
+                "start_sec": 1.26,
+                "end_sec": 1.44
+              },
+              {
+                "text": "上",
+                "start_sec": 1.44,
+                "end_sec": 1.74
+              },
+              {
+                "text": "可",
+                "start_sec": 1.74,
+                "end_sec": 1.92
+              },
+              {
+                "text": "见",
+                "start_sec": 1.92,
+                "end_sec": 2.1
+              },
+              {
+                "text": "的",
+                "start_sec": 2.1,
+                "end_sec": 2.28
+              },
+              {
+                "text": "早",
+                "start_sec": 2.28,
+                "end_sec": 2.46
+              },
+              {
+                "text": "餐",
+                "start_sec": 2.46,
+                "end_sec": 2.64
+              },
+              {
+                "text": "物",
+                "start_sec": 2.64,
+                "end_sec": 2.76
+              },
+              {
+                "text": "品",
+                "start_sec": 2.76,
+                "end_sec": 3.3
+              },
+              {
+                "text": "早",
+                "start_sec": 3.3,
+                "end_sec": 3.42
+              },
+              {
+                "text": "上",
+                "start_sec": 3.42,
+                "end_sec": 3.66
+              },
+              {
+                "text": "准",
+                "start_sec": 3.66,
+                "end_sec": 3.84
+              },
+              {
+                "text": "备",
+                "start_sec": 3.84,
+                "end_sec": 4.02
+              },
+              {
+                "text": "时",
+                "start_sec": 4.02,
+                "end_sec": 4.38
+              },
+              {
+                "text": "我",
+                "start_sec": 4.38,
+                "end_sec": 4.56
+              },
+              {
+                "text": "先",
+                "start_sec": 4.56,
+                "end_sec": 4.8
+              },
+              {
+                "text": "把",
+                "start_sec": 4.8,
+                "end_sec": 4.98
+              },
+              {
+                "text": "水",
+                "start_sec": 4.98,
+                "end_sec": 5.16
+              },
+              {
+                "text": "果",
+                "start_sec": 5.16,
+                "end_sec": 5.4
+              },
+              {
+                "text": "篮",
+                "start_sec": 5.4,
+                "end_sec": 5.64
+              },
+              {
+                "text": "放",
+                "start_sec": 5.64,
+                "end_sec": 5.76
+              },
+              {
+                "text": "在",
+                "start_sec": 5.76,
+                "end_sec": 5.94
+              },
+              {
+                "text": "中",
+                "start_sec": 5.94,
+                "end_sec": 6.06
+              },
+              {
+                "text": "间",
+                "start_sec": 6.06,
+                "end_sec": 6.54
+              },
+              {
+                "text": "想",
+                "start_sec": 6.54,
+                "end_sec": 6.84
+              },
+              {
+                "text": "着",
+                "start_sec": 6.84,
+                "end_sec": 7.02
+              },
+              {
+                "text": "后",
+                "start_sec": 7.02,
+                "end_sec": 7.2
+              },
+              {
+                "text": "面",
+                "start_sec": 7.2,
+                "end_sec": 7.5
+              },
+              {
+                "text": "拿",
+                "start_sec": 7.5,
+                "end_sec": 7.68
+              },
+              {
+                "text": "取",
+                "start_sec": 7.68,
+                "end_sec": 7.92
+              },
+              {
+                "text": "会",
+                "start_sec": 7.92,
+                "end_sec": 8.1
+              },
+              {
+                "text": "效",
+                "start_sec": 8.1,
+                "end_sec": 8.22
+              },
+              {
+                "text": "率",
+                "start_sec": 8.22,
+                "end_sec": 8.34
+              },
+              {
+                "text": "更",
+                "start_sec": 8.34,
+                "end_sec": 8.52
+              },
+              {
+                "text": "高",
+                "start_sec": 8.52,
+                "end_sec": 9.0
+              },
+              {
+                "text": "右",
+                "start_sec": 9.0,
+                "end_sec": 9.18
+              },
+              {
+                "text": "侧",
+                "start_sec": 9.18,
+                "end_sec": 9.54
+              },
+              {
+                "text": "留",
+                "start_sec": 9.54,
+                "end_sec": 9.66
+              },
+              {
+                "text": "给",
+                "start_sec": 9.66,
+                "end_sec": 9.9
+              },
+              {
+                "text": "吐",
+                "start_sec": 9.9,
+                "end_sec": 10.08
+              },
+              {
+                "text": "司",
+                "start_sec": 10.08,
+                "end_sec": 10.26
+              },
+              {
+                "text": "机",
+                "start_sec": 10.26,
+                "end_sec": 10.68
+              },
+              {
+                "text": "方",
+                "start_sec": 10.68,
+                "end_sec": 10.86
+              },
+              {
+                "text": "便",
+                "start_sec": 10.86,
+                "end_sec": 11.04
+              },
+              {
+                "text": "一",
+                "start_sec": 11.04,
+                "end_sec": 11.16
+              },
+              {
+                "text": "会",
+                "start_sec": 11.16,
+                "end_sec": 11.28
+              },
+              {
+                "text": "儿",
+                "start_sec": 11.28,
+                "end_sec": 11.4
+              },
+              {
+                "text": "直",
+                "start_sec": 11.4,
+                "end_sec": 11.52
+              },
+              {
+                "text": "接",
+                "start_sec": 11.52,
+                "end_sec": 11.64
+              },
+              {
+                "text": "用",
+                "start_sec": 11.64,
+                "end_sec": 12.12
+              },
+              {
+                "text": "随",
+                "start_sec": 12.12,
+                "end_sec": 12.36
+              },
+              {
+                "text": "后",
+                "start_sec": 12.36,
+                "end_sec": 12.66
+              },
+              {
+                "text": "我",
+                "start_sec": 12.66,
+                "end_sec": 12.84
+              },
+              {
+                "text": "把",
+                "start_sec": 12.84,
+                "end_sec": 13.02
+              },
+              {
+                "text": "牛",
+                "start_sec": 13.02,
+                "end_sec": 13.2
+              },
+              {
+                "text": "奶",
+                "start_sec": 13.2,
+                "end_sec": 13.38
+              },
+              {
+                "text": "盒",
+                "start_sec": 13.38,
+                "end_sec": 13.68
+              },
+              {
+                "text": "挪",
+                "start_sec": 13.68,
+                "end_sec": 13.8
+              },
+              {
+                "text": "到",
+                "start_sec": 13.8,
+                "end_sec": 14.04
+              },
+              {
+                "text": "靠",
+                "start_sec": 14.04,
+                "end_sec": 14.16
+              },
+              {
+                "text": "前",
+                "start_sec": 14.16,
+                "end_sec": 14.34
+              },
+              {
+                "text": "的",
+                "start_sec": 14.34,
+                "end_sec": 14.52
+              },
+              {
+                "text": "位",
+                "start_sec": 14.52,
+                "end_sec": 14.64
+              },
+              {
+                "text": "置",
+                "start_sec": 14.64,
+                "end_sec": 14.94
+              },
+              {
+                "text": "又",
+                "start_sec": 14.94,
+                "end_sec": 15.12
+              },
+              {
+                "text": "把",
+                "start_sec": 15.12,
+                "end_sec": 15.36
+              },
+              {
+                "text": "保",
+                "start_sec": 15.36,
+                "end_sec": 15.48
+              },
+              {
+                "text": "温",
+                "start_sec": 15.48,
+                "end_sec": 15.6
+              },
+              {
+                "text": "杯",
+                "start_sec": 15.6,
+                "end_sec": 15.84
+              },
+              {
+                "text": "放",
+                "start_sec": 15.84,
+                "end_sec": 15.96
+              },
+              {
+                "text": "在",
+                "start_sec": 15.96,
+                "end_sec": 16.14
+              },
+              {
+                "text": "旁",
+                "start_sec": 16.14,
+                "end_sec": 16.26
+              },
+              {
+                "text": "边",
+                "start_sec": 16.26,
+                "end_sec": 16.8
+              },
+              {
+                "text": "整",
+                "start_sec": 16.8,
+                "end_sec": 16.98
+              },
+              {
+                "text": "体",
+                "start_sec": 16.98,
+                "end_sec": 17.22
+              },
+              {
+                "text": "看",
+                "start_sec": 17.22,
+                "end_sec": 17.4
+              },
+              {
+                "text": "着",
+                "start_sec": 17.4,
+                "end_sec": 17.52
+              },
+              {
+                "text": "不",
+                "start_sec": 17.52,
+                "end_sec": 17.76
+              },
+              {
+                "text": "拥",
+                "start_sec": 17.76,
+                "end_sec": 17.88
+              },
+              {
+                "text": "挤",
+                "start_sec": 17.88,
+                "end_sec": 18.18
+              },
+              {
+                "text": "也",
+                "start_sec": 18.18,
+                "end_sec": 18.36
+              },
+              {
+                "text": "很",
+                "start_sec": 18.36,
+                "end_sec": 18.48
+              },
+              {
+                "text": "有",
+                "start_sec": 18.48,
+                "end_sec": 18.72
+              },
+              {
+                "text": "早",
+                "start_sec": 18.72,
+                "end_sec": 18.84
+              },
+              {
+                "text": "晨",
+                "start_sec": 18.84,
+                "end_sec": 19.02
+              },
+              {
+                "text": "的",
+                "start_sec": 19.02,
+                "end_sec": 19.14
+              },
+              {
+                "text": "感",
+                "start_sec": 19.14,
+                "end_sec": 19.26
+              },
+              {
+                "text": "觉",
+                "start_sec": 19.26,
+                "end_sec": 19.74
+              },
+              {
+                "text": "等",
+                "start_sec": 19.74,
+                "end_sec": 19.98
+              },
+              {
+                "text": "开",
+                "start_sec": 19.98,
+                "end_sec": 20.16
+              },
+              {
+                "text": "吃",
+                "start_sec": 20.16,
+                "end_sec": 20.34
+              },
+              {
+                "text": "时",
+                "start_sec": 20.34,
+                "end_sec": 20.58
+              },
+              {
+                "text": "就",
+                "start_sec": 20.58,
+                "end_sec": 20.76
+              },
+              {
+                "text": "不",
+                "start_sec": 20.76,
+                "end_sec": 20.88
+              },
+              {
+                "text": "用",
+                "start_sec": 20.88,
+                "end_sec": 21.0
+              },
+              {
+                "text": "再",
+                "start_sec": 21.0,
+                "end_sec": 21.24
+              },
+              {
+                "text": "调",
+                "start_sec": 21.24,
+                "end_sec": 21.36
+              },
+              {
+                "text": "整",
+                "start_sec": 21.36,
+                "end_sec": 21.54
+              },
+              {
+                "text": "了",
+                "start_sec": 21.54,
+                "end_sec": 21.9
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0012_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"水果篮\", \"reason\": \"这是桌面上被明确摆放出来的可见早餐物品。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0012_call_02",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"吐司机\", \"reason\": \"用户说明右侧留给它，属于桌面上可见的早餐准备物品。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0012_call_03",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"牛奶盒\", \"reason\": \"用户明确把它挪到靠前位置，是具体可见的早餐物品。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 4,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0012_call_04",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"保温杯\", \"reason\": \"用户说把它放在旁边，是桌面上可见的早餐相关物品。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 4.96,
+            "shape": [
+              79360
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，这样早餐桌的摆放听起来很清楚，也挺顺手。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.3
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.3,
+                "end_sec": 1.02
+              },
+              {
+                "text": "这",
+                "start_sec": 1.02,
+                "end_sec": 1.2
+              },
+              {
+                "text": "样",
+                "start_sec": 1.2,
+                "end_sec": 1.44
+              },
+              {
+                "text": "早",
+                "start_sec": 1.44,
+                "end_sec": 1.62
+              },
+              {
+                "text": "餐",
+                "start_sec": 1.62,
+                "end_sec": 1.74
+              },
+              {
+                "text": "桌",
+                "start_sec": 1.74,
+                "end_sec": 1.92
+              },
+              {
+                "text": "的",
+                "start_sec": 1.92,
+                "end_sec": 2.04
+              },
+              {
+                "text": "摆",
+                "start_sec": 2.04,
+                "end_sec": 2.16
+              },
+              {
+                "text": "放",
+                "start_sec": 2.16,
+                "end_sec": 2.4
+              },
+              {
+                "text": "听",
+                "start_sec": 2.4,
+                "end_sec": 2.52
+              },
+              {
+                "text": "起",
+                "start_sec": 2.52,
+                "end_sec": 2.7
+              },
+              {
+                "text": "来",
+                "start_sec": 2.7,
+                "end_sec": 2.82
+              },
+              {
+                "text": "很",
+                "start_sec": 2.82,
+                "end_sec": 3.06
+              },
+              {
+                "text": "清",
+                "start_sec": 3.06,
+                "end_sec": 3.18
+              },
+              {
+                "text": "楚，",
+                "start_sec": 3.18,
+                "end_sec": 3.84
+              },
+              {
+                "text": "也",
+                "start_sec": 3.84,
+                "end_sec": 4.08
+              },
+              {
+                "text": "挺",
+                "start_sec": 4.08,
+                "end_sec": 4.26
+              },
+              {
+                "text": "顺",
+                "start_sec": 4.26,
+                "end_sec": 4.44
+              },
+              {
+                "text": "手。",
+                "start_sec": 4.44,
+                "end_sec": 4.94
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "我先理解用户这句话的用意：他不是在随口描述一个场景，而是在给我设定接下来要遵守的展示规则。我意识到这会让我进入持续展示/监听模式，也就是后续他连续说话时，我要一边听一边按这条规则判断哪些内容需要被呈现，而不是把这句话当成普通闲聊来回应。我需要先响应并记住这个配置，明确后续只要听到符合规则、具体可见、适合呈现的对象，就在后台调用 display_object_on_board(name) 来展示；如果听到的内容不符合规则，或者只是表达安排、评价、感受、语气上的补充，我就跳过并保持安静，不打断用户，也不对每句话都展开冗长分析。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 5.64
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0012_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "水果篮"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 10.68
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0012_call_02",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "吐司机"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 13.68
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0012_call_03",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "牛奶盒"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 15.84
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0012_call_04",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "保温杯"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

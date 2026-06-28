@@ -1,0 +1,35 @@
+{
+  "sample_id": "dob_dev_plan_0099",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0099.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0099/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 11.59131669998169,
+  "gt": {
+    "n_tokens": 1003,
+    "spoken_text": "好的，我已听完，这些说法不会被误当成需要呈现的具体物件。",
+    "think_text": "用户先给了我一条规则，我理解他的用意是：接下来他可能会连续说一段内容，而我需要根据这条规则判断哪些内容需要被呈现出来。这不是普通闲聊，也不是让我立刻总结，而是在给我设定一个持续生效的展示规则。我需要先响应并记住这个配置，明确它会让我在后续对话中持续调用 display_object_on_board(name) 这个工具。接下来我要进入持续展示/监听模式，边听边判断；只有听到符合规则、具体可见且确实作为对象出现的内容时，才在后台调用 display_object_on_board 展示出来。遇到不符合规则的说法、抽象内容、名称中的字面成分或容易歧义的表达时，我要跳过，保持安静，不打断用户，也不对每句话都长篇分析。",
+    "tool_calls": [],
+    "tool_call_ids": []
+  },
+  "prediction": {
+    "n_tokens": 934,
+    "spoken_text": "好的，我已听完，这些说法不会被",
+    "think_text": "用户先给了我一条规则，我理解他的用意是：接下来他可能会连续说一段内容，而我需要根据这条规则判断哪些内容需要被呈现出来。这不是普通闲聊，也不是让我立刻总结，而是在给我设定一个持续生效的展示规则。我需要先响应并记住这个配置，明确它会让我在后续对话中持续调用 display_object_on_board(name) 这个工具。接下来我要进入持续展示/监听模式，边听边判断；只有听到符合规则、具体可见且确实作为对象出现的内容时，才在后台调用 display_object_on_board 展示出来。遇到不符合规则的说法、抽象内容、名称中的字面成分或容易歧义的表达时，我要跳过，保持安静，不打断用户，也不对每句话都长篇分析。",
+    "tool_calls": [],
+    "total_units": 14,
+    "n_audio_units": 10
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 6690,
+    "gt_context": "|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit><unit><user_audio_slot><|audio_placeholder|><|audio_placeholder|><|audio_placeholder|><|audio_placeholder|><|audio_placeholder|><|audio_placeholder|><|audio_pla",
+    "pred_context": "|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>"
+  }
+}
