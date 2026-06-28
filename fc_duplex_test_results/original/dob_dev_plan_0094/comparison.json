@@ -1,0 +1,55 @@
+{
+  "sample_id": "dob_dev_plan_0094",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0094.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0094/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 11.178199291229248,
+  "gt": {
+    "n_tokens": 998,
+    "spoken_text": "好的，我会按你提到的具体品种来处理。",
+    "think_text": "用户先给了我一条展示规则，我理解他的意思是：接下来他会继续说话，而我需要从后续内容里识别符合这条规则的具体对象，并把它们呈现出来。这不是普通闲聊，也不是只针对当前这一句做一次回答，而是在给我设定一个会持续生效的工作配置。我需要先记住这条规则，进入持续展示/监听模式；后面用户连续表达时，我要边听边判断，凡是出现符合规则、可以作为具体展示对象的名称，就在后台调用 display_object_on_board(name) 来展示。遇到不符合这条规则的表达，我就跳过，不打断用户，不强行回应，也不需要对每一句都展开长篇分析，只保持持续监听和按需触发。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "英短猫"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0094_call_01"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 923,
+    "spoken_text": "好的，我会按你提到的英短猫来处理。",
+    "think_text": "用户先给了我一条展示规则，我理解他的意思是：接下来他会继续说话，而我需要从后续内容里识别符合这条规则的具体对象，并把它们呈现出来。这不是普通闲聊，也不是只针对当前这一句做一次回答，而是在给我设定一个会持续生效的工作配置。我需要先记住这条规则，进入持续展示/监听模式；后面用户连续表达时，我要边听边判断，凡是出现符合规则、可以作为具体展示对象的名称，就在后台调用 display_object_on_board(name) 来展示。遇到不符合这条规则的表达，我就跳过，不打断用户，不强行回应，也不需要对每一句都展开长篇分析，只保持持续监听和按需触发。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0094_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "英短猫"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 12,
+    "n_audio_units": 8
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4257,
+    "gt_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><input_event_slot><tool_response_event><tool_call_id>dob_dev_plan_0094_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"英短猫\", \"reason\": \"用户明",
+    "pred_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit><unit><user_audio_slot><|audio_placeholder|><|audio_place"
+  }
+}

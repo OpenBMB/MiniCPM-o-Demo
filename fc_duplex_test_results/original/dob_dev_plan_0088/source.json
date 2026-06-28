@@ -1,0 +1,1365 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0088",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 32.48,
+            "shape": [
+              519680
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "接下来我提到的材料、零件和工具就帮我展示。\n刚才我们脑暴搭建思路时，我想先用胶带把临时位置定住，别一开始就定死。然后把工具箱拿过来，省得来回找。主体还是用木板比较合适，尺寸先按现在的展示范围预留一点余量；如果想让结构更稳定，我倾向于方案 B：先用锤子轻轻试一下受力点，再把钉子固定到关键连接处。最后用水平尺确认整体没有歪，这样后面调整也比较从容。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "接",
+                "start_sec": 0.08,
+                "end_sec": 0.48
+              },
+              {
+                "text": "下",
+                "start_sec": 0.48,
+                "end_sec": 0.66
+              },
+              {
+                "text": "来",
+                "start_sec": 0.66,
+                "end_sec": 0.78
+              },
+              {
+                "text": "我",
+                "start_sec": 0.78,
+                "end_sec": 0.96
+              },
+              {
+                "text": "提",
+                "start_sec": 0.96,
+                "end_sec": 1.08
+              },
+              {
+                "text": "到",
+                "start_sec": 1.08,
+                "end_sec": 1.2
+              },
+              {
+                "text": "的",
+                "start_sec": 1.2,
+                "end_sec": 1.38
+              },
+              {
+                "text": "材",
+                "start_sec": 1.38,
+                "end_sec": 1.5
+              },
+              {
+                "text": "料",
+                "start_sec": 1.5,
+                "end_sec": 1.92
+              },
+              {
+                "text": "零",
+                "start_sec": 1.92,
+                "end_sec": 2.04
+              },
+              {
+                "text": "件",
+                "start_sec": 2.04,
+                "end_sec": 2.28
+              },
+              {
+                "text": "和",
+                "start_sec": 2.28,
+                "end_sec": 2.46
+              },
+              {
+                "text": "工",
+                "start_sec": 2.46,
+                "end_sec": 2.58
+              },
+              {
+                "text": "具",
+                "start_sec": 2.58,
+                "end_sec": 2.82
+              },
+              {
+                "text": "就",
+                "start_sec": 2.82,
+                "end_sec": 3.0
+              },
+              {
+                "text": "帮",
+                "start_sec": 3.0,
+                "end_sec": 3.18
+              },
+              {
+                "text": "我",
+                "start_sec": 3.18,
+                "end_sec": 3.36
+              },
+              {
+                "text": "展",
+                "start_sec": 3.36,
+                "end_sec": 3.48
+              },
+              {
+                "text": "示",
+                "start_sec": 3.48,
+                "end_sec": 4.44
+              },
+              {
+                "text": "刚",
+                "start_sec": 4.44,
+                "end_sec": 4.56
+              },
+              {
+                "text": "才",
+                "start_sec": 4.56,
+                "end_sec": 4.8
+              },
+              {
+                "text": "我",
+                "start_sec": 4.8,
+                "end_sec": 4.86
+              },
+              {
+                "text": "们",
+                "start_sec": 4.86,
+                "end_sec": 5.04
+              },
+              {
+                "text": "脑",
+                "start_sec": 5.04,
+                "end_sec": 5.22
+              },
+              {
+                "text": "暴",
+                "start_sec": 5.22,
+                "end_sec": 5.4
+              },
+              {
+                "text": "搭",
+                "start_sec": 5.4,
+                "end_sec": 5.58
+              },
+              {
+                "text": "建",
+                "start_sec": 5.58,
+                "end_sec": 5.76
+              },
+              {
+                "text": "思",
+                "start_sec": 5.76,
+                "end_sec": 5.88
+              },
+              {
+                "text": "路",
+                "start_sec": 5.88,
+                "end_sec": 6.06
+              },
+              {
+                "text": "时",
+                "start_sec": 6.06,
+                "end_sec": 6.42
+              },
+              {
+                "text": "我",
+                "start_sec": 6.42,
+                "end_sec": 6.6
+              },
+              {
+                "text": "想",
+                "start_sec": 6.6,
+                "end_sec": 6.78
+              },
+              {
+                "text": "先",
+                "start_sec": 6.78,
+                "end_sec": 6.96
+              },
+              {
+                "text": "用",
+                "start_sec": 6.96,
+                "end_sec": 7.2
+              },
+              {
+                "text": "胶",
+                "start_sec": 7.2,
+                "end_sec": 7.32
+              },
+              {
+                "text": "带",
+                "start_sec": 7.32,
+                "end_sec": 7.56
+              },
+              {
+                "text": "把",
+                "start_sec": 7.56,
+                "end_sec": 7.8
+              },
+              {
+                "text": "临",
+                "start_sec": 7.8,
+                "end_sec": 7.92
+              },
+              {
+                "text": "时",
+                "start_sec": 7.92,
+                "end_sec": 8.1
+              },
+              {
+                "text": "位",
+                "start_sec": 8.1,
+                "end_sec": 8.22
+              },
+              {
+                "text": "置",
+                "start_sec": 8.22,
+                "end_sec": 8.4
+              },
+              {
+                "text": "定",
+                "start_sec": 8.4,
+                "end_sec": 8.58
+              },
+              {
+                "text": "住",
+                "start_sec": 8.58,
+                "end_sec": 9.0
+              },
+              {
+                "text": "别",
+                "start_sec": 9.0,
+                "end_sec": 9.3
+              },
+              {
+                "text": "一",
+                "start_sec": 9.3,
+                "end_sec": 9.42
+              },
+              {
+                "text": "开",
+                "start_sec": 9.42,
+                "end_sec": 9.54
+              },
+              {
+                "text": "始",
+                "start_sec": 9.54,
+                "end_sec": 9.72
+              },
+              {
+                "text": "就",
+                "start_sec": 9.72,
+                "end_sec": 9.9
+              },
+              {
+                "text": "定",
+                "start_sec": 9.9,
+                "end_sec": 10.08
+              },
+              {
+                "text": "死",
+                "start_sec": 10.08,
+                "end_sec": 10.92
+              },
+              {
+                "text": "然",
+                "start_sec": 10.92,
+                "end_sec": 11.16
+              },
+              {
+                "text": "后",
+                "start_sec": 11.16,
+                "end_sec": 11.4
+              },
+              {
+                "text": "把",
+                "start_sec": 11.4,
+                "end_sec": 11.58
+              },
+              {
+                "text": "工",
+                "start_sec": 11.58,
+                "end_sec": 11.7
+              },
+              {
+                "text": "具",
+                "start_sec": 11.7,
+                "end_sec": 11.82
+              },
+              {
+                "text": "箱",
+                "start_sec": 11.82,
+                "end_sec": 12.06
+              },
+              {
+                "text": "拿",
+                "start_sec": 12.06,
+                "end_sec": 12.18
+              },
+              {
+                "text": "过",
+                "start_sec": 12.18,
+                "end_sec": 12.3
+              },
+              {
+                "text": "来",
+                "start_sec": 12.3,
+                "end_sec": 12.54
+              },
+              {
+                "text": "省",
+                "start_sec": 12.54,
+                "end_sec": 12.78
+              },
+              {
+                "text": "得",
+                "start_sec": 12.78,
+                "end_sec": 12.9
+              },
+              {
+                "text": "来",
+                "start_sec": 12.9,
+                "end_sec": 13.08
+              },
+              {
+                "text": "回",
+                "start_sec": 13.08,
+                "end_sec": 13.26
+              },
+              {
+                "text": "找",
+                "start_sec": 13.26,
+                "end_sec": 14.16
+              },
+              {
+                "text": "主",
+                "start_sec": 14.16,
+                "end_sec": 14.28
+              },
+              {
+                "text": "体",
+                "start_sec": 14.28,
+                "end_sec": 14.52
+              },
+              {
+                "text": "还",
+                "start_sec": 14.52,
+                "end_sec": 14.64
+              },
+              {
+                "text": "是",
+                "start_sec": 14.64,
+                "end_sec": 14.76
+              },
+              {
+                "text": "用",
+                "start_sec": 14.76,
+                "end_sec": 14.94
+              },
+              {
+                "text": "木",
+                "start_sec": 14.94,
+                "end_sec": 15.0
+              },
+              {
+                "text": "板",
+                "start_sec": 15.0,
+                "end_sec": 15.24
+              },
+              {
+                "text": "比",
+                "start_sec": 15.24,
+                "end_sec": 15.3
+              },
+              {
+                "text": "较",
+                "start_sec": 15.3,
+                "end_sec": 15.48
+              },
+              {
+                "text": "合",
+                "start_sec": 15.48,
+                "end_sec": 15.6
+              },
+              {
+                "text": "适",
+                "start_sec": 15.6,
+                "end_sec": 16.38
+              },
+              {
+                "text": "尺",
+                "start_sec": 16.38,
+                "end_sec": 16.56
+              },
+              {
+                "text": "寸",
+                "start_sec": 16.56,
+                "end_sec": 16.8
+              },
+              {
+                "text": "先",
+                "start_sec": 16.8,
+                "end_sec": 16.98
+              },
+              {
+                "text": "按",
+                "start_sec": 16.98,
+                "end_sec": 17.16
+              },
+              {
+                "text": "现",
+                "start_sec": 17.16,
+                "end_sec": 17.28
+              },
+              {
+                "text": "在",
+                "start_sec": 17.28,
+                "end_sec": 17.4
+              },
+              {
+                "text": "的",
+                "start_sec": 17.4,
+                "end_sec": 17.52
+              },
+              {
+                "text": "展",
+                "start_sec": 17.52,
+                "end_sec": 17.7
+              },
+              {
+                "text": "示",
+                "start_sec": 17.7,
+                "end_sec": 17.88
+              },
+              {
+                "text": "范",
+                "start_sec": 17.88,
+                "end_sec": 18.0
+              },
+              {
+                "text": "围",
+                "start_sec": 18.0,
+                "end_sec": 18.3
+              },
+              {
+                "text": "预",
+                "start_sec": 18.3,
+                "end_sec": 18.42
+              },
+              {
+                "text": "留",
+                "start_sec": 18.42,
+                "end_sec": 18.54
+              },
+              {
+                "text": "一",
+                "start_sec": 18.54,
+                "end_sec": 18.66
+              },
+              {
+                "text": "点",
+                "start_sec": 18.66,
+                "end_sec": 18.9
+              },
+              {
+                "text": "余",
+                "start_sec": 18.9,
+                "end_sec": 19.02
+              },
+              {
+                "text": "量",
+                "start_sec": 19.02,
+                "end_sec": 19.74
+              },
+              {
+                "text": "如",
+                "start_sec": 19.74,
+                "end_sec": 19.86
+              },
+              {
+                "text": "果",
+                "start_sec": 19.86,
+                "end_sec": 20.04
+              },
+              {
+                "text": "想",
+                "start_sec": 20.04,
+                "end_sec": 20.16
+              },
+              {
+                "text": "让",
+                "start_sec": 20.16,
+                "end_sec": 20.4
+              },
+              {
+                "text": "结",
+                "start_sec": 20.4,
+                "end_sec": 20.52
+              },
+              {
+                "text": "构",
+                "start_sec": 20.52,
+                "end_sec": 20.7
+              },
+              {
+                "text": "更",
+                "start_sec": 20.7,
+                "end_sec": 20.82
+              },
+              {
+                "text": "稳",
+                "start_sec": 20.82,
+                "end_sec": 21.0
+              },
+              {
+                "text": "定",
+                "start_sec": 21.0,
+                "end_sec": 21.36
+              },
+              {
+                "text": "我",
+                "start_sec": 21.36,
+                "end_sec": 21.54
+              },
+              {
+                "text": "倾",
+                "start_sec": 21.54,
+                "end_sec": 21.72
+              },
+              {
+                "text": "向",
+                "start_sec": 21.72,
+                "end_sec": 21.84
+              },
+              {
+                "text": "于",
+                "start_sec": 21.84,
+                "end_sec": 22.02
+              },
+              {
+                "text": "方",
+                "start_sec": 22.02,
+                "end_sec": 22.2
+              },
+              {
+                "text": "案",
+                "start_sec": 22.2,
+                "end_sec": 22.38
+              },
+              {
+                "text": "B",
+                "start_sec": 22.38,
+                "end_sec": 23.22
+              },
+              {
+                "text": "先",
+                "start_sec": 23.22,
+                "end_sec": 23.46
+              },
+              {
+                "text": "用",
+                "start_sec": 23.46,
+                "end_sec": 23.64
+              },
+              {
+                "text": "锤",
+                "start_sec": 23.64,
+                "end_sec": 23.82
+              },
+              {
+                "text": "子",
+                "start_sec": 23.82,
+                "end_sec": 24.06
+              },
+              {
+                "text": "轻",
+                "start_sec": 24.06,
+                "end_sec": 24.24
+              },
+              {
+                "text": "轻",
+                "start_sec": 24.24,
+                "end_sec": 24.36
+              },
+              {
+                "text": "试",
+                "start_sec": 24.36,
+                "end_sec": 24.48
+              },
+              {
+                "text": "一",
+                "start_sec": 24.48,
+                "end_sec": 24.6
+              },
+              {
+                "text": "下",
+                "start_sec": 24.6,
+                "end_sec": 24.78
+              },
+              {
+                "text": "受",
+                "start_sec": 24.78,
+                "end_sec": 24.96
+              },
+              {
+                "text": "力",
+                "start_sec": 24.96,
+                "end_sec": 25.08
+              },
+              {
+                "text": "点",
+                "start_sec": 25.08,
+                "end_sec": 25.38
+              },
+              {
+                "text": "再",
+                "start_sec": 25.38,
+                "end_sec": 25.62
+              },
+              {
+                "text": "把",
+                "start_sec": 25.62,
+                "end_sec": 25.8
+              },
+              {
+                "text": "钉",
+                "start_sec": 25.8,
+                "end_sec": 25.92
+              },
+              {
+                "text": "子",
+                "start_sec": 25.92,
+                "end_sec": 26.22
+              },
+              {
+                "text": "固",
+                "start_sec": 26.22,
+                "end_sec": 26.34
+              },
+              {
+                "text": "定",
+                "start_sec": 26.34,
+                "end_sec": 26.46
+              },
+              {
+                "text": "到",
+                "start_sec": 26.46,
+                "end_sec": 26.64
+              },
+              {
+                "text": "关",
+                "start_sec": 26.64,
+                "end_sec": 26.76
+              },
+              {
+                "text": "键",
+                "start_sec": 26.76,
+                "end_sec": 26.94
+              },
+              {
+                "text": "连",
+                "start_sec": 26.94,
+                "end_sec": 27.06
+              },
+              {
+                "text": "接",
+                "start_sec": 27.06,
+                "end_sec": 27.24
+              },
+              {
+                "text": "处",
+                "start_sec": 27.24,
+                "end_sec": 27.9
+              },
+              {
+                "text": "最",
+                "start_sec": 27.9,
+                "end_sec": 28.14
+              },
+              {
+                "text": "后",
+                "start_sec": 28.14,
+                "end_sec": 28.32
+              },
+              {
+                "text": "用",
+                "start_sec": 28.32,
+                "end_sec": 28.5
+              },
+              {
+                "text": "水",
+                "start_sec": 28.5,
+                "end_sec": 28.68
+              },
+              {
+                "text": "平",
+                "start_sec": 28.68,
+                "end_sec": 28.8
+              },
+              {
+                "text": "尺",
+                "start_sec": 28.8,
+                "end_sec": 29.1
+              },
+              {
+                "text": "确",
+                "start_sec": 29.1,
+                "end_sec": 29.22
+              },
+              {
+                "text": "认",
+                "start_sec": 29.22,
+                "end_sec": 29.4
+              },
+              {
+                "text": "整",
+                "start_sec": 29.4,
+                "end_sec": 29.52
+              },
+              {
+                "text": "体",
+                "start_sec": 29.52,
+                "end_sec": 29.7
+              },
+              {
+                "text": "没",
+                "start_sec": 29.7,
+                "end_sec": 29.82
+              },
+              {
+                "text": "有",
+                "start_sec": 29.82,
+                "end_sec": 30.0
+              },
+              {
+                "text": "歪",
+                "start_sec": 30.0,
+                "end_sec": 30.48
+              },
+              {
+                "text": "这",
+                "start_sec": 30.48,
+                "end_sec": 30.6
+              },
+              {
+                "text": "样",
+                "start_sec": 30.6,
+                "end_sec": 30.78
+              },
+              {
+                "text": "后",
+                "start_sec": 30.78,
+                "end_sec": 30.9
+              },
+              {
+                "text": "面",
+                "start_sec": 30.9,
+                "end_sec": 31.14
+              },
+              {
+                "text": "调",
+                "start_sec": 31.14,
+                "end_sec": 31.26
+              },
+              {
+                "text": "整",
+                "start_sec": 31.26,
+                "end_sec": 31.5
+              },
+              {
+                "text": "也",
+                "start_sec": 31.5,
+                "end_sec": 31.68
+              },
+              {
+                "text": "比",
+                "start_sec": 31.68,
+                "end_sec": 31.8
+              },
+              {
+                "text": "较",
+                "start_sec": 31.8,
+                "end_sec": 32.04
+              },
+              {
+                "text": "从",
+                "start_sec": 32.04,
+                "end_sec": 32.22
+              },
+              {
+                "text": "容",
+                "start_sec": 32.22,
+                "end_sec": 32.46
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0088_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"胶带\", \"reason\": \"这里明确提到用于临时固定的具体材料，符合展示规则。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0088_call_02",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"工具箱\", \"reason\": \"这里提到要拿来的具体工具收纳物，属于可见的工具相关对象。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0088_call_03",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"木板\", \"reason\": \"这里把木板作为主体材料来讨论，是具体可见材料。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 4,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0088_call_04",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"锤子\", \"reason\": \"这里提到用于试受力点的具体工具，符合展示规则。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 5,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0088_call_05",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"钉子\", \"reason\": \"这里提到用于固定连接处的具体零件，符合展示规则。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 6,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0088_call_06",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"水平尺\", \"reason\": \"这里提到用于确认整体是否歪斜的具体工具，符合展示规则。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 4.96,
+            "shape": [
+              79360
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 5,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，我已经按这段搭建思路把该呈现的实物都处理好了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.24
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.24,
+                "end_sec": 1.32
+              },
+              {
+                "text": "我",
+                "start_sec": 1.32,
+                "end_sec": 1.56
+              },
+              {
+                "text": "已",
+                "start_sec": 1.56,
+                "end_sec": 1.68
+              },
+              {
+                "text": "经",
+                "start_sec": 1.68,
+                "end_sec": 1.8
+              },
+              {
+                "text": "按",
+                "start_sec": 1.8,
+                "end_sec": 1.92
+              },
+              {
+                "text": "这",
+                "start_sec": 1.92,
+                "end_sec": 2.04
+              },
+              {
+                "text": "段",
+                "start_sec": 2.04,
+                "end_sec": 2.28
+              },
+              {
+                "text": "搭",
+                "start_sec": 2.28,
+                "end_sec": 2.4
+              },
+              {
+                "text": "建",
+                "start_sec": 2.4,
+                "end_sec": 2.58
+              },
+              {
+                "text": "思",
+                "start_sec": 2.58,
+                "end_sec": 2.76
+              },
+              {
+                "text": "路",
+                "start_sec": 2.76,
+                "end_sec": 3.0
+              },
+              {
+                "text": "把",
+                "start_sec": 3.0,
+                "end_sec": 3.18
+              },
+              {
+                "text": "该",
+                "start_sec": 3.18,
+                "end_sec": 3.36
+              },
+              {
+                "text": "呈",
+                "start_sec": 3.36,
+                "end_sec": 3.48
+              },
+              {
+                "text": "现",
+                "start_sec": 3.48,
+                "end_sec": 3.66
+              },
+              {
+                "text": "的",
+                "start_sec": 3.66,
+                "end_sec": 3.78
+              },
+              {
+                "text": "实",
+                "start_sec": 3.78,
+                "end_sec": 3.9
+              },
+              {
+                "text": "物",
+                "start_sec": 3.9,
+                "end_sec": 4.08
+              },
+              {
+                "text": "都",
+                "start_sec": 4.08,
+                "end_sec": 4.2
+              },
+              {
+                "text": "处",
+                "start_sec": 4.2,
+                "end_sec": 4.32
+              },
+              {
+                "text": "理",
+                "start_sec": 4.32,
+                "end_sec": 4.5
+              },
+              {
+                "text": "好",
+                "start_sec": 4.5,
+                "end_sec": 4.62
+              },
+              {
+                "text": "了。",
+                "start_sec": 4.62,
+                "end_sec": 4.94
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续说一段内容，我要从中识别符合这条规则的、具体可见的对象，并在需要时把它们呈现出来。这不是普通闲聊，也不是让我现在展开解释，而是在给我设定一个持续生效的工作配置。我需要先响应并记住这个配置，明确后续对话中只要捕捉到符合规则的具体对象，就在后台调用 display_object_on_board(name) 来处理。也就是说，我要进入持续展示/监听模式：用户继续讲话时，我边听边判断，遇到符合条件的对象就执行展示；遇到不符合条件、偏概念化、只是命名或表达关系的内容，就保持安静跳过，不打断用户，也不对每一句都做冗长回应。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 7.56
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0088_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "胶带"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 12.06
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0088_call_02",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "工具箱"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 15.24
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0088_call_03",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "木板"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 24.06
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0088_call_04",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "锤子"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 26.22
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 4,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0088_call_05",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "钉子"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 29.1
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 5,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0088_call_06",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "水平尺"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

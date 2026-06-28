@@ -1,0 +1,140 @@
+{
+  "sample_id": "dob_dev_plan_0073",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0073.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0073/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 26.84858751296997,
+  "gt": {
+    "n_tokens": 2054,
+    "spoken_text": "好的，关键道具和场景物我都帮你留意到了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续讲述一段内容，而我需要从中捕捉符合规则的具体可见对象，并把它们实时呈现出来。这不是普通闲聊，也不是让我现在总结故事，而是在为后续对话设定一个持续生效的展示规则。我需要先记住这个配置，明确自己要进入持续展示/监听模式；之后只要听到符合规则的对象，就在后台调用 display_object_on_board(name) 来展示。接下来用户连续讲话时，我要保持持续监听，遇到不符合规则的表达就跳过，不打断、不抢话，也不对每一句都展开长篇分析，只在真正出现该展示的内容时按规则行动。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "纸飞机"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "宝箱"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "沙漏"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "积木城堡"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "王冠"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "小船"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0073_call_01",
+      "dob_dev_plan_0073_call_02",
+      "dob_dev_plan_0073_call_03",
+      "dob_dev_plan_0073_call_04",
+      "dob_dev_plan_0073_call_05",
+      "dob_dev_plan_0073_call_06"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1727,
+    "spoken_text": "好的，关键道具和场景我都帮你留意到了",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续讲述一段内容，而我需要从中捕捉符合规则的具体可见对象，并把它们实时呈现出来。这不是普通闲聊，也不是让我现在总结故事，而是在为后续对话设定一个持续生效的展示规则。我需要先记住这个配置，明确自己要进入持续展示/监听模式；之后只要听到符合规则的对象，就在后台调用 display_object_on_board(name) 来展示。接下来用户连续讲话时，我要保持持续监听，遇到不符合规则的表达就跳过，不打断、不抢话，也不对每一句都展开长篇分析，只在真正出现该展示的内容时按规则行动。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0073_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "纸飞机"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0073_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "宝箱"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0073_call_03",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "沙漏"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0073_call_04",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "积木城堡"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0073_call_05",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "王冠"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0073_call_06",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "小船"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 42,
+    "n_audio_units": 38
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4550,
+    "gt_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0073_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"纸飞机\", \"reason\": \"这里明确出现了故事中的具体道具纸飞机，适合展示。\"}</tool_response></tool_response_event><tool_response_event><tool_call_",
+    "pred_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0073_call_01</tool_call_id><|tool_started|></tool_response_event></input_event_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>"
+  }
+}

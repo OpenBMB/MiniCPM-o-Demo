@@ -1,0 +1,73 @@
+{
+  "sample_id": "dob_dev_plan_0086",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0086.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0086/user_audio_0.opus",
+  "success": false,
+  "error": "fixed tool_call_id generator exhausted",
+  "elapsed_sec": 16.47346520423889,
+  "gt": {
+    "n_tokens": 1588,
+    "spoken_text": "明白了，我会继续按这条思路帮你留意需要呈现的实物。",
+    "think_text": "用户先给了我一条展示规则，我理解他的意思是：接下来他说话时，我要从连续内容里识别出符合这条规则、并且是具体可见的对象。这不是普通闲聊，也不是让我现在立刻列清单，而是在设定一个后续持续生效的工作方式。我需要先响应并记住这个配置，明确自己要进入持续展示/监听模式；之后用户连续讲话时，我要边听边判断，只要出现符合规则的具体对象，就在后台调用 display_object_on_board(name) 把它展示出来。遇到不符合规则的概念性说法、做法称呼或表达目标的内容，我就跳过，保持安静，不打断用户，也不需要对每句话都长篇分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "电线"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "插头"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "胶带"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "工具箱"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0086_call_01",
+      "dob_dev_plan_0086_call_02",
+      "dob_dev_plan_0086_call_03",
+      "dob_dev_plan_0086_call_04"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 0,
+    "spoken_text": "",
+    "think_text": "",
+    "tool_calls": [],
+    "total_units": 0,
+    "n_audio_units": 0
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": false,
+    "tool_calls_semantic_exact": false,
+    "tool_call_ids_exact": false
+  },
+  "first_token_stream_diff": {
+    "index": 0,
+    "gt_context": "<|im_start|>你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对",
+    "pred_context": ""
+  }
+}

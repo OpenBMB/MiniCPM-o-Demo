@@ -1,0 +1,460 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0055",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 8.32,
+            "shape": [
+              133120
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "请展示空间里的具象家具和摆件。\n画面先放灰色沙发，语气调得更温暖一点，突出家的氛围。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "请",
+                "start_sec": 0.25,
+                "end_sec": 0.78
+              },
+              {
+                "text": "展",
+                "start_sec": 0.78,
+                "end_sec": 0.96
+              },
+              {
+                "text": "示",
+                "start_sec": 0.96,
+                "end_sec": 1.14
+              },
+              {
+                "text": "空",
+                "start_sec": 1.14,
+                "end_sec": 1.26
+              },
+              {
+                "text": "间",
+                "start_sec": 1.26,
+                "end_sec": 1.38
+              },
+              {
+                "text": "里",
+                "start_sec": 1.38,
+                "end_sec": 1.5
+              },
+              {
+                "text": "的",
+                "start_sec": 1.5,
+                "end_sec": 1.62
+              },
+              {
+                "text": "具",
+                "start_sec": 1.62,
+                "end_sec": 1.8
+              },
+              {
+                "text": "象",
+                "start_sec": 1.8,
+                "end_sec": 1.98
+              },
+              {
+                "text": "家",
+                "start_sec": 1.98,
+                "end_sec": 2.1
+              },
+              {
+                "text": "具",
+                "start_sec": 2.1,
+                "end_sec": 2.28
+              },
+              {
+                "text": "和",
+                "start_sec": 2.28,
+                "end_sec": 2.46
+              },
+              {
+                "text": "摆",
+                "start_sec": 2.46,
+                "end_sec": 2.64
+              },
+              {
+                "text": "件",
+                "start_sec": 2.64,
+                "end_sec": 3.48
+              },
+              {
+                "text": "画",
+                "start_sec": 3.48,
+                "end_sec": 3.72
+              },
+              {
+                "text": "面",
+                "start_sec": 3.72,
+                "end_sec": 3.9
+              },
+              {
+                "text": "先",
+                "start_sec": 3.9,
+                "end_sec": 4.02
+              },
+              {
+                "text": "放",
+                "start_sec": 4.02,
+                "end_sec": 4.26
+              },
+              {
+                "text": "灰",
+                "start_sec": 4.26,
+                "end_sec": 4.38
+              },
+              {
+                "text": "色",
+                "start_sec": 4.38,
+                "end_sec": 4.56
+              },
+              {
+                "text": "沙",
+                "start_sec": 4.56,
+                "end_sec": 4.68
+              },
+              {
+                "text": "发",
+                "start_sec": 4.68,
+                "end_sec": 5.22
+              },
+              {
+                "text": "语",
+                "start_sec": 5.22,
+                "end_sec": 5.34
+              },
+              {
+                "text": "气",
+                "start_sec": 5.34,
+                "end_sec": 5.58
+              },
+              {
+                "text": "调",
+                "start_sec": 5.58,
+                "end_sec": 5.7
+              },
+              {
+                "text": "得",
+                "start_sec": 5.7,
+                "end_sec": 5.82
+              },
+              {
+                "text": "更",
+                "start_sec": 5.82,
+                "end_sec": 5.94
+              },
+              {
+                "text": "温",
+                "start_sec": 5.94,
+                "end_sec": 6.06
+              },
+              {
+                "text": "暖",
+                "start_sec": 6.06,
+                "end_sec": 6.24
+              },
+              {
+                "text": "一",
+                "start_sec": 6.24,
+                "end_sec": 6.36
+              },
+              {
+                "text": "点",
+                "start_sec": 6.36,
+                "end_sec": 6.9
+              },
+              {
+                "text": "突",
+                "start_sec": 6.9,
+                "end_sec": 7.08
+              },
+              {
+                "text": "出",
+                "start_sec": 7.08,
+                "end_sec": 7.14
+              },
+              {
+                "text": "家",
+                "start_sec": 7.14,
+                "end_sec": 7.32
+              },
+              {
+                "text": "的",
+                "start_sec": 7.32,
+                "end_sec": 7.44
+              },
+              {
+                "text": "氛",
+                "start_sec": 7.44,
+                "end_sec": 7.62
+              },
+              {
+                "text": "围",
+                "start_sec": 7.62,
+                "end_sec": 8.3
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0055_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"灰色沙发\", \"reason\": \"这是空间中明确可见的家具，符合展示规则。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 2.72,
+            "shape": [
+              43520
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，我已经抓住这个画面的重点了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.24
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.24,
+                "end_sec": 0.84
+              },
+              {
+                "text": "我",
+                "start_sec": 0.84,
+                "end_sec": 1.02
+              },
+              {
+                "text": "已",
+                "start_sec": 1.02,
+                "end_sec": 1.14
+              },
+              {
+                "text": "经",
+                "start_sec": 1.14,
+                "end_sec": 1.32
+              },
+              {
+                "text": "抓",
+                "start_sec": 1.32,
+                "end_sec": 1.44
+              },
+              {
+                "text": "住",
+                "start_sec": 1.44,
+                "end_sec": 1.56
+              },
+              {
+                "text": "这",
+                "start_sec": 1.56,
+                "end_sec": 1.68
+              },
+              {
+                "text": "个",
+                "start_sec": 1.68,
+                "end_sec": 1.8
+              },
+              {
+                "text": "画",
+                "start_sec": 1.8,
+                "end_sec": 1.92
+              },
+              {
+                "text": "面",
+                "start_sec": 1.92,
+                "end_sec": 2.04
+              },
+              {
+                "text": "的",
+                "start_sec": 2.04,
+                "end_sec": 2.16
+              },
+              {
+                "text": "重",
+                "start_sec": 2.16,
+                "end_sec": 2.28
+              },
+              {
+                "text": "点",
+                "start_sec": 2.28,
+                "end_sec": 2.4
+              },
+              {
+                "text": "了。",
+                "start_sec": 2.4,
+                "end_sec": 2.7
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条展示规则，我理解他的用意是：接下来他可能会连续讲述一个场景，而我需要从话语里识别出符合这条规则、能够被看见并呈现出来的对象。这不是普通闲聊，也不是让我只回答这一句话，而是在给我设定一个后续持续生效的配置。我需要先记住这个配置，并进入持续展示/监听模式；后面用户继续说话时，我要一边听一边判断，只有出现符合规则的具体可见对象时，才在后台调用 display_object_on_board(name) 来展示它。对于不满足规则的内容，我应当直接跳过，保持安静，不打断用户，也不需要对每一句都做冗长回应。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 5.22
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0055_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "灰色沙发"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

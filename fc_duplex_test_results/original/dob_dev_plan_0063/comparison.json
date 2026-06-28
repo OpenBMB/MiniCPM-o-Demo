@@ -1,0 +1,72 @@
+{
+  "sample_id": "dob_dev_plan_0063",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0063.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0063/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 12.873052597045898,
+  "gt": {
+    "n_tokens": 1147,
+    "spoken_text": "明白了，这样画面的重点会更清楚。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是让我关注后续话语中符合该规则、能够被看见并作为画面元素呈现的内容。这里不是普通闲聊，也不是让我立刻展开解释，而是在为接下来的连续讲述设置一个持续生效的处理方式。我需要先记住这个配置，明确自己要进入持续展示/监听模式：后面用户一边说，我一边按规则判断是否出现了合适的具体对象；一旦出现，就在后台调用 display_object_on_board(name) 来呈现对应对象。对于不符合规则的说法，我只需要跳过并继续听，不打断用户，也不把每句话都拿出来长篇回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "电视"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水杯"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0063_call_01",
+      "dob_dev_plan_0063_call_02"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1024,
+    "spoken_text": "好的，我已经把画面重点处理好了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是让我关注后续话语中符合该规则、能够被看见并作为画面元素呈现的内容。这里不是普通闲聊，也不是让我立刻展开解释，而是在为接下来的连续讲述设置一个持续生效的处理方式。我需要先记住这个配置，明确自己要进入持续展示/监听模式：后面用户一边说，我一边按规则判断是否出现了合适的具体对象；一旦出现，就在后台调用 display_object_on_board(name) 来呈现对应对象。对于不符合规则的说法，我只需要跳过并继续听，不打断用户，也不把每句话都拿出来长篇回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0063_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "电视"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0063_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水杯"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 16,
+    "n_audio_units": 12
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4176,
+    "gt_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0063_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"电视\", \"reason\": \"这里明确提到一个空间中可见的具象陈设，符合展示规则。\"}</tool_response></tool_response_event><tool_response_event><tool_call",
+    "pred_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0063_call_01</tool_call_id><|tool_started|></tool_response_event></input_event_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>"
+  }
+}

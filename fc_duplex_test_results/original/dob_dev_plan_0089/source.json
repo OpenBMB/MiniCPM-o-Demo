@@ -1,0 +1,989 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0089",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 21.28,
+            "shape": [
+              340480
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "后面听到材料、零件和工具就展示出来。\n我准备按顺序搭这个小布景，别太赶：先用砂纸把需要贴合的地方磨顺，这样结构更稳定；接着把电池放到预留位置，再顺着边缘走电线。到最后如果用方案 B，就把插头接好，确认连接没松，再整体试一下效果。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "后",
+                "start_sec": 0.0,
+                "end_sec": 0.42
+              },
+              {
+                "text": "面",
+                "start_sec": 0.42,
+                "end_sec": 0.6
+              },
+              {
+                "text": "听",
+                "start_sec": 0.6,
+                "end_sec": 0.72
+              },
+              {
+                "text": "到",
+                "start_sec": 0.72,
+                "end_sec": 0.96
+              },
+              {
+                "text": "材",
+                "start_sec": 0.96,
+                "end_sec": 1.08
+              },
+              {
+                "text": "料",
+                "start_sec": 1.08,
+                "end_sec": 1.5
+              },
+              {
+                "text": "零",
+                "start_sec": 1.5,
+                "end_sec": 1.68
+              },
+              {
+                "text": "件",
+                "start_sec": 1.68,
+                "end_sec": 1.86
+              },
+              {
+                "text": "和",
+                "start_sec": 1.86,
+                "end_sec": 2.04
+              },
+              {
+                "text": "工",
+                "start_sec": 2.04,
+                "end_sec": 2.16
+              },
+              {
+                "text": "具",
+                "start_sec": 2.16,
+                "end_sec": 2.4
+              },
+              {
+                "text": "就",
+                "start_sec": 2.4,
+                "end_sec": 2.58
+              },
+              {
+                "text": "展",
+                "start_sec": 2.58,
+                "end_sec": 2.7
+              },
+              {
+                "text": "示",
+                "start_sec": 2.7,
+                "end_sec": 2.88
+              },
+              {
+                "text": "出",
+                "start_sec": 2.88,
+                "end_sec": 3.0
+              },
+              {
+                "text": "来",
+                "start_sec": 3.0,
+                "end_sec": 3.78
+              },
+              {
+                "text": "我",
+                "start_sec": 3.78,
+                "end_sec": 4.02
+              },
+              {
+                "text": "准",
+                "start_sec": 4.02,
+                "end_sec": 4.2
+              },
+              {
+                "text": "备",
+                "start_sec": 4.2,
+                "end_sec": 4.32
+              },
+              {
+                "text": "按",
+                "start_sec": 4.32,
+                "end_sec": 4.5
+              },
+              {
+                "text": "顺",
+                "start_sec": 4.5,
+                "end_sec": 4.62
+              },
+              {
+                "text": "序",
+                "start_sec": 4.62,
+                "end_sec": 4.86
+              },
+              {
+                "text": "搭",
+                "start_sec": 4.86,
+                "end_sec": 5.04
+              },
+              {
+                "text": "这",
+                "start_sec": 5.04,
+                "end_sec": 5.1
+              },
+              {
+                "text": "个",
+                "start_sec": 5.1,
+                "end_sec": 5.22
+              },
+              {
+                "text": "小",
+                "start_sec": 5.22,
+                "end_sec": 5.34
+              },
+              {
+                "text": "布",
+                "start_sec": 5.34,
+                "end_sec": 5.46
+              },
+              {
+                "text": "景",
+                "start_sec": 5.46,
+                "end_sec": 5.82
+              },
+              {
+                "text": "别",
+                "start_sec": 5.82,
+                "end_sec": 6.06
+              },
+              {
+                "text": "太",
+                "start_sec": 6.06,
+                "end_sec": 6.24
+              },
+              {
+                "text": "赶",
+                "start_sec": 6.24,
+                "end_sec": 7.02
+              },
+              {
+                "text": "先",
+                "start_sec": 7.02,
+                "end_sec": 7.26
+              },
+              {
+                "text": "用",
+                "start_sec": 7.26,
+                "end_sec": 7.5
+              },
+              {
+                "text": "砂",
+                "start_sec": 7.5,
+                "end_sec": 7.62
+              },
+              {
+                "text": "纸",
+                "start_sec": 7.62,
+                "end_sec": 7.92
+              },
+              {
+                "text": "把",
+                "start_sec": 7.92,
+                "end_sec": 8.1
+              },
+              {
+                "text": "需",
+                "start_sec": 8.1,
+                "end_sec": 8.16
+              },
+              {
+                "text": "要",
+                "start_sec": 8.16,
+                "end_sec": 8.28
+              },
+              {
+                "text": "贴",
+                "start_sec": 8.28,
+                "end_sec": 8.46
+              },
+              {
+                "text": "合",
+                "start_sec": 8.46,
+                "end_sec": 8.58
+              },
+              {
+                "text": "的",
+                "start_sec": 8.58,
+                "end_sec": 8.7
+              },
+              {
+                "text": "地",
+                "start_sec": 8.7,
+                "end_sec": 8.82
+              },
+              {
+                "text": "方",
+                "start_sec": 8.82,
+                "end_sec": 9.0
+              },
+              {
+                "text": "磨",
+                "start_sec": 9.0,
+                "end_sec": 9.18
+              },
+              {
+                "text": "顺",
+                "start_sec": 9.18,
+                "end_sec": 9.6
+              },
+              {
+                "text": "这",
+                "start_sec": 9.6,
+                "end_sec": 9.78
+              },
+              {
+                "text": "样",
+                "start_sec": 9.78,
+                "end_sec": 9.96
+              },
+              {
+                "text": "结",
+                "start_sec": 9.96,
+                "end_sec": 10.08
+              },
+              {
+                "text": "构",
+                "start_sec": 10.08,
+                "end_sec": 10.26
+              },
+              {
+                "text": "更",
+                "start_sec": 10.26,
+                "end_sec": 10.38
+              },
+              {
+                "text": "稳",
+                "start_sec": 10.38,
+                "end_sec": 10.56
+              },
+              {
+                "text": "定",
+                "start_sec": 10.56,
+                "end_sec": 11.34
+              },
+              {
+                "text": "接",
+                "start_sec": 11.34,
+                "end_sec": 11.58
+              },
+              {
+                "text": "着",
+                "start_sec": 11.58,
+                "end_sec": 11.82
+              },
+              {
+                "text": "把",
+                "start_sec": 11.82,
+                "end_sec": 12.0
+              },
+              {
+                "text": "电",
+                "start_sec": 12.0,
+                "end_sec": 12.12
+              },
+              {
+                "text": "池",
+                "start_sec": 12.12,
+                "end_sec": 12.36
+              },
+              {
+                "text": "放",
+                "start_sec": 12.36,
+                "end_sec": 12.48
+              },
+              {
+                "text": "到",
+                "start_sec": 12.48,
+                "end_sec": 12.66
+              },
+              {
+                "text": "预",
+                "start_sec": 12.66,
+                "end_sec": 12.78
+              },
+              {
+                "text": "留",
+                "start_sec": 12.78,
+                "end_sec": 12.96
+              },
+              {
+                "text": "位",
+                "start_sec": 12.96,
+                "end_sec": 13.08
+              },
+              {
+                "text": "置",
+                "start_sec": 13.08,
+                "end_sec": 13.44
+              },
+              {
+                "text": "再",
+                "start_sec": 13.44,
+                "end_sec": 13.68
+              },
+              {
+                "text": "顺",
+                "start_sec": 13.68,
+                "end_sec": 13.8
+              },
+              {
+                "text": "着",
+                "start_sec": 13.8,
+                "end_sec": 13.98
+              },
+              {
+                "text": "边",
+                "start_sec": 13.98,
+                "end_sec": 14.1
+              },
+              {
+                "text": "缘",
+                "start_sec": 14.1,
+                "end_sec": 14.34
+              },
+              {
+                "text": "走",
+                "start_sec": 14.34,
+                "end_sec": 14.46
+              },
+              {
+                "text": "电",
+                "start_sec": 14.46,
+                "end_sec": 14.64
+              },
+              {
+                "text": "线",
+                "start_sec": 14.64,
+                "end_sec": 15.36
+              },
+              {
+                "text": "到",
+                "start_sec": 15.36,
+                "end_sec": 15.6
+              },
+              {
+                "text": "最",
+                "start_sec": 15.6,
+                "end_sec": 15.78
+              },
+              {
+                "text": "后",
+                "start_sec": 15.78,
+                "end_sec": 16.02
+              },
+              {
+                "text": "如",
+                "start_sec": 16.02,
+                "end_sec": 16.14
+              },
+              {
+                "text": "果",
+                "start_sec": 16.14,
+                "end_sec": 16.32
+              },
+              {
+                "text": "用",
+                "start_sec": 16.32,
+                "end_sec": 16.44
+              },
+              {
+                "text": "方",
+                "start_sec": 16.44,
+                "end_sec": 16.62
+              },
+              {
+                "text": "案",
+                "start_sec": 16.62,
+                "end_sec": 16.74
+              },
+              {
+                "text": "B",
+                "start_sec": 16.74,
+                "end_sec": 17.04
+              },
+              {
+                "text": "就",
+                "start_sec": 17.04,
+                "end_sec": 17.22
+              },
+              {
+                "text": "把",
+                "start_sec": 17.22,
+                "end_sec": 17.46
+              },
+              {
+                "text": "插",
+                "start_sec": 17.46,
+                "end_sec": 17.58
+              },
+              {
+                "text": "头",
+                "start_sec": 17.58,
+                "end_sec": 17.82
+              },
+              {
+                "text": "接",
+                "start_sec": 17.82,
+                "end_sec": 17.94
+              },
+              {
+                "text": "好",
+                "start_sec": 17.94,
+                "end_sec": 18.42
+              },
+              {
+                "text": "确",
+                "start_sec": 18.42,
+                "end_sec": 18.6
+              },
+              {
+                "text": "认",
+                "start_sec": 18.6,
+                "end_sec": 18.84
+              },
+              {
+                "text": "连",
+                "start_sec": 18.84,
+                "end_sec": 18.9
+              },
+              {
+                "text": "接",
+                "start_sec": 18.9,
+                "end_sec": 19.08
+              },
+              {
+                "text": "没",
+                "start_sec": 19.08,
+                "end_sec": 19.26
+              },
+              {
+                "text": "松",
+                "start_sec": 19.26,
+                "end_sec": 19.62
+              },
+              {
+                "text": "再",
+                "start_sec": 19.62,
+                "end_sec": 19.86
+              },
+              {
+                "text": "整",
+                "start_sec": 19.86,
+                "end_sec": 19.98
+              },
+              {
+                "text": "体",
+                "start_sec": 19.98,
+                "end_sec": 20.16
+              },
+              {
+                "text": "试",
+                "start_sec": 20.16,
+                "end_sec": 20.34
+              },
+              {
+                "text": "一",
+                "start_sec": 20.34,
+                "end_sec": 20.4
+              },
+              {
+                "text": "下",
+                "start_sec": 20.4,
+                "end_sec": 20.58
+              },
+              {
+                "text": "效",
+                "start_sec": 20.58,
+                "end_sec": 20.7
+              },
+              {
+                "text": "果",
+                "start_sec": 20.7,
+                "end_sec": 21.26
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0089_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"砂纸\", \"reason\": \"这里明确提到用于处理贴合位置的材料或工具，是具体可见对象。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0089_call_02",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"电池\", \"reason\": \"这里明确提到要放置的零件，是具体可见对象。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0089_call_03",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"电线\", \"reason\": \"这里明确提到布线所用的零件，是具体可见对象。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 4,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0089_call_04",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"插头\", \"reason\": \"这里明确提到需要连接的零件，是具体可见对象。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 4.32,
+            "shape": [
+              69120
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，我已经跟上你这段搭建流程里的关键材料和连接步骤了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.18
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.18,
+                "end_sec": 0.78
+              },
+              {
+                "text": "我",
+                "start_sec": 0.78,
+                "end_sec": 0.96
+              },
+              {
+                "text": "已",
+                "start_sec": 0.96,
+                "end_sec": 1.02
+              },
+              {
+                "text": "经",
+                "start_sec": 1.02,
+                "end_sec": 1.2
+              },
+              {
+                "text": "跟",
+                "start_sec": 1.2,
+                "end_sec": 1.32
+              },
+              {
+                "text": "上",
+                "start_sec": 1.32,
+                "end_sec": 1.5
+              },
+              {
+                "text": "你",
+                "start_sec": 1.5,
+                "end_sec": 1.62
+              },
+              {
+                "text": "这",
+                "start_sec": 1.62,
+                "end_sec": 1.74
+              },
+              {
+                "text": "段",
+                "start_sec": 1.74,
+                "end_sec": 1.92
+              },
+              {
+                "text": "搭",
+                "start_sec": 1.92,
+                "end_sec": 2.1
+              },
+              {
+                "text": "建",
+                "start_sec": 2.1,
+                "end_sec": 2.22
+              },
+              {
+                "text": "流",
+                "start_sec": 2.22,
+                "end_sec": 2.34
+              },
+              {
+                "text": "程",
+                "start_sec": 2.34,
+                "end_sec": 2.46
+              },
+              {
+                "text": "里",
+                "start_sec": 2.46,
+                "end_sec": 2.58
+              },
+              {
+                "text": "的",
+                "start_sec": 2.58,
+                "end_sec": 2.76
+              },
+              {
+                "text": "关",
+                "start_sec": 2.76,
+                "end_sec": 2.88
+              },
+              {
+                "text": "键",
+                "start_sec": 2.88,
+                "end_sec": 3.06
+              },
+              {
+                "text": "材",
+                "start_sec": 3.06,
+                "end_sec": 3.18
+              },
+              {
+                "text": "料",
+                "start_sec": 3.18,
+                "end_sec": 3.36
+              },
+              {
+                "text": "和",
+                "start_sec": 3.36,
+                "end_sec": 3.54
+              },
+              {
+                "text": "连",
+                "start_sec": 3.54,
+                "end_sec": 3.66
+              },
+              {
+                "text": "接",
+                "start_sec": 3.66,
+                "end_sec": 3.84
+              },
+              {
+                "text": "步",
+                "start_sec": 3.84,
+                "end_sec": 3.96
+              },
+              {
+                "text": "骤",
+                "start_sec": 3.96,
+                "end_sec": 4.08
+              },
+              {
+                "text": "了。",
+                "start_sec": 4.08,
+                "end_sec": 4.3
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条简短规则，我理解他的用意是：接下来他会连续讲述一段内容，我要从中识别符合这条规则的具体可见对象，并在需要时呈现出来。这不是普通闲聊，也不是让我只回答这一句话，而是在给我设定一个后续持续生效的工作配置。我需要先记住这个配置，明确它会让我在后续对话里持续调用 display_object_on_board(name) 这个工具；也就是说，我要进入持续展示/监听模式。接下来用户连续讲话时，我只在听到符合规则的具体对象时，才在后台调用 display_object_on_board 把对应对象展示出来；如果听到的是不符合规则的说法、笼统描述、评价性表达或流程说明，我就保持安静，不打断用户，也不对每一句都长篇分析。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 9.6
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0089_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "砂纸"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 13.44
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0089_call_02",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "电池"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 15.36
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0089_call_03",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "电线"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 18.42
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0089_call_04",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "插头"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "sample_id": "dob_dev_plan_0085",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0085.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0085/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 23.594618797302246,
+  "gt": {
+    "n_tokens": 1880,
+    "spoken_text": "好的，相关材料、零件和工具我都跟上了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：后面他会继续说一段内容，而我需要从连续话语里识别出符合这条规则、能够被直接呈现的具体对象。这里不是普通闲聊，也不是让我现在总结答案，而是在为后续对话设定一个持续生效的处理方式。我需要先响应并记住这个配置，明确自己要进入持续展示/监听模式；接下来只要用户继续讲话，我就边听边判断，遇到符合规则的具体可见对象时，在后台调用 display_object_on_board(name) 来呈现它。遇到不符合规则、不能直接呈现、只是表达意图或标签的信息时，我要跳过，保持安静，不打断用户，也不需要对每一句都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "木板"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "锤子"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "钉子"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水平尺"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "砂纸"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "电池"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0085_call_01",
+      "dob_dev_plan_0085_call_02",
+      "dob_dev_plan_0085_call_03",
+      "dob_dev_plan_0085_call_04",
+      "dob_dev_plan_0085_call_05",
+      "dob_dev_plan_0085_call_06"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1572,
+    "spoken_text": "好的，相关材料、零件和工具我都跟",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：后面他会继续说一段内容，而我需要从连续话语里识别出符合这条规则、能够被直接呈现的具体对象。这里不是普通闲聊，也不是让我现在总结答案，而是在为后续对话设定一个持续生效的处理方式。我需要先响应并记住这个配置，明确自己要进入持续展示/监听模式；接下来只要用户继续讲话，我就边听边判断，遇到符合规则的具体可见对象时，在后台调用 display_object_on_board(name) 来呈现它。遇到不符合规则、不能直接呈现、只是表达意图或标签的信息时，我要跳过，保持安静，不打断用户，也不需要对每一句都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0085_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "木板"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0085_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "锤子"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0085_call_03",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "钉子"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0085_call_04",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水平尺"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0085_call_05",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "砂纸"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0085_call_06",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "电池"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 34,
+    "n_audio_units": 30
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4913,
+    "gt_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0085_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"木板\", \"reason\": \"这里明确提到搭建时要先放正的具体材料。\"}</tool_response></tool_response_event><tool_response_event><tool_call_id>dob",
+    "pred_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0085_call_01</tool_call_id><|tool_started|></tool_response_event></input_event_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>"
+  }
+}

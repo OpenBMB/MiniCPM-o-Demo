@@ -1,0 +1,1064 @@
+{
+  "data_id": "board_overfit:dob_dev_plan_0028",
+  "system": {
+    "segments": [
+      {
+        "kind": "text",
+        "text": "你是一个实时 visual board 助手。你可以在用户连续讲话时，后台调用 display_object_on_board(name) 把有帮助的视觉对象展示到 board 上。\n\n通用规则：\n1. 默认只展示具体、可见、适合画在 board 上的对象。\n2. name 使用用户明确说出的对象名，尽量保留具体名称，不要随意泛化或改写。\n3. 抽象概念、氛围评价、目标描述、固定搭配、专有名词、比喻说法，不要仅按字面触发。\n4. 同一对象默认只展示一次，除非用户明确要求再展示一个或展示多个实例。\n5. 用户继续讲话时不要打断；需要展示时在后台调用工具。\n6. 在进入持续监听/执行阶段前，如果上下文已经给出展示策略、范围或排除条件，你可以先做一次简短策略思考，理解展示范围、排除边界、工具用法和去重规则。\n7. 一旦用户开始持续讲述，不要每次触发前都长篇推理；需要展示时直接在触发点附近后台调用工具。\n8. 如果当前策略不够明确，优先保守：只展示明确符合条件的具体对象。"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "display_object_on_board",
+          "description": "把指定对象显示到用户正在看的 visual board 上。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "要展示到 board 上的对象名称。"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": null
+        }
+      }
+    ]
+  },
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "non_spoken_budgets_while_speaking": [
+      {
+        "__class__": "O5NoBudgetLimit"
+      }
+    ],
+    "spoken_prelook_sec": 0.3
+  },
+  "tracks": {
+    "user_video": null,
+    "user_audio": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 28.32,
+            "shape": [
+              453120
+            ],
+            "file_path": "user_audio_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "transcript": "请把我提到的可见厨具、食材和容器展示出来。\n小朋友，先看透明量杯上的刻度，知道大概要用多少。接着把切开的柠檬放近一点，观察它的颜色和湿润的切面；如果想更清爽一点，就让它多停一会儿。然后打开蜂蜜罐，讲讲为什么会甜一点。最后把这些一起倒进玻璃水壶，轻轻晃匀，再看整体颜色有没有变深。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "请",
+                "start_sec": 0.0,
+                "end_sec": 0.66
+              },
+              {
+                "text": "把",
+                "start_sec": 0.66,
+                "end_sec": 0.84
+              },
+              {
+                "text": "我",
+                "start_sec": 0.84,
+                "end_sec": 1.08
+              },
+              {
+                "text": "提",
+                "start_sec": 1.08,
+                "end_sec": 1.2
+              },
+              {
+                "text": "到",
+                "start_sec": 1.2,
+                "end_sec": 1.44
+              },
+              {
+                "text": "的",
+                "start_sec": 1.44,
+                "end_sec": 1.8
+              },
+              {
+                "text": "可",
+                "start_sec": 1.8,
+                "end_sec": 2.04
+              },
+              {
+                "text": "见",
+                "start_sec": 2.04,
+                "end_sec": 2.4
+              },
+              {
+                "text": "厨",
+                "start_sec": 2.4,
+                "end_sec": 2.52
+              },
+              {
+                "text": "具",
+                "start_sec": 2.52,
+                "end_sec": 3.06
+              },
+              {
+                "text": "食",
+                "start_sec": 3.06,
+                "end_sec": 3.24
+              },
+              {
+                "text": "材",
+                "start_sec": 3.24,
+                "end_sec": 3.6
+              },
+              {
+                "text": "和",
+                "start_sec": 3.6,
+                "end_sec": 3.9
+              },
+              {
+                "text": "容",
+                "start_sec": 3.9,
+                "end_sec": 4.02
+              },
+              {
+                "text": "器",
+                "start_sec": 4.02,
+                "end_sec": 4.38
+              },
+              {
+                "text": "展",
+                "start_sec": 4.38,
+                "end_sec": 4.5
+              },
+              {
+                "text": "示",
+                "start_sec": 4.5,
+                "end_sec": 4.74
+              },
+              {
+                "text": "出",
+                "start_sec": 4.74,
+                "end_sec": 4.86
+              },
+              {
+                "text": "来",
+                "start_sec": 4.86,
+                "end_sec": 5.52
+              },
+              {
+                "text": "小",
+                "start_sec": 5.52,
+                "end_sec": 5.7
+              },
+              {
+                "text": "朋",
+                "start_sec": 5.7,
+                "end_sec": 5.88
+              },
+              {
+                "text": "友",
+                "start_sec": 5.88,
+                "end_sec": 6.3
+              },
+              {
+                "text": "先",
+                "start_sec": 6.3,
+                "end_sec": 6.54
+              },
+              {
+                "text": "看",
+                "start_sec": 6.54,
+                "end_sec": 6.84
+              },
+              {
+                "text": "透",
+                "start_sec": 6.84,
+                "end_sec": 7.08
+              },
+              {
+                "text": "明",
+                "start_sec": 7.08,
+                "end_sec": 7.2
+              },
+              {
+                "text": "量",
+                "start_sec": 7.2,
+                "end_sec": 7.44
+              },
+              {
+                "text": "杯",
+                "start_sec": 7.44,
+                "end_sec": 7.56
+              },
+              {
+                "text": "上",
+                "start_sec": 7.56,
+                "end_sec": 7.68
+              },
+              {
+                "text": "的",
+                "start_sec": 7.68,
+                "end_sec": 7.86
+              },
+              {
+                "text": "刻",
+                "start_sec": 7.86,
+                "end_sec": 8.04
+              },
+              {
+                "text": "度",
+                "start_sec": 8.04,
+                "end_sec": 8.4
+              },
+              {
+                "text": "知",
+                "start_sec": 8.4,
+                "end_sec": 8.58
+              },
+              {
+                "text": "道",
+                "start_sec": 8.58,
+                "end_sec": 8.82
+              },
+              {
+                "text": "大",
+                "start_sec": 8.82,
+                "end_sec": 9.0
+              },
+              {
+                "text": "概",
+                "start_sec": 9.0,
+                "end_sec": 9.18
+              },
+              {
+                "text": "要",
+                "start_sec": 9.18,
+                "end_sec": 9.36
+              },
+              {
+                "text": "用",
+                "start_sec": 9.36,
+                "end_sec": 9.6
+              },
+              {
+                "text": "多",
+                "start_sec": 9.6,
+                "end_sec": 9.72
+              },
+              {
+                "text": "少",
+                "start_sec": 9.72,
+                "end_sec": 10.38
+              },
+              {
+                "text": "接",
+                "start_sec": 10.38,
+                "end_sec": 10.62
+              },
+              {
+                "text": "着",
+                "start_sec": 10.62,
+                "end_sec": 10.86
+              },
+              {
+                "text": "把",
+                "start_sec": 10.86,
+                "end_sec": 11.16
+              },
+              {
+                "text": "切",
+                "start_sec": 11.16,
+                "end_sec": 11.28
+              },
+              {
+                "text": "开",
+                "start_sec": 11.28,
+                "end_sec": 11.46
+              },
+              {
+                "text": "的",
+                "start_sec": 11.46,
+                "end_sec": 11.58
+              },
+              {
+                "text": "柠",
+                "start_sec": 11.58,
+                "end_sec": 11.76
+              },
+              {
+                "text": "檬",
+                "start_sec": 11.76,
+                "end_sec": 11.94
+              },
+              {
+                "text": "放",
+                "start_sec": 11.94,
+                "end_sec": 12.12
+              },
+              {
+                "text": "近",
+                "start_sec": 12.12,
+                "end_sec": 12.24
+              },
+              {
+                "text": "一",
+                "start_sec": 12.24,
+                "end_sec": 12.36
+              },
+              {
+                "text": "点",
+                "start_sec": 12.36,
+                "end_sec": 12.84
+              },
+              {
+                "text": "观",
+                "start_sec": 12.84,
+                "end_sec": 13.02
+              },
+              {
+                "text": "察",
+                "start_sec": 13.02,
+                "end_sec": 13.2
+              },
+              {
+                "text": "它",
+                "start_sec": 13.2,
+                "end_sec": 13.38
+              },
+              {
+                "text": "的",
+                "start_sec": 13.38,
+                "end_sec": 13.56
+              },
+              {
+                "text": "颜",
+                "start_sec": 13.56,
+                "end_sec": 13.68
+              },
+              {
+                "text": "色",
+                "start_sec": 13.68,
+                "end_sec": 13.98
+              },
+              {
+                "text": "和",
+                "start_sec": 13.98,
+                "end_sec": 14.22
+              },
+              {
+                "text": "湿",
+                "start_sec": 14.22,
+                "end_sec": 14.34
+              },
+              {
+                "text": "润",
+                "start_sec": 14.34,
+                "end_sec": 14.52
+              },
+              {
+                "text": "的",
+                "start_sec": 14.52,
+                "end_sec": 14.7
+              },
+              {
+                "text": "切",
+                "start_sec": 14.7,
+                "end_sec": 14.82
+              },
+              {
+                "text": "面",
+                "start_sec": 14.82,
+                "end_sec": 15.54
+              },
+              {
+                "text": "如",
+                "start_sec": 15.54,
+                "end_sec": 15.66
+              },
+              {
+                "text": "果",
+                "start_sec": 15.66,
+                "end_sec": 15.84
+              },
+              {
+                "text": "想",
+                "start_sec": 15.84,
+                "end_sec": 16.14
+              },
+              {
+                "text": "更",
+                "start_sec": 16.14,
+                "end_sec": 16.38
+              },
+              {
+                "text": "清",
+                "start_sec": 16.38,
+                "end_sec": 16.56
+              },
+              {
+                "text": "爽",
+                "start_sec": 16.56,
+                "end_sec": 16.74
+              },
+              {
+                "text": "一",
+                "start_sec": 16.74,
+                "end_sec": 16.86
+              },
+              {
+                "text": "点",
+                "start_sec": 16.86,
+                "end_sec": 17.16
+              },
+              {
+                "text": "就",
+                "start_sec": 17.16,
+                "end_sec": 17.4
+              },
+              {
+                "text": "让",
+                "start_sec": 17.4,
+                "end_sec": 17.58
+              },
+              {
+                "text": "它",
+                "start_sec": 17.58,
+                "end_sec": 17.76
+              },
+              {
+                "text": "多",
+                "start_sec": 17.76,
+                "end_sec": 17.88
+              },
+              {
+                "text": "停",
+                "start_sec": 17.88,
+                "end_sec": 18.12
+              },
+              {
+                "text": "一",
+                "start_sec": 18.12,
+                "end_sec": 18.24
+              },
+              {
+                "text": "会",
+                "start_sec": 18.24,
+                "end_sec": 18.3
+              },
+              {
+                "text": "儿",
+                "start_sec": 18.3,
+                "end_sec": 18.66
+              },
+              {
+                "text": "然",
+                "start_sec": 18.66,
+                "end_sec": 18.9
+              },
+              {
+                "text": "后",
+                "start_sec": 18.9,
+                "end_sec": 19.14
+              },
+              {
+                "text": "打",
+                "start_sec": 19.14,
+                "end_sec": 19.32
+              },
+              {
+                "text": "开",
+                "start_sec": 19.32,
+                "end_sec": 19.56
+              },
+              {
+                "text": "蜂",
+                "start_sec": 19.56,
+                "end_sec": 19.68
+              },
+              {
+                "text": "蜜",
+                "start_sec": 19.68,
+                "end_sec": 19.86
+              },
+              {
+                "text": "罐",
+                "start_sec": 19.86,
+                "end_sec": 20.28
+              },
+              {
+                "text": "讲",
+                "start_sec": 20.28,
+                "end_sec": 20.46
+              },
+              {
+                "text": "讲",
+                "start_sec": 20.46,
+                "end_sec": 20.76
+              },
+              {
+                "text": "为",
+                "start_sec": 20.76,
+                "end_sec": 20.88
+              },
+              {
+                "text": "什",
+                "start_sec": 20.88,
+                "end_sec": 21.0
+              },
+              {
+                "text": "么",
+                "start_sec": 21.0,
+                "end_sec": 21.12
+              },
+              {
+                "text": "会",
+                "start_sec": 21.12,
+                "end_sec": 21.3
+              },
+              {
+                "text": "甜",
+                "start_sec": 21.3,
+                "end_sec": 21.48
+              },
+              {
+                "text": "一",
+                "start_sec": 21.48,
+                "end_sec": 21.6
+              },
+              {
+                "text": "点",
+                "start_sec": 21.6,
+                "end_sec": 22.08
+              },
+              {
+                "text": "最",
+                "start_sec": 22.08,
+                "end_sec": 22.32
+              },
+              {
+                "text": "后",
+                "start_sec": 22.32,
+                "end_sec": 22.62
+              },
+              {
+                "text": "把",
+                "start_sec": 22.62,
+                "end_sec": 22.8
+              },
+              {
+                "text": "这",
+                "start_sec": 22.8,
+                "end_sec": 22.98
+              },
+              {
+                "text": "些",
+                "start_sec": 22.98,
+                "end_sec": 23.22
+              },
+              {
+                "text": "一",
+                "start_sec": 23.22,
+                "end_sec": 23.34
+              },
+              {
+                "text": "起",
+                "start_sec": 23.34,
+                "end_sec": 23.58
+              },
+              {
+                "text": "倒",
+                "start_sec": 23.58,
+                "end_sec": 23.76
+              },
+              {
+                "text": "进",
+                "start_sec": 23.76,
+                "end_sec": 24.0
+              },
+              {
+                "text": "玻",
+                "start_sec": 24.0,
+                "end_sec": 24.12
+              },
+              {
+                "text": "璃",
+                "start_sec": 24.12,
+                "end_sec": 24.24
+              },
+              {
+                "text": "水",
+                "start_sec": 24.24,
+                "end_sec": 24.48
+              },
+              {
+                "text": "壶",
+                "start_sec": 24.48,
+                "end_sec": 24.96
+              },
+              {
+                "text": "轻",
+                "start_sec": 24.96,
+                "end_sec": 25.14
+              },
+              {
+                "text": "轻",
+                "start_sec": 25.14,
+                "end_sec": 25.38
+              },
+              {
+                "text": "晃",
+                "start_sec": 25.38,
+                "end_sec": 25.56
+              },
+              {
+                "text": "匀",
+                "start_sec": 25.56,
+                "end_sec": 25.98
+              },
+              {
+                "text": "再",
+                "start_sec": 25.98,
+                "end_sec": 26.22
+              },
+              {
+                "text": "看",
+                "start_sec": 26.22,
+                "end_sec": 26.52
+              },
+              {
+                "text": "整",
+                "start_sec": 26.52,
+                "end_sec": 26.64
+              },
+              {
+                "text": "体",
+                "start_sec": 26.64,
+                "end_sec": 26.88
+              },
+              {
+                "text": "颜",
+                "start_sec": 26.88,
+                "end_sec": 27.0
+              },
+              {
+                "text": "色",
+                "start_sec": 27.0,
+                "end_sec": 27.24
+              },
+              {
+                "text": "有",
+                "start_sec": 27.24,
+                "end_sec": 27.42
+              },
+              {
+                "text": "没",
+                "start_sec": 27.42,
+                "end_sec": 27.48
+              },
+              {
+                "text": "有",
+                "start_sec": 27.48,
+                "end_sec": 27.66
+              },
+              {
+                "text": "变",
+                "start_sec": 27.66,
+                "end_sec": 27.78
+              },
+              {
+                "text": "深",
+                "start_sec": 27.78,
+                "end_sec": 28.3
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "input_event": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0028_call_01",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"透明量杯\", \"reason\": \"这里明确提到一个可见的计量容器，符合需要展示的对象范围。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0028_call_02",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"切开的柠檬\", \"reason\": \"这里明确提到可见食材，并且是具体对象，应当展示。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0028_call_03",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"蜂蜜罐\", \"reason\": \"这里明确提到装蜂蜜的可见容器，符合展示规则。\"}"
+              }
+            ]
+          }
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 4,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "deferrable"
+          },
+          "event": {
+            "kind": "tool_response",
+            "tool_call_id": "dob_dev_plan_0028_call_04",
+            "contents": [
+              {
+                "kind": "text",
+                "text": "{\"status\": \"displayed\", \"name\": \"玻璃水壶\", \"reason\": \"这里明确提到可见容器，且是制作步骤中的具体对象，应当展示。\"}"
+              }
+            ]
+          }
+        }
+      ],
+      "allow_segment_overlap": false
+    },
+    "ai_spoken": {
+      "segments": [
+        {
+          "audio": {
+            "__class__": "O5LazyAudio",
+            "duration_sec": 3.36,
+            "shape": [
+              53760
+            ],
+            "file_path": "ai_spoken_0.opus"
+          },
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "media",
+                "track": "user_audio",
+                "segment_index": 0,
+                "at": "end",
+                "offset_sec": 0.5
+              },
+              {
+                "type": "text",
+                "track": "input_event",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.5
+              }
+            ],
+            "mode": "immediate"
+          },
+          "text": "好的，这段讲解里的重点物品我都跟上了。",
+          "alignment": {
+            "word_intervals": [
+              {
+                "text": "好",
+                "start_sec": 0.0,
+                "end_sec": 0.18
+              },
+              {
+                "text": "的，",
+                "start_sec": 0.18,
+                "end_sec": 0.78
+              },
+              {
+                "text": "这",
+                "start_sec": 0.78,
+                "end_sec": 1.02
+              },
+              {
+                "text": "段",
+                "start_sec": 1.02,
+                "end_sec": 1.2
+              },
+              {
+                "text": "讲",
+                "start_sec": 1.2,
+                "end_sec": 1.38
+              },
+              {
+                "text": "解",
+                "start_sec": 1.38,
+                "end_sec": 1.5
+              },
+              {
+                "text": "里",
+                "start_sec": 1.5,
+                "end_sec": 1.62
+              },
+              {
+                "text": "的",
+                "start_sec": 1.62,
+                "end_sec": 1.8
+              },
+              {
+                "text": "重",
+                "start_sec": 1.8,
+                "end_sec": 1.92
+              },
+              {
+                "text": "点",
+                "start_sec": 1.92,
+                "end_sec": 2.1
+              },
+              {
+                "text": "物",
+                "start_sec": 2.1,
+                "end_sec": 2.22
+              },
+              {
+                "text": "品",
+                "start_sec": 2.22,
+                "end_sec": 2.46
+              },
+              {
+                "text": "我",
+                "start_sec": 2.46,
+                "end_sec": 2.64
+              },
+              {
+                "text": "都",
+                "start_sec": 2.64,
+                "end_sec": 2.76
+              },
+              {
+                "text": "跟",
+                "start_sec": 2.76,
+                "end_sec": 2.88
+              },
+              {
+                "text": "上",
+                "start_sec": 2.88,
+                "end_sec": 3.06
+              },
+              {
+                "text": "了。",
+                "start_sec": 3.06,
+                "end_sec": 3.34
+              }
+            ]
+          }
+        }
+      ],
+      "total_duration_sec": null,
+      "allow_segment_overlap": false
+    },
+    "ai_non_spoken": {
+      "segments": [
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "think",
+            "text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续讲解或叙述，我要从中识别符合这条规则的、具体可见的实体。这个要求不是普通闲聊，也不是只针对当前这一句话回答，而是在给我设定一个后续持续生效的工作配置。我需要先响应并记住这个配置，明确自己要进入持续展示/监听模式；之后在用户不断讲话时，我要边听边判断，只有遇到符合规则的具体可见对象，才在后台调用 display_object_on_board(name) 进行展示。对于不符合规则的主观描述、抽象说法、过程说明或其他不该展示的内容，我要直接跳过，保持安静，不打断用户，也不需要对每一句都展开长篇思考。"
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 7.56
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 0,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0028_call_01",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "透明量杯"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 11.94
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 1,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0028_call_02",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "切开的柠檬"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 20.28
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 2,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0028_call_03",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "蜂蜜罐"
+            }
+          },
+          "abort_trigger": null
+        },
+        {
+          "start_trigger": {
+            "refs": [
+              {
+                "type": "global",
+                "offset_sec": 24.96
+              },
+              {
+                "type": "text",
+                "track": "ai_non_spoken",
+                "segment_index": 3,
+                "at": "end",
+                "char_index": null,
+                "offset_sec": 0.0
+              }
+            ],
+            "mode": "immediate"
+          },
+          "content": {
+            "kind": "tool_call",
+            "tool_call_id": "dob_dev_plan_0028_call_04",
+            "name": "display_object_on_board",
+            "arguments": {
+              "name": "玻璃水壶"
+            }
+          },
+          "abort_trigger": null
+        }
+      ],
+      "allow_segment_overlap": false
+    }
+  }
+}

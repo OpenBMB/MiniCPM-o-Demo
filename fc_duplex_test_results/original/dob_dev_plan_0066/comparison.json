@@ -1,0 +1,106 @@
+{
+  "sample_id": "dob_dev_plan_0066",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0066.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0066/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 18.877685546875,
+  "gt": {
+    "n_tokens": 1562,
+    "spoken_text": "好的，这段里的视觉重点我已经抓到了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：后面他说的内容里会夹杂一些可以直接呈现的具体可见对象，我要按这条规则处理，而不是把开头这句话当成普通聊天。它是在给我设定一个持续生效的工作配置，让我进入持续展示/监听模式：一边听后续话语，一边判断是否出现符合条件的对象。我需要先响应并记住这个配置，明确之后只要捕捉到符合规则的明确对象，就在后台调用 display_object_on_board(name) 来展示；如果听到的是不满足规则的表达、语气铺垫或整体描述，我就跳过，保持安静，不打断用户，也不对每一句都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "窗帘"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "沙发"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "电视"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水杯"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0066_call_01",
+      "dob_dev_plan_0066_call_02",
+      "dob_dev_plan_0066_call_03",
+      "dob_dev_plan_0066_call_04"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 1332,
+    "spoken_text": "好的，这段里的视觉重点我已经抓到了。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：后面他说的内容里会夹杂一些可以直接呈现的具体可见对象，我要按这条规则处理，而不是把开头这句话当成普通聊天。它是在给我设定一个持续生效的工作配置，让我进入持续展示/监听模式：一边听后续话语，一边判断是否出现符合条件的对象。我需要先响应并记住这个配置，明确之后只要捕捉到符合规则的明确对象，就在后台调用 display_object_on_board(name) 来展示；如果听到的是不满足规则的表达、语气铺垫或整体描述，我就跳过，保持安静，不打断用户，也不对每一句都展开冗长分析。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0066_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "窗帘"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0066_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "沙发"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0066_call_03",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "电视"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0066_call_04",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "水杯"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 27,
+    "n_audio_units": 23
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": true,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 7793,
+    "gt_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><input_event_slot><tool_response_event><tool_call_id>dob_dev_plan_0066_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"窗帘\", \"reason\": \"这里明确",
+    "pred_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><tool_call><function name=\"display_object_on_board\"><param name=\"name\">沙发</param></function></tool"
+  }
+}

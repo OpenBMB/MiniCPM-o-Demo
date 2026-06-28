@@ -1,0 +1,55 @@
+{
+  "sample_id": "dob_dev_plan_0068",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0068.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0068/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 11.652114868164062,
+  "gt": {
+    "n_tokens": 1009,
+    "spoken_text": "好的，这个布置思路我记下了。",
+    "think_text": "用户先给了我一条展示规则，我理解他的意思是：接下来他可能会连续讲一段关于场景安排的话，我要从中识别符合这条规则的、确实可以被呈现出来的具体对象。这个指令不是普通闲聊，也不是让我立即展开解释，而是在给我设定一个持续生效的工作配置。我要进入持续展示/监听模式，先记住这条规则，并明确后续对话中一旦听到符合要求的对象，就在后台调用 display_object_on_board(name) 来展示它。接下来用户连续讲话时，我需要保持监听，只在出现符合规则的具体对象时行动；如果听到的是不符合规则的表达，就跳过并保持安静，不打断用户，也不对每句话都做冗长回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "办公椅"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0068_call_01"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 954,
+    "spoken_text": "好的，这个布置思路我记下了。",
+    "think_text": "用户先给了我一条展示规则，我理解他的意思是：接下来他可能会连续讲一段关于场景安排的话，我要从中识别符合这条规则的、确实可以被呈现出来的具体对象。这个指令不是普通闲聊，也不是让我立即展开解释，而是在给我设定一个持续生效的工作配置。我要进入持续展示/监听模式，先记住这条规则，并明确后续对话中一旦听到符合要求的对象，就在后台调用 display_object_on_board(name) 来展示它。接下来用户连续讲话时，我需要保持监听，只在出现符合规则的具体对象时行动；如果听到的是不符合规则的表达，就跳过并保持安静，不打断用户，也不对每句话都做冗长回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0068_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "办公椅"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 14,
+    "n_audio_units": 10
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": true,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4970,
+    "gt_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><input_event_slot><tool_response_event><tool_call_id>dob_dev_plan_0068_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"办公椅\", \"reason\": \"这里说",
+    "pred_context": "audio_placeholder|><|audio_placeholder|><|audio_placeholder|></user_audio_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit><unit><user_audio_slot><|audio_placeholder|><|audio_place"
+  }
+}

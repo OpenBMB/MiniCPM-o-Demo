@@ -35,7 +35,7 @@ result = duplex.generate()
 """
 
 from core.processors.base import BaseProcessor, MiniCPMOProcessorMixin
-from core.processors.unified import UnifiedProcessor, ChatView, HalfDuplexView, DuplexView
+from core.processors.unified import UnifiedProcessor, ChatView, HalfDuplexView, DuplexView, FcDuplexView
 
 __all__ = [
     # 基类
@@ -46,4 +46,5 @@ __all__ = [
     "ChatView",
     "HalfDuplexView",
     "DuplexView",
+    "FcDuplexView",
 ]

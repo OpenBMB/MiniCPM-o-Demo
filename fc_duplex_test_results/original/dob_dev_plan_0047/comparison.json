@@ -1,0 +1,72 @@
+{
+  "sample_id": "dob_dev_plan_0047",
+  "data_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data/dob_dev_plan_0047.json",
+  "audio_path": "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/media/dob_dev_plan_0047/user_audio_0.opus",
+  "success": true,
+  "error": null,
+  "elapsed_sec": 12.358375072479248,
+  "gt": {
+    "n_tokens": 1093,
+    "spoken_text": "好的，我会按你刚才说的内容处理。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续讲述一段内容，而我需要从中识别符合这条规则的具体可见对象。这个要求不是普通闲聊，也不是让我马上展开回答，而是在为后续对话设定一个持续生效的处理方式。我需要先记住这条配置，并明确自己要进入持续展示/监听模式：后面只要用户说到符合规则的具体对象，我就应在后台调用 display_object_on_board，把对应名称展示出来；如果听到的是不符合规则的内容，我就跳过，保持安静，不打断用户，也不需要对每一句都做冗长回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "飞机"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": null,
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "机场巴士"
+        },
+        "error": null
+      }
+    ],
+    "tool_call_ids": [
+      "dob_dev_plan_0047_call_01",
+      "dob_dev_plan_0047_call_02"
+    ]
+  },
+  "prediction": {
+    "n_tokens": 999,
+    "spoken_text": "好的，我已经按你的讲述留意了相关物件。",
+    "think_text": "用户先给了我一条简短规则，我理解他的用意是：接下来他可能会连续讲述一段内容，而我需要从中识别符合这条规则的具体可见对象。这个要求不是普通闲聊，也不是让我马上展开回答，而是在为后续对话设定一个持续生效的处理方式。我需要先记住这条配置，并明确自己要进入持续展示/监听模式：后面只要用户说到符合规则的具体对象，我就应在后台调用 display_object_on_board，把对应名称展示出来；如果听到的是不符合规则的内容，我就跳过，保持安静，不打断用户，也不需要对每一句都做冗长回应。",
+    "tool_calls": [
+      {
+        "tool_call_id": "dob_dev_plan_0047_call_01",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "飞机"
+        },
+        "error": null
+      },
+      {
+        "tool_call_id": "dob_dev_plan_0047_call_02",
+        "name": "display_object_on_board",
+        "arguments": {
+          "name": "机场巴士"
+        },
+        "error": null
+      }
+    ],
+    "total_units": 15,
+    "n_audio_units": 11
+  },
+  "matches": {
+    "token_stream_exact": false,
+    "spoken_text_exact": false,
+    "think_text_exact": true,
+    "tool_calls_semantic_exact": true,
+    "tool_call_ids_exact": true
+  },
+  "first_token_stream_diff": {
+    "index": 4166,
+    "gt_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0047_call_01</tool_call_id><tool_response>{\"status\": \"displayed\", \"name\": \"飞机\", \"reason\": \"这里明确提到旅行出发时要乘坐的具体交通工具。\"}</tool_response></tool_response_event><tool_response_event><tool_call_id>",
+    "pred_context": "lot><tool_response_event><tool_call_id>dob_dev_plan_0047_call_01</tool_call_id><|tool_started|></tool_response_event></input_event_slot><ai_spoken_slot><|listen|></ai_spoken_slot><ai_non_spoken_slot><|no_action|></ai_non_spoken_slot></unit>"
+  }
+}
