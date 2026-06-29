@@ -97,7 +97,6 @@ from core.processors import (
     ChatView,
     HalfDuplexView,
     DuplexView,
-    FcDuplexView,
 )
 
 # 工厂
@@ -148,19 +147,6 @@ from core.schemas import (
     DuplexOfflineInput,
     DuplexChunkResult,
     DuplexOfflineOutput,
-    FcClosedSpan,
-    FcDuplexConfig,
-    FcToolResponse,
-    FcDuplexPrepareRequest,
-    FcDuplexPrefillRequest,
-    FcSpokenGenerateRequest,
-    FcNonSpokenGenerateRequest,
-    FcFinalizeUnitRequest,
-    FcDuplexStepResult,
-    FcDuplexUnitInfo,
-    FcDuplexOutput,
-    FcDuplexOfflineInput,
-    FcDuplexOfflineOutput,
 )
 
 __all__ = [
@@ -180,7 +166,6 @@ __all__ = [
     "ChatView",
     "HalfDuplexView",
     "DuplexView",
-    "FcDuplexView",
     
     # 工厂
     "ProcessorFactory",
@@ -226,17 +211,4 @@ __all__ = [
     "DuplexOfflineInput",
     "DuplexChunkResult",
     "DuplexOfflineOutput",
-    "FcClosedSpan",
-    "FcDuplexConfig",
-    "FcToolResponse",
-    "FcDuplexPrepareRequest",
-    "FcDuplexPrefillRequest",
-    "FcSpokenGenerateRequest",
-    "FcNonSpokenGenerateRequest",
-    "FcFinalizeUnitRequest",
-    "FcDuplexStepResult",
-    "FcDuplexUnitInfo",
-    "FcDuplexOutput",
-    "FcDuplexOfflineInput",
-    "FcDuplexOfflineOutput",
 ]
