@@ -37,6 +37,21 @@ def load_case(data_path: str):
         content = segment.get("content") or {}
         if content.get("kind") == "tool_call" and content.get("tool_call_id"):
             tool_call_ids.append(content["tool_call_id"])
+    tool_responses_by_call_id = {}
+    input_events = ((structure.get("tracks") or {}).get("input_event") or {}).get("segments") or []
+    for segment in input_events:
+        event = segment.get("event") or {}
+        if event.get("kind") != "tool_response":
+            continue
+        call_id = event.get("tool_call_id")
+        if not call_id:
+            continue
+        text_parts = [
+            item.get("text", "")
+            for item in event.get("contents", [])
+            if item.get("kind") == "text"
+        ]
+        tool_responses_by_call_id[call_id] = "".join(text_parts)
 
     sample_id = Path(data_path).stem
     media_dir = Path(data_path).parent.parent / "media" / sample_id
@@ -44,7 +59,7 @@ def load_case(data_path: str):
     if not audio_path.exists():
         raise FileNotFoundError(f"missing user audio: {audio_path}")
 
-    return system_prompt, tools, str(audio_path), tool_call_ids
+    return system_prompt, tools, str(audio_path), tool_call_ids, tool_responses_by_call_id
 
 
 def main():
@@ -61,7 +76,7 @@ def main():
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-    system_prompt, tools, audio_path, tool_call_ids = load_case(args.data)
+    system_prompt, tools, audio_path, tool_call_ids, tool_responses_by_call_id = load_case(args.data)
 
     print("[paths]")
     print(f"  base model : {args.model_path}")
@@ -70,6 +85,7 @@ def main():
     print(f"  audio      : {audio_path}")
     print(f"  tools      : {len(tools or [])}")
     print(f"  gt call ids: {tool_call_ids}")
+    print(f"  gt tool responses: {len(tool_responses_by_call_id)}")
 
     processor = UnifiedProcessor(
         model_path=args.model_path,
@@ -86,6 +102,7 @@ def main():
             tools=tools,
             user_audio_path=audio_path,
             tool_call_ids=tool_call_ids,
+            tool_responses_by_call_id=tool_responses_by_call_id,
             config=FcDuplexConfig(
                 decode_mode=args.decode_mode,
                 non_spoken_budget_per_unit=args.budget,

@@ -187,6 +187,9 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             "default_unit_sec": 1.0,
             "max_spoken_tokens_per_unit": 24,
             "extra_response_units": 4,
+            "generate_audio": False,
+            "tts_temperature": 0.8,
+            "tts_repetition_penalty": 1.05,
         }
 
     def _ensure_asset_dir(self, asset_subpath: str, model_dir: Optional[str] = None) -> str:
@@ -4100,8 +4103,21 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             raise RuntimeError("FC Duplex 未初始化，请先调用 init_unified()")
         return self.fc_duplex
 
-    def fc_duplex_prepare(self, system_prompt: str, tools=None) -> dict:
-        return self._require_fc_duplex().prepare(system_prompt=system_prompt, tools=tools)
+    def fc_duplex_prepare(
+        self,
+        system_prompt: str,
+        tools=None,
+        ref_audio: Optional[np.ndarray] = None,
+        prompt_wav_path: Optional[str] = None,
+        generate_audio: Optional[bool] = None,
+    ) -> dict:
+        return self._require_fc_duplex().prepare(
+            system_prompt=system_prompt,
+            tools=tools,
+            ref_audio=ref_audio,
+            prompt_wav_path=prompt_wav_path,
+            generate_audio=generate_audio,
+        )
 
     def fc_duplex_streaming_prefill(
         self,
@@ -4324,6 +4340,14 @@ class FcDuplexCapability:
         self.temperature = temperature
         self.tool_format = tool_format
         self.extra_config = kwargs
+        self.generate_audio = bool(kwargs.get("generate_audio", False))
+        self.tts_temperature = torch.tensor(
+            [kwargs.get("tts_temperature", 0.8)],
+            dtype=torch.float,
+            device=self.device,
+        )
+        self.tts_repetition_penalty = kwargs.get("tts_repetition_penalty", 1.05)
+        self.prompt_wav_path = None
 
         if not hasattr(self.model, "processor") or self.model.processor is None:
             self.model.processor = MiniCPMOProcessor.from_pretrained(
@@ -4352,6 +4376,18 @@ class FcDuplexCapability:
         self.id2name = {}
         self.max_special_id = 0
         self._resized = False
+        self.tts_logits_processors = None
+        self.tts_eos_token = None
+        if getattr(self.model, "tts", None) is not None:
+            self.tts_logits_processors = gen_logits(
+                num_code=self.model.tts.config.num_audio_tokens,
+                repetition_penalty=self.tts_repetition_penalty,
+            )
+            self.tts_eos_token = torch.tensor(
+                [self.model.tts.config.num_audio_tokens - 1],
+                dtype=torch.long,
+                device=self.device,
+            )
 
         self._reset_streaming_state()
         logger.info("[FcDuplexCapability] initialized")
@@ -4462,18 +4498,26 @@ class FcDuplexCapability:
         except Exception:
             return list(tools)
 
-    def _system_prefill_ids(self, system_prompt: str, tools=None) -> list:
+    def _system_prefill_parts(self, system_prompt: str, tools=None, has_ref_audio: bool = False) -> tuple[list, list]:
         self._ensure_protocol()
         tools = self._normalize_tools(tools)
-        ids = [self.sid(self.K.IM_START)]
-        ids += self.encode_text(system_prompt or "")
+        prefix_ids = [self.sid(self.K.IM_START)]
+        prefix_ids += self.encode_text(system_prompt or "")
+        suffix_ids = []
+        if has_ref_audio:
+            prefix_ids += [self.sid(self.K.AUDIO_START)]
+            suffix_ids += [self.sid(self.K.AUDIO_END)]
         if tools:
             block = self._serializer.render_tool_system_block(list(tools))
-            ids += self.encode_text(block.preamble)
-            ids += self.encode_text(block.definitions)
-            ids += self.encode_text(block.guidelines)
-        ids += [self.sid(self.K.IM_END)]
-        return ids
+            suffix_ids += self.encode_text(block.preamble)
+            suffix_ids += self.encode_text(block.definitions)
+            suffix_ids += self.encode_text(block.guidelines)
+        suffix_ids += [self.sid(self.K.IM_END)]
+        return prefix_ids, suffix_ids
+
+    def _system_prefill_ids(self, system_prompt: str, tools=None, has_ref_audio: bool = False) -> list:
+        prefix_ids, suffix_ids = self._system_prefill_parts(system_prompt, tools, has_ref_audio=has_ref_audio)
+        return prefix_ids + suffix_ids
 
     def _user_video_slot_ids(self, n_image: int = 0, n_slice: int = 0) -> list:
         self._ensure_protocol()
@@ -4626,19 +4670,239 @@ class FcDuplexCapability:
         self._non_spoken_mode = None
         self._think_buf = []
         self._tool_call_buf = []
+        self.tts_text_start_pos = 0
+        self.tts_past_key_values = None
+        self.tts_current_turn_start_time = None
+        self.token2wav_initialized = False
+        self.token2wav_buffer = []
+        self.flow_cache_base = None
+        self.hift_cache_base = None
+        self.pre_lookahead = 0
 
-    def prepare(self, system_prompt: str, tools=None) -> dict:
+    def _init_token2wav_cache(self, prompt_wav_path: str) -> None:
+        if getattr(self.model, "tts", None) is None:
+            raise RuntimeError("TTS model is not initialized")
+        self.model.tts.audio_tokenizer.cache = None
+        flow_cache, hift_cache = self.model.tts.audio_tokenizer.set_stream_cache(prompt_wav_path)
+        self.flow_cache_base = torch_clone_recursive(flow_cache)
+        self.hift_cache_base = torch_clone_recursive(hift_cache)
+        self.pre_lookahead = int(self.model.tts.audio_tokenizer.flow.pre_lookahead_len)
+        self.token2wav_initialized = True
+
+    def _reset_token2wav_for_new_turn(self) -> None:
+        if not self.token2wav_initialized:
+            return
+        self.model.tts.audio_tokenizer.stream_cache = torch_clone_recursive(self.flow_cache_base)
+        self.model.tts.audio_tokenizer.hift_cache_dict = torch_clone_recursive(self.hift_cache_base)
+        self.token2wav_buffer = [4218] * 3
+
+    def _convert_results_to_tts_input(self, results):
+        if len(results) == 0:
+            audio_bos = self.model.tts.emb_text(
+                torch.tensor(
+                    [self.model.tts.audio_bos_token_id],
+                    device=self.model.tts.emb_text.weight.device,
+                    dtype=torch.long,
+                )
+            )
+            return audio_bos.unsqueeze(0)
+
+        llm_tokens = []
+        llm_hidden = []
+        for token_id, hidden, _end_of_turn in results:
+            llm_tokens.append(token_id)
+            llm_hidden.append(hidden.squeeze(0))
+
+        llm_tokens_tensor = torch.tensor(llm_tokens, device=self.device, dtype=torch.long)
+        llm_embeds = self.model.tts.emb_text(llm_tokens_tensor)
+
+        llm_hidden_tensor = torch.cat(llm_hidden, dim=0)
+        llm_hidden_tensor = self.model.tts.projector_semantic(llm_hidden_tensor)
+        llm_hidden_tensor = torch.nn.functional.normalize(llm_hidden_tensor, p=2, dim=-1)
+        tts_embeds = llm_embeds + llm_hidden_tensor
+
+        audio_bos = self.model.tts.emb_text(
+            torch.tensor(
+                [self.model.tts.audio_bos_token_id],
+                device=self.model.tts.emb_text.weight.device,
+                dtype=torch.long,
+            )
+        )
+        return torch.cat([tts_embeds, audio_bos], dim=0).unsqueeze(0)
+
+    def _generate_waveform_from_tokens(
+        self,
+        new_tokens: torch.Tensor,
+        prompt_wav_path: Optional[str],
+        is_last_chunk: bool = False,
+        force_flush: bool = False,
+    ) -> Optional[np.ndarray]:
+        if not self.token2wav_initialized:
+            logger.warning("[FcDuplexCapability] Token2Wav is not initialized")
+            return None
+
+        chunk_size = 25
+        token_ids = torch.reshape(new_tokens, (-1,)).tolist()
+        self.token2wav_buffer += token_ids
+        eos_id = int(self.tts_eos_token.item()) if self.tts_eos_token is not None else None
+        has_chunk_eos = eos_id is not None and eos_id in token_ids
+
+        pcm_bytes_list = []
+        if has_chunk_eos or force_flush:
+            while len(self.token2wav_buffer) >= self.pre_lookahead + 5:
+                chunk_to_process = min(chunk_size + self.pre_lookahead, len(self.token2wav_buffer))
+                pcm_bytes_list.append(
+                    self.model.tts.audio_tokenizer.stream(
+                        self.token2wav_buffer[:chunk_to_process],
+                        prompt_wav=prompt_wav_path,
+                    )
+                )
+                self.token2wav_buffer = self.token2wav_buffer[
+                    min(chunk_size, chunk_to_process - self.pre_lookahead) :
+                ]
+        else:
+            while len(self.token2wav_buffer) >= chunk_size + self.pre_lookahead:
+                pcm_bytes_list.append(
+                    self.model.tts.audio_tokenizer.stream(
+                        self.token2wav_buffer[: chunk_size + self.pre_lookahead],
+                        prompt_wav=prompt_wav_path,
+                    )
+                )
+                self.token2wav_buffer = self.token2wav_buffer[chunk_size:]
+
+        if is_last_chunk and len(self.token2wav_buffer) > 0:
+            pcm_bytes_list.append(
+                self.model.tts.audio_tokenizer.stream(
+                    self.token2wav_buffer,
+                    prompt_wav=prompt_wav_path,
+                    last_chunk=True,
+                )
+            )
+            self.token2wav_buffer = []
+
+        if not pcm_bytes_list:
+            return None
+
+        all_pcm = b"".join(pcm_bytes_list)
+        if len(all_pcm) == 0:
+            return None
+        audio_waveform = np.frombuffer(all_pcm, dtype="<i2").astype(np.float32) / 32768.0
+        if not is_last_chunk and len(audio_waveform) < 24000:
+            audio_waveform = np.pad(audio_waveform, (24000 - len(audio_waveform), 0), mode="constant")
+        return audio_waveform
+
+    def _generate_spoken_audio(self, tts_hidden_in_unit: list, end_of_turn: bool) -> dict:
+        if not self.generate_audio or (not tts_hidden_in_unit and not end_of_turn):
+            return {
+                "audio_waveform": None,
+                "audio_sample_rate": None,
+                "n_tts_tokens": 0,
+                "cost_tts_prep": 0.0,
+                "cost_tts": 0.0,
+                "cost_token2wav": 0.0,
+            }
+        if not self.prompt_wav_path:
+            raise ValueError("prompt_wav_path is required when generate_audio=True")
+        if not self.token2wav_initialized:
+            self._init_token2wav_cache(self.prompt_wav_path)
+            self._reset_token2wav_for_new_turn()
+
+        tts_prep_start = time.time()
+        tts_condition = self._convert_results_to_tts_input(tts_hidden_in_unit)
+        tts_prep_end = time.time()
+
+        min_token_per_chunk = 0 if end_of_turn or self.tts_text_start_pos == 0 else 26
+        force_flush = self.tts_text_start_pos == 0
+
+        tts_start = time.time()
+        new_tokens, old_kv = self.model.tts.generate_chunk(
+            inputs_embeds=tts_condition,
+            temperature=self.tts_temperature,
+            repetition_penalty=self.tts_repetition_penalty,
+            eos_token=self.tts_eos_token,
+            force_no_stop=False,
+            max_new_token=26,
+            min_new_tokens=min_token_per_chunk,
+            past_key_values=self.tts_past_key_values,
+            logits_processors=self.tts_logits_processors,
+            text_start_pos=self.tts_text_start_pos,
+        )
+        tts_end = time.time()
+
+        if end_of_turn:
+            self.tts_text_start_pos = 0
+            self.tts_past_key_values = None
+            self.tts_current_turn_start_time = None
+        else:
+            self.tts_past_key_values = old_kv
+            self.tts_text_start_pos += tts_condition.shape[1] + new_tokens.shape[1]
+
+        token2wav_start = time.time()
+        audio_waveform = self._generate_waveform_from_tokens(
+            new_tokens,
+            self.prompt_wav_path,
+            is_last_chunk=end_of_turn,
+            force_flush=force_flush,
+        )
+        token2wav_end = time.time()
+
+        if end_of_turn:
+            self._reset_token2wav_for_new_turn()
+
+        return {
+            "audio_waveform": audio_waveform,
+            "audio_sample_rate": 24000 if audio_waveform is not None else None,
+            "n_tts_tokens": int(new_tokens.numel()),
+            "cost_tts_prep": tts_prep_end - tts_prep_start,
+            "cost_tts": tts_end - tts_start,
+            "cost_token2wav": token2wav_end - token2wav_start,
+        }
+
+    def prepare(
+        self,
+        system_prompt: str,
+        tools=None,
+        ref_audio: Optional[np.ndarray] = None,
+        prompt_wav_path: Optional[str] = None,
+        generate_audio: Optional[bool] = None,
+    ) -> dict:
         self._ensure_protocol()
         resize_info = self._resize_embeddings()
         self._reset_streaming_state()
         self._tools = self._normalize_tools(tools)
+        if generate_audio is not None:
+            self.generate_audio = bool(generate_audio)
+        self.prompt_wav_path = prompt_wav_path
         self.model.init_streaming_processor()
-        prefill_ids = self._system_prefill_ids(system_prompt, self._tools)
-        self._feed_ids(prefill_ids)
+        if self.generate_audio:
+            if not self.prompt_wav_path:
+                raise ValueError("prompt_wav_path is required when generate_audio=True")
+            self._init_token2wav_cache(self.prompt_wav_path)
+            self._reset_token2wav_for_new_turn()
+        has_ref_audio = ref_audio is not None
+        prefix_ids, suffix_ids = self._system_prefill_parts(
+            system_prompt,
+            self._tools,
+            has_ref_audio=has_ref_audio,
+        )
+        self._feed_ids(prefix_ids)
+        if ref_audio is not None:
+            data = self.processor.process_audio([np.asarray(ref_audio, dtype=np.float32)])
+            embeds_nested = self.model.get_audio_embedding(
+                data,
+                chunk_length=self.model.config.audio_chunk_length,
+            )
+            if embeds_nested:
+                self.decoder.feed(torch.cat([t for group in embeds_nested for t in group], dim=0))
+        self._feed_ids(suffix_ids)
+        prefill_ids = prefix_ids + suffix_ids
         return {
             "prefill_ids": prefill_ids,
             "resize_info": resize_info,
             "output_render": self.render_token_stream(prefill_ids),
+            "generate_audio": self.generate_audio,
+            "prompt_wav_path": self.prompt_wav_path,
+            "has_ref_audio": ref_audio is not None,
         }
 
     def _ensure_previous_unit_closed(self) -> None:
@@ -4696,10 +4960,17 @@ class FcDuplexCapability:
         if not self._spoken_slot_open:
             raise RuntimeError("spoken slot is not open; call streaming_prefill() first")
 
+        start_time = time.time()
         K = self.K
-        spoken_terms = {self.sid(K.SPOKEN_SLOT_EOS), self.sid(K.SPOKEN_TURN_EOS), self.sid(K.LISTEN)}
+        spoken_terms = {
+            self.sid(K.SPOKEN_SLOT_EOS),
+            self.sid(K.SPOKEN_TURN_EOS),
+            self.sid(K.LISTEN),
+            self.sid(K.TTS_PAD),
+        }
         spoken_ids = []
         text_ids = []
+        tts_hidden_in_unit = []
         is_listen = False
         is_speaking = False
         turn_eos = False
@@ -4719,23 +4990,43 @@ class FcDuplexCapability:
                 turn_eos = True
             elif not self.is_special(nid):
                 text_ids.append(nid)
-            logits = self.decoder.feed(self.decoder.embed_token(nid), return_logits=True)[0]
+            fed = self.decoder.feed(self.decoder.embed_token(nid), return_logits=True)
+            logits = fed[0]
+            hidden = fed[1] if len(fed) > 1 else None
+            if (
+                hidden is not None
+                and is_speaking
+                and nid not in {self.sid(K.SPEAK), self.sid(K.LISTEN), self.sid(K.TTS_PAD)}
+            ):
+                tts_hidden_in_unit.append([nid, hidden, bool(turn_eos)])
             if nid in spoken_terms:
                 break
 
         self._feed_ids([self.sid(K.AI_SPOKEN_SLOT_END)])
         self._spoken_slot_open = False
         text = self._flush(text_ids) if text_ids else ""
+        llm_end_time = time.time()
+        audio_info = self._generate_spoken_audio(
+            tts_hidden_in_unit,
+            end_of_turn=bool(turn_eos),
+        )
         if self._current_unit_info is not None:
             self._current_unit_info["is_listen"] = bool(is_listen)
             self._current_unit_info["is_speaking"] = bool(is_speaking)
             self._current_unit_info["spoken_ids"] = spoken_ids
+            if audio_info.get("audio_waveform") is not None:
+                self._current_unit_info["audio_sample_rate"] = audio_info.get("audio_sample_rate")
+                self._current_unit_info["n_audio_samples"] = int(len(audio_info["audio_waveform"]))
         return {
             "is_listen": bool(is_listen),
             "is_speaking": bool(is_speaking),
             "spoken_ids": spoken_ids,
             "spoken_text": text,
+            "text": text,
             "spoken_turn_eos": bool(turn_eos),
+            "end_of_turn": bool(turn_eos),
+            "cost_llm": llm_end_time - start_time,
+            **audio_info,
         }
 
     def _open_non_spoken_slot(self):

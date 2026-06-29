@@ -16,6 +16,7 @@
 - `core/processors/unified.py`：`FcDuplexView`，负责上层 API 封装、音频读取、tool call id 管理、离线推理。
 - `MiniCPMO45/modeling_minicpmo_unified.py`：`FcDuplexCapability`，负责 FC slot 协议 token、KV cache、spoken/non-spoken 生成。
 - `test_fc_duplex_overfit.py`：基于 overfit checkpoint 和训练样本的 smoke test。
+- `evaluate_fc_duplex_batch.py`：批量训练数据验证 runner，内部调用 `FcDuplexView.offline_inference_from_train_data()`。
 
 ## 整体调用模型
 
@@ -51,6 +52,136 @@ fc = processor.fc_duplex
 
 `UnifiedProcessor` 初始化后会在主模型上挂载 `MiniCPMO.fc_duplex`，上层通过 `processor.fc_duplex` 获取 `FcDuplexView`。
 
+## 主要接口输入输出
+
+正规化后，`FcDuplexView` 对调用方公开的方法都使用 `core.schemas.fc_duplex` 中的 Pydantic 模型表达输入和输出。底层 `FcDuplexCapability` 内部仍可能使用临时 dict，但不会直接暴露给上层调用方。
+
+### `prepare(request) -> FcDuplexPrepareResult`
+
+输入类型：`FcDuplexPrepareRequest`
+
+- `system_prompt: str`：系统提示词。
+- `tools: list[dict] | None`：OpenAI tool definition 形式的工具定义。
+- `ref_audio_path: str | None`：可选参考音频，会以 16kHz mono 加载并作为 reference audio embedding 喂给 LLM。
+- `prompt_wav_path: str | None`：可选 Token2Wav prompt 音频路径，用于初始化 TTS vocoder streaming cache。
+- `generate_audio: bool`：是否启用 spoken TTS waveform 生成。
+
+输出类型：`FcDuplexPrepareResult`
+
+- `prefill_ids: list[int]`：system/tool prefill token ids。
+- `output_render: str`：prefill token stream 的可读渲染。
+- `resized: bool`：是否因为 FC special token 扩展了 embedding 表。
+- `old_vocab_size/new_vocab_size/required_vocab_size`：embedding resize 相关信息。
+- `generate_audio: bool`：本 session 是否开启 TTS。
+- `has_ref_audio: bool`：是否实际加载并喂入了 reference audio。
+- `prompt_wav_path: str | None`：实际使用的 Token2Wav prompt path。
+
+### `streaming_prefill(request) -> FcDuplexPrefillResult`
+
+输入类型：`FcDuplexPrefillRequest`
+
+- `audio_path: str | None`：当前 unit 的用户音频文件路径。
+- `audio_data: str | None`：base64 编码的 float32 PCM 音频。
+- `frame_list: list[Any] | None`：预留图像/视频帧输入。
+- `tool_responses: list[FcToolResponse] | None`：调用方传回的工具执行结果。
+- `sample_rate: int`：输入音频采样率，默认 16000。
+
+输出类型：`FcDuplexPrefillResult`
+
+- `unit_index: int`：当前 unit 下标。
+- `n_audio_placeholders: int`：当前 unit 写入的用户音频 placeholder embedding 数。
+- `has_input_event: bool`：是否写入 input event slot。
+- `is_listen: bool | None`：当前 unit 的 listen 状态，prefill 阶段通常还未知。
+- `is_speaking: bool`：当前 unit 是否已标记为 speaking。
+- `inserted_token_ids: list[int]`：预留字段，表示 prefill 显式插入的 token ids。
+
+### `streaming_spoken_generate(request) -> FcSpokenGenerateResult`
+
+输入类型：`FcSpokenGenerateRequest`
+
+- `max_tokens: int`：当前 unit 的 spoken slot 最大生成 token 数。
+- `decode_mode: str`：解码模式，常用 `greedy`。
+
+输出类型：`FcSpokenGenerateResult`
+
+- `is_listen: bool`：模型是否选择 `<|listen|>`。
+- `is_speaking: bool`：模型是否选择 `<|speak|>`。
+- `spoken_token_ids: list[int]`：当前 spoken slot 生成的 token ids。
+- `spoken_text: str`：当前 unit 生成的 spoken 文本。
+- `spoken_turn_eos: bool`：是否生成 spoken turn 结束。
+- `audio_waveform: Any | None`：如果 `generate_audio=True`，这里可能返回 24kHz float32 waveform。
+- `audio_sample_rate: int | None`：`audio_waveform` 的采样率，当前为 24000。
+- `n_audio_samples: int`：生成 waveform 的采样点数。
+- `n_tts_tokens: int`：TTS audio token 数。
+- `cost_llm/cost_tts_prep/cost_tts/cost_token2wav: float`：分阶段耗时。
+
+### `streaming_non_spoken_generate(request) -> FcNonSpokenGenerateResult`
+
+输入类型：`FcNonSpokenGenerateRequest`
+
+- `max_tokens: int`：本次最多生成多少个 non-spoken token。在线建议每次传 `1`。
+- `decode_mode: str`：解码模式，常用 `greedy`。
+- `close_reason: FcNonSpokenCloseReason | None`：强制闭合原因，可选 `eos`、`no_action`、`budget_reached`、`hold`、`abort`。
+
+输出类型：`FcNonSpokenGenerateResult`
+
+- `token_ids: list[int]`：本次生成或插入的 token ids。
+- `terminated: bool`：当前 non-spoken slot 是否已经结束。
+- `close_reason: str | None`：结束原因。
+- `generation_flag: NonSpokenStepGenerationFlag`：明确的调用方循环控制信号。
+- `closed_spans: list[FcClosedSpan]`：本次闭合的 `<think>` 或 `<tool_call>` span。
+- `text: str`：本次普通文本 token 的解码文本。
+- `audio_waveform/audio_sample_rate/n_tts_tokens`：从通用 step result 继承，目前 non-spoken 阶段通常不用。
+- `metadata: dict`：底层调试信息。
+
+`NonSpokenStepGenerationFlag`：
+
+- `continue_non_spoken_generation`：当前 non-spoken slot 尚未结束，调用方可继续 step generate。
+- `no_action`：模型生成了 no-action 语义，当前 non-spoken slot 可结束。
+- `non_spoken_slot_eos`：当前 non-spoken slot 已结束。它是 API 控制状态，不是 SDK special token 名；可能对应 `<|non_spoken_eos|>`、`</ai_non_spoken_slot>` 或调用方强制闭合。
+
+`FcClosedSpan` 字段含义：
+
+- `type: "think" | "tool_call"`：闭合 span 类型。
+- `tool_call_id: str | None`：框架分配的 tool call id。
+- `text: str | None`：think span 的完整文本。
+- `wire: str | None`：tool call 原始 XML/wire 文本。
+- `tool_call: dict | None`：SDK 解析出的工具调用结构。
+- `error: str | None`：解析失败或状态错误。
+
+### `finalize_unit(request=None) -> FcDuplexUnitInfo`
+
+输入类型：`FcFinalizeUnitRequest | None`
+
+输出类型：`FcDuplexUnitInfo`
+
+- `unit: int`：unit 下标。
+- `n_audio: int`：用户音频 placeholder 数。
+- `has_event: bool`：是否包含 input event。
+- `is_listen: bool | None`：spoken slot 是否选择 listen。
+- `is_speaking: bool`：spoken slot 是否选择 speak。
+- `spoken_ids: list[int]`：spoken slot token ids。
+- `non_spoken_ids: list[int]`：non-spoken slot token ids。
+- `non_spoken_terminator: str | None`：non-spoken 结束原因。
+- `closed_spans: list[FcClosedSpan]`：当前 unit 中闭合的 think/tool_call span。
+- `audio_sample_rate/n_audio_samples`：如果生成了 TTS waveform，会记录音频信息。
+
+### `decode_output(request) -> FcDecodeOutputResult`
+
+输入类型：`FcDecodeOutputRequest`
+
+- `output_ids: list[int] | None`：要解码的 token ids；不传则解码当前 session 累计输出。
+- `tools: list[dict] | None`：用于反序列化 tool call 的工具定义。
+
+输出类型：`FcDecodeOutputResult`
+
+- `units: list[FcDecodedUnit]`：按 unit 解码后的结构。
+- `spoken_text: str`：所有 spoken slot 文本拼接。
+- `think_text: str`：所有 think span 文本拼接。
+- `tool_calls: list[FcDecodedToolCall]`：解码后的 tool call。
+- `output_ids: list[int]`：完整 token ids。
+- `output_render: str`：完整 token stream 可读渲染。
+
 ## 在线推理流程
 
 ### 1. Prepare
@@ -58,10 +189,13 @@ fc = processor.fc_duplex
 ```python
 from core.schemas.fc_duplex import FcDuplexPrepareRequest
 
-fc.prepare(
+prepare_result = fc.prepare(
     FcDuplexPrepareRequest(
         system_prompt=system_prompt,
         tools=tools,
+        ref_audio_path="/path/to/ref.wav",
+        prompt_wav_path="/path/to/short_prompt.wav",
+        generate_audio=True,
     )
 )
 ```
@@ -71,6 +205,8 @@ fc.prepare(
 - 重置 FC 双工状态。
 - 写入 system prompt。
 - 写入工具定义。
+- 加载并喂入 reference audio。
+- 初始化 Token2Wav prompt cache，用于后续 spoken TTS waveform 生成。
 - 初始化 tool call id 状态管理器。
 
 ### 2. 每个 unit 输入 prefill
@@ -78,7 +214,7 @@ fc.prepare(
 ```python
 from core.schemas.fc_duplex import FcDuplexPrefillRequest
 
-fc.streaming_prefill(
+prefill_result = fc.streaming_prefill(
     FcDuplexPrefillRequest(
         audio_path="/path/to/audio.wav",
         tool_responses=None,
@@ -182,11 +318,13 @@ unit_info = fc.finalize_unit()
 ### 6. Decode output
 
 ```python
-decoded = fc.decode_output(tools=tools)
-print(decoded["output_render"])
-print(decoded["spoken_text"])
-print(decoded["think_text"])
-print(decoded["tool_calls"])
+from core.schemas.fc_duplex import FcDecodeOutputRequest
+
+decoded = fc.decode_output(FcDecodeOutputRequest(tools=tools))
+print(decoded.output_render)
+print(decoded.spoken_text)
+print(decoded.think_text)
+print(decoded.tool_calls)
 ```
 
 `output_render` 是完整 token 流的可读渲染，适合调试协议结构。
@@ -278,9 +416,11 @@ View 层会校验：
 工具调用解析失败，无法执行该工具调用。错误信息：...
 ```
 
-## 离线推理
+## 离线推理接口
 
-`FcDuplexView.offline_inference()` 是便捷封装，适合调试、overfit 测试和协议验证。
+### `offline_inference(task_input) -> FcDuplexOfflineOutput`
+
+`FcDuplexView.offline_inference()` 是直接面向推理参数的离线封装，适合调试、overfit 测试和协议验证。
 
 ```python
 from core.schemas.fc_duplex import FcDuplexConfig, FcDuplexOfflineInput
@@ -314,6 +454,100 @@ result = fc.offline_inference(
 6. 最后调用 `decode_output()` 并返回 `FcDuplexOfflineOutput`。
 
 `tool_call_ids` 是可选字段。传入后会使用固定 ID generator，适合让 overfit 推理结果和训练数据中的 tool_call_id 对齐。
+
+输入类型：`FcDuplexOfflineInput`
+
+- `system_prompt: str`：system prompt 文本。
+- `tools: list[dict] | None`：工具定义。
+- `user_audio_path: str | None`：用户输入音频路径。
+- `audio_data: str | None`：base64 float32 PCM 音频。
+- `ref_audio_path: str | None`：TTS/reference audio 路径。
+- `prompt_wav_path: str | None`：Token2Wav prompt 路径。
+- `generate_audio: bool`：是否生成 TTS waveform。
+- `tool_responses_by_unit: dict[int, list[FcToolResponse]]`：按 unit 固定注入的 tool response。
+- `tool_responses_by_call_id: dict[str, Any]`：按 tool call id 动态注入的 GT tool response。
+- `tool_call_ids: list[str] | None`：固定 tool call id 列表，用于训练数据一致性验证。
+- `config: FcDuplexConfig`：离线推理配置。
+
+输出类型：`FcDuplexOfflineOutput`
+
+- `success: bool`：推理是否成功。
+- `error: str | None`：失败信息。
+- `output_ids/output_render`：预测 token ids 和可读 token stream。
+- `spoken_text/think_text`：解码后的 spoken/think 文本。
+- `tool_calls: list[FcDecodedToolCall]`：预测 tool calls。
+- `units_info: list[FcDuplexUnitInfo]`：每个 unit 的结构化摘要。
+- `audio_waveforms: list[Any]`：生成的 24kHz waveform 列表，仅 TTS 开启时可能有值。
+- `total_units/n_audio_units/total_duration_ms`：推理统计信息。
+
+### `offline_inference_from_train_data(request) -> FcDuplexTrainDataResult`
+
+`offline_inference_from_train_data()` 是正规化后的训练数据验证入口。调用方不需要自己从训练 JSON 里拆 system prompt、tools、user audio、tool call ids、tool responses，也不需要自己做 GT tokenization 和对比。
+
+```python
+from core.schemas.fc_duplex import FcDuplexConfig, FcDuplexTrainDataRequest
+
+result = fc.offline_inference_from_train_data(
+    FcDuplexTrainDataRequest(
+        train_data_path="/path/to/dob_dev_plan_0001.json",
+        config=FcDuplexConfig(
+            decode_mode="greedy",
+            extra_response_units=0,
+        ),
+        generate_audio=True,
+        ref_audio_path="/path/to/ref.wav",
+        prompt_wav_path="/path/to/short_prompt.wav",
+        output_artifact_dir="/path/to/output/dob_dev_plan_0001",
+    )
+)
+```
+
+输入类型：`FcDuplexTrainDataRequest`
+
+- `train_data_path: str | None`：训练数据 JSON 路径。
+- `train_data: Any | None`：已经加载好的训练数据结构或 SDK 对象。
+- `data_root: str | None`：媒体目录。传 `train_data_path` 时默认使用训练 JSON 所在目录。
+- `config: FcDuplexConfig`：离线推理配置。
+- `non_spoken_budget_per_unit: int | None`：debug override。默认不传，使用 SDK train data 的 per-unit listening/speaking budget。
+- `generate_audio: bool`：是否生成 TTS 音频。
+- `ref_audio_path: str | None`：TTS/reference audio。
+- `prompt_wav_path: str | None`：Token2Wav prompt。建议使用短参考音频。
+- `output_artifact_dir: str | None`：输出目录；传入后会写入 `source.json`、GT/pred token stream、`units_info.json`、`comparison.json` 和可选音频文件。
+- `use_train_tool_call_ids: bool`：是否使用训练数据里的 tool call id 作为固定 id generator。
+- `inject_train_tool_responses: bool`：是否从训练数据里提取 tool response，并在对应 tool call 闭合后的下一 unit 动态注入。
+
+输出类型：`FcDuplexTrainDataResult`
+
+- `sample_id`：样本 id。
+- `success/error`：验证是否成功及错误信息。
+- `source_path/user_audio_path`：源训练 JSON 和用户音频路径。
+- `gt_output_ids/pred_output_ids`：GT 与预测 token ids。
+- `gt_output_render/pred_output_render`：GT 与预测 token stream 渲染。
+- `gt_spoken_text/pred_spoken_text`：GT 与预测 spoken 文本。
+- `gt_think_text/pred_think_text`：GT 与预测 think 文本。
+- `gt_tool_calls/pred_tool_calls`：GT 与预测 tool calls。
+- `tool_call_ids/tool_responses_by_call_id`：从训练数据提取的 tool call id 和 tool response。
+- `units_info`：预测 unit 摘要。
+- `comparison: FcDuplexComparisonResult | None`：GT/pred 对比结果。
+- `audio_artifact: FcDuplexAudioArtifact | None`：TTS 音频落盘结果。
+- `total_duration_ms`：总耗时。
+
+`FcDuplexComparisonResult`：
+
+- `token_ids_exact`：GT/pred token ids 是否完全一致。
+- `rendered_token_stream_exact`：GT/pred rendered token stream 是否完全一致。
+- `spoken_text_exact`：spoken text 是否一致。
+- `think_text_exact`：think text 是否一致。
+- `tool_calls_semantic_exact`：tool call 的 name/arguments/error 是否一致，不比较 id。
+- `tool_call_ids_exact`：tool call id 是否与训练数据一致。
+- `first_rendered_token_stream_diff`：首个 rendered token stream 差异位置和上下文。
+
+`FcDuplexAudioArtifact`：
+
+- `sample_rate`：音频文件采样率，当前为 24000。
+- `unit_audio_paths`：每个 spoken unit 生成的 wav 文件。
+- `full_audio_path`：拼接后的完整 wav 文件。
+- `n_audio_units`：成功写出的音频 unit 数。
 
 ## Overfit Smoke Test
 
@@ -358,9 +592,83 @@ result = fc.offline_inference(
 <input_event_slot><tool_response_event><tool_call_id>...</tool_call_id><|tool_started|></tool_response_event></input_event_slot>
 ```
 
+## 批量训练数据验证
+
+项目根目录提供 `evaluate_fc_duplex_batch.py`。该脚本现在只是 runner，核心训练数据解析、GT tokenization、tool response 注入、GT/pred 对比和可选 TTS artifact 保存都在 `FcDuplexView.offline_inference_from_train_data()` 内完成。
+
+先跑一条样本，启用 TTS：
+
+```bash
+cd /user/heweiquan/project/MiniCPM-o-Demo-FC
+
+/user/heweiquan/envs/miniconda3/envs/minicpm-o4_5/bin/python evaluate_fc_duplex_batch.py \
+  --data-dir /user/heweiquan/dataset/DuplexFcTest/delivery_train_data \
+  --output-dir /user/heweiquan/project/MiniCPM-o-Demo-FC/fc_duplex_test_results_tts \
+  --limit 1 \
+  --skip-mutated \
+  --extra-response-units 0 \
+  --ref-audio-path /user/heweiquan/dataset/DuplexFcTest/delivery_train_data/media/system_reference/HTRef06.wav \
+  --tts-prompt-path /user/heweiquan/dataset/DuplexFcTest/delivery_train_data/media/system_reference/HTRef06.wav \
+  --attn-implementation sdpa
+```
+
+默认路径：
+
+- base model：`/user/heweiquan/project/MiniCPM-o-4_5`
+- checkpoint：`/user/heweiquan/models/minicpm-o45-fc-overfit/20260629/minicpm-v_50.pt`
+- data dir：`/user/heweiquan/dataset/DuplexFcTest/delivery_train_data`
+- output dir：`/user/heweiquan/project/MiniCPM-o-Demo-FC/fc_duplex_test_results`
+
+常用参数：
+
+- `--limit N`：只跑前 N 条样本。
+- `--skip-mutated`：跳过轻微改写样本。
+- `--budget N`：debug override。默认不传，使用 SDK train data 的 per-unit budget。
+- `--extra-response-units N`：用户音频结束后额外补的静音响应 unit 数。
+- `--decode-mode greedy`：解码模式。
+- `--ref-audio-path PATH`：显式 TTS reference audio。
+- `--tts-prompt-path PATH`：显式 Token2Wav prompt audio。
+
+本文档示例以启用 TTS 为主：需要同时传入 `--ref-audio-path` 和 `--tts-prompt-path`。只传其中一个脚本会直接报参数错误。这样可以避免把很长的 `user_audio_0.opus` 默认当作 Token2Wav prompt，导致 streaming cache 超长。
+
+如需跑全部 delivery 样本并生成 TTS：
+
+```bash
+/user/heweiquan/envs/miniconda3/envs/minicpm-o4_5/bin/python evaluate_fc_duplex_batch.py \
+  --data-dir /user/heweiquan/dataset/DuplexFcTest/delivery_train_data \
+  --output-dir /user/heweiquan/project/MiniCPM-o-Demo-FC/fc_duplex_test_results_tts \
+  --skip-mutated \
+  --extra-response-units 0 \
+  --ref-audio-path /user/heweiquan/dataset/DuplexFcTest/delivery_train_data/media/system_reference/HTRef06.wav \
+  --tts-prompt-path /user/heweiquan/dataset/DuplexFcTest/delivery_train_data/media/system_reference/HTRef06.wav \
+  --attn-implementation sdpa
+```
+
+如需关闭 TTS，省略 `--ref-audio-path` 和 `--tts-prompt-path` 即可。
+
+输出目录示例：
+
+```text
+fc_duplex_test_results/
+  original/
+    dob_dev_plan_0001/
+      source.json
+      gt_token_stream.txt
+      pred_token_stream.txt
+      units_info.json
+      comparison.json
+      pred_audio/                 # 仅启用 TTS 且成功生成时存在
+        pred_audio_unit_000.wav
+        pred_audio_full.wav
+  original_summary.json
+  summary.json
+```
+
+`comparison.json` 是 `FcDuplexTrainDataResult.model_dump()` 的结果，字段含义与上文 `FcDuplexTrainDataResult` 一致。
+
 ## 结果字段说明
 
-`FcDuplexStepResult`：
+`FcDuplexStepResult` / `FcNonSpokenGenerateResult`：
 
 - `token_ids`：本步生成或插入的 token id。
 - `terminated`：当前 slot 是否已经结束。
@@ -389,6 +697,8 @@ result = fc.offline_inference(
 - `non_spoken_ids`：non-spoken slot token。
 - `non_spoken_terminator`：non-spoken 结束 token 对应原因。
 - `closed_spans`：该 unit 内闭合的 span。
+- `audio_sample_rate`：如果本 unit 生成了 TTS 音频，记录采样率。
+- `n_audio_samples`：如果本 unit 生成了 TTS 音频，记录采样点数。
 
 ## 注意事项
 

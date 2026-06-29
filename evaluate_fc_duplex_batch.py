@@ -5,19 +5,17 @@ import argparse
 import json
 import os
 import shutil
-import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from minicpm_o5_sdk import O5DuplexTrainingData, O5TokenizerID, OpenAIToolDefinition
 
 from core.processors import UnifiedProcessor
-from core.schemas.fc_duplex import FcDuplexConfig, FcDuplexOfflineInput
+from core.schemas.fc_duplex import FcDuplexConfig, FcDuplexTrainDataRequest
 
 
 DEFAULT_BASE_MODEL = "/user/heweiquan/project/MiniCPM-o-4_5"
-DEFAULT_PT_PATH = "/user/heweiquan/models/minicpm-o45-fc-overfit/minicpm-v_100.pt"
-DEFAULT_DATA_DIR = "/user/heweiquan/project/MiniCPM-o-4_5-fc_duplex_infer/data/training_data"
+DEFAULT_PT_PATH = "/user/heweiquan/models/minicpm-o45-fc-overfit/20260629/minicpm-v_50.pt"
+DEFAULT_DATA_DIR = "/user/heweiquan/dataset/DuplexFcTest/delivery_train_data"
 DEFAULT_OUTPUT_DIR = "/user/heweiquan/project/MiniCPM-o-Demo-FC/fc_duplex_test_results"
 
 
@@ -32,156 +30,41 @@ def write_json(path: Path, data: Any) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def load_case(data_path: Path) -> Tuple[Dict[str, Any], str, Optional[List[Dict[str, Any]]], str, List[str]]:
-    structure = read_json(data_path)
-    system_prompt = "\n".join(
-        seg["text"]
-        for seg in structure.get("system", {}).get("segments", [])
-        if seg.get("kind") == "text"
-    )
-    raw_tools = structure.get("system", {}).get("tools") or []
-    tools = [OpenAIToolDefinition.model_validate(t).model_dump() for t in raw_tools] or None
-
-    tool_call_ids = []
-    ai_non_spoken = ((structure.get("tracks") or {}).get("ai_non_spoken") or {}).get("segments") or []
-    for segment in ai_non_spoken:
-        content = segment.get("content") or {}
-        if content.get("kind") == "tool_call" and content.get("tool_call_id"):
-            tool_call_ids.append(content["tool_call_id"])
-
-    sample_id = data_path.stem
-    media_dir = data_path.parent.parent / "media" / sample_id
-    audio_path = media_dir / "user_audio_0.opus"
-    if not audio_path.exists():
-        raise FileNotFoundError(f"missing user audio: {audio_path}")
-    return structure, system_prompt, tools, str(audio_path), tool_call_ids
-
-
-def tokenize_training_data(data_path: Path) -> List[int]:
-    structure = read_json(data_path)
-    media_dir = data_path.parent.parent / "media" / data_path.stem
-    tokenized = O5DuplexTrainingData.load_structure(
-        structure,
-        data_root=str(media_dir),
-    ).tokenize(tokenizer_id=O5TokenizerID.O45_FC).tokenized_data
-    return list(tokenized.input_ids)
-
-
-def normalize_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    normalized = []
-    for call in tool_calls or []:
-        normalized.append({
-            "tool_call_id": call.get("tool_call_id"),
-            "name": call.get("name"),
-            "arguments": call.get("arguments"),
-            "error": call.get("error"),
-        })
-    return normalized
-
-
-def comparable_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [
-        {
-            "name": call.get("name"),
-            "arguments": call.get("arguments"),
-            "error": call.get("error"),
-        }
-        for call in (tool_calls or [])
-    ]
-
-
-def first_diff(a: str, b: str) -> Optional[Dict[str, Any]]:
-    if a == b:
-        return None
-    n = min(len(a), len(b))
-    index = next((i for i in range(n) if a[i] != b[i]), n)
-    return {
-        "index": index,
-        "gt_context": a[max(0, index - 80): index + 160],
-        "pred_context": b[max(0, index - 80): index + 160],
-    }
-
-
 def run_one(
     fc,
     data_path: Path,
     output_dir: Path,
-    budget: int,
+    budget: Optional[int],
     extra_response_units: int,
     decode_mode: str,
+    generate_audio: bool,
+    ref_audio_path: Optional[str],
+    prompt_wav_path: Optional[str],
 ) -> Dict[str, Any]:
     sample_id = data_path.stem
     sample_dir = output_dir / sample_id
     sample_dir.mkdir(parents=True, exist_ok=True)
-
-    structure, system_prompt, tools, audio_path, tool_call_ids = load_case(data_path)
-    gt_ids = tokenize_training_data(data_path)
-    gt_decoded = fc.decode_output(output_ids=gt_ids, tools=tools)
-    gt_render = gt_decoded.get("output_render", "")
-
-    start = time.time()
-    pred = fc.offline_inference(
-        FcDuplexOfflineInput(
-            system_prompt=system_prompt,
-            tools=tools,
-            user_audio_path=audio_path,
-            tool_call_ids=tool_call_ids,
-            config=FcDuplexConfig(
-                decode_mode=decode_mode,
-                non_spoken_budget_per_unit=budget,
-                extra_response_units=extra_response_units,
-            ),
-        ),
-        non_spoken_budget_per_unit=budget,
-    )
-    elapsed = time.time() - start
-
-    pred_render = pred.output_render or ""
-    gt_tool_calls = normalize_tool_calls(gt_decoded.get("tool_calls", []))
-    pred_tool_calls = normalize_tool_calls(pred.tool_calls)
-    comparison = {
-        "sample_id": sample_id,
-        "data_path": str(data_path),
-        "audio_path": audio_path,
-        "success": pred.success,
-        "error": pred.error,
-        "elapsed_sec": elapsed,
-        "gt": {
-            "n_tokens": len(gt_ids),
-            "spoken_text": gt_decoded.get("spoken_text", ""),
-            "think_text": gt_decoded.get("think_text", ""),
-            "tool_calls": gt_tool_calls,
-            "tool_call_ids": tool_call_ids,
-        },
-        "prediction": {
-            "n_tokens": len(pred.output_ids),
-            "spoken_text": pred.spoken_text,
-            "think_text": pred.think_text,
-            "tool_calls": pred_tool_calls,
-            "total_units": pred.total_units,
-            "n_audio_units": pred.n_audio_units,
-        },
-        "matches": {
-            "token_stream_exact": gt_render == pred_render,
-            "spoken_text_exact": gt_decoded.get("spoken_text", "") == pred.spoken_text,
-            "think_text_exact": gt_decoded.get("think_text", "") == pred.think_text,
-            "tool_calls_semantic_exact": comparable_tool_calls(gt_tool_calls) == comparable_tool_calls(pred_tool_calls),
-            "tool_call_ids_exact": tool_call_ids == [c.get("tool_call_id") for c in pred_tool_calls],
-        },
-        "first_token_stream_diff": first_diff(gt_render, pred_render),
+    config_kwargs = {
+        "decode_mode": decode_mode,
+        "extra_response_units": extra_response_units,
     }
+    if budget is not None:
+        config_kwargs["non_spoken_budget_per_unit"] = budget
 
-    write_json(sample_dir / "source.json", structure)
-    write_text(sample_dir / "gt_token_stream.txt", gt_render)
-    write_text(sample_dir / "pred_token_stream.txt", pred_render)
-    write_json(sample_dir / "comparison.json", comparison)
-    write_json(sample_dir / "units_info.json", [u.model_dump() for u in pred.units_info])
-    return comparison
+    result = fc.offline_inference_from_train_data(
+        FcDuplexTrainDataRequest(
+            train_data_path=str(data_path),
+            config=FcDuplexConfig(**config_kwargs),
+            non_spoken_budget_per_unit=budget,
+            generate_audio=generate_audio,
+            ref_audio_path=ref_audio_path,
+            prompt_wav_path=prompt_wav_path,
+            output_artifact_dir=str(sample_dir),
+        )
+    )
+    dumped = result.model_dump()
+    write_json(sample_dir / "comparison.json", dumped)
+    return dumped
 
 
 def make_mutated_inputs(data_paths: List[Path], output_dir: Path) -> List[Path]:
@@ -215,19 +98,24 @@ def make_mutated_inputs(data_paths: List[Path], output_dir: Path) -> List[Path]:
 
 def summarize(comparisons: List[Dict[str, Any]], output_dir: Path, group: str) -> Dict[str, Any]:
     def matched(item: Dict[str, Any], key: str) -> bool:
-        return bool((item.get("matches") or {}).get(key))
+        return bool((item.get("comparison") or {}).get(key))
 
     summary = {
         "group": group,
         "total": len(comparisons),
         "success": sum(1 for c in comparisons if c.get("success")),
-        "token_stream_exact": sum(1 for c in comparisons if matched(c, "token_stream_exact")),
+        "token_ids_exact": sum(1 for c in comparisons if matched(c, "token_ids_exact")),
+        "rendered_token_stream_exact": sum(1 for c in comparisons if matched(c, "rendered_token_stream_exact")),
         "spoken_text_exact": sum(1 for c in comparisons if matched(c, "spoken_text_exact")),
         "think_text_exact": sum(1 for c in comparisons if matched(c, "think_text_exact")),
         "tool_calls_semantic_exact": sum(1 for c in comparisons if matched(c, "tool_calls_semantic_exact")),
         "tool_call_ids_exact": sum(1 for c in comparisons if matched(c, "tool_call_ids_exact")),
         "failed_samples": [c["sample_id"] for c in comparisons if not c.get("success")],
-        "token_diff_samples": [c["sample_id"] for c in comparisons if not matched(c, "token_stream_exact")],
+        "token_diff_samples": [
+            c["sample_id"]
+            for c in comparisons
+            if not (matched(c, "token_ids_exact") and matched(c, "rendered_token_stream_exact"))
+        ],
         "semantic_diff_samples": [
             c["sample_id"]
             for c in comparisons
@@ -251,12 +139,31 @@ def main():
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--attn-implementation", default="sdpa")
-    parser.add_argument("--budget", type=int, default=10000)
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=None,
+        help="Debug override for non-spoken budget. Omit to use SDK train-data per-unit budgets.",
+    )
     parser.add_argument("--extra-response-units", type=int, default=4)
     parser.add_argument("--decode-mode", default="greedy")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--skip-mutated", action="store_true")
+    parser.add_argument(
+        "--ref-audio-path",
+        default=None,
+        help="Reference audio path for FC TTS. Required together with --tts-prompt-path to enable audio generation.",
+    )
+    parser.add_argument(
+        "--tts-prompt-path",
+        default=None,
+        help="Short Token2Wav prompt audio path. Required together with --ref-audio-path to enable audio generation.",
+    )
     args = parser.parse_args()
+
+    if bool(args.ref_audio_path) != bool(args.tts_prompt_path):
+        parser.error("--ref-audio-path and --tts-prompt-path must be provided together to enable TTS audio generation")
+    generate_audio = bool(args.ref_audio_path and args.tts_prompt_path)
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     data_dir = Path(args.data_dir)
@@ -283,7 +190,17 @@ def main():
     for index, path in enumerate(data_paths, start=1):
         print(f"[original {index:03d}/{len(data_paths):03d}] {path.name}", flush=True)
         try:
-            comparison = run_one(fc, path, original_dir, args.budget, args.extra_response_units, args.decode_mode)
+            comparison = run_one(
+                fc,
+                path,
+                original_dir,
+                args.budget,
+                args.extra_response_units,
+                args.decode_mode,
+                generate_audio,
+                args.ref_audio_path,
+                args.tts_prompt_path,
+            )
         except Exception as exc:
             comparison = {"sample_id": path.stem, "data_path": str(path), "success": False, "error": repr(exc), "matches": {}}
             sample_dir = original_dir / path.stem
@@ -301,7 +218,17 @@ def main():
         for index, path in enumerate(mutated_paths, start=1):
             print(f"[modified {index:03d}/{len(mutated_paths):03d}] {path.name}", flush=True)
             try:
-                comparison = run_one(fc, path, mutated_dir, args.budget, args.extra_response_units, args.decode_mode)
+                comparison = run_one(
+                    fc,
+                    path,
+                    mutated_dir,
+                    args.budget,
+                    args.extra_response_units,
+                    args.decode_mode,
+                    generate_audio,
+                    args.ref_audio_path,
+                    args.tts_prompt_path,
+                )
             except Exception as exc:
                 comparison = {"sample_id": path.stem, "data_path": str(path), "success": False, "error": repr(exc), "matches": {}}
                 sample_dir = mutated_dir / path.stem
