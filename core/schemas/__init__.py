@@ -93,23 +93,6 @@ from core.schemas.duplex import (
     DuplexOfflineOutput,
 )
 
-# FC slot 双工对话
-from core.schemas.fc_duplex import (
-    FcClosedSpan,
-    FcDuplexConfig,
-    FcToolResponse,
-    FcDuplexPrepareRequest,
-    FcDuplexPrefillRequest,
-    FcSpokenGenerateRequest,
-    FcNonSpokenGenerateRequest,
-    FcFinalizeUnitRequest,
-    FcDuplexStepResult,
-    FcDuplexUnitInfo,
-    FcDuplexOutput,
-    FcDuplexOfflineInput,
-    FcDuplexOfflineOutput,
-)
-
 __all__ = [
     # 通用 - 枚举
     "Role",
@@ -151,19 +134,4 @@ __all__ = [
     "DuplexOfflineInput",
     "DuplexChunkResult",
     "DuplexOfflineOutput",
-
-    # FC slot 双工对话
-    "FcClosedSpan",
-    "FcDuplexConfig",
-    "FcToolResponse",
-    "FcDuplexPrepareRequest",
-    "FcDuplexPrefillRequest",
-    "FcSpokenGenerateRequest",
-    "FcNonSpokenGenerateRequest",
-    "FcFinalizeUnitRequest",
-    "FcDuplexStepResult",
-    "FcDuplexUnitInfo",
-    "FcDuplexOutput",
-    "FcDuplexOfflineInput",
-    "FcDuplexOfflineOutput",
 ]
