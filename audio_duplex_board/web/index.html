@@ -3,91 +3,79 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Audio Duplex Board Prototype</title>
+  <title>Audio Duplex Board</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <main class="app-shell">
-    <section class="hero">
-      <div>
-        <p class="eyebrow">Independent Prototype · Mode → <span id="modeBadge">(loading)</span></p>
+    <!-- 顶部：mode badge + status + mic 控制（一行内紧凑） -->
+    <header class="topbar">
+      <div class="brand">
         <h1>Audio Duplex Board</h1>
-        <p class="subtitle">Click Start, speak loudly, and watch tool calls become board cards. The runtime mode (mock or real model) is shown above and is also reported by <code>/api/defaults</code>.</p>
+        <p class="mode-line">Mode: <span id="modeBadge">(loading)</span></p>
       </div>
-      <div id="status" class="status">Idle</div>
-    </section>
-
-    <section class="live-panel">
-      <div class="live-main">
-        <div class="section-title">
-          <span class="step-pill">Live</span>
-          <h2>Microphone Board Demo</h2>
-        </div>
-        <div class="mic-meter">
-          <div class="meter-head">
-            <span>Mic level</span>
-            <strong id="micLevelText">0.000</strong>
-          </div>
+      <div class="topbar-controls">
+        <div class="mic-meter compact">
+          <span class="meter-label">Mic</span>
           <div class="meter-track"><div id="micLevelBar" class="meter-fill"></div></div>
+          <strong id="micLevelText">0.00</strong>
         </div>
-        <div class="actions hero-actions">
-          <button id="startMicLive" class="primary big">Start mic live</button>
-          <button id="stopMicLive" class="big">Stop</button>
-        </div>
-        <div class="mini-stats">
-          <span>WebSocket: <b id="wsState">idle</b></span>
-          <span>Chunks sent: <b id="sentChunks">0</b></span>
-          <span>AI audio: <b id="aiAudioCount">0</b></span>
-        </div>
+        <button id="startMicLive" class="primary big">Start mic live</button>
+        <button id="stopMicLive" class="big">Stop</button>
+        <div id="status" class="status-pill">Idle</div>
       </div>
-      <div class="live-side">
-        <h3>How to test</h3>
-        <ol>
-          <li>Open this page from a browser origin that allows microphone access.</li>
-          <li>Click <b>Start mic live</b> and grant mic permission.</li>
-          <li>Speak loudly for one or two seconds.</li>
-          <li>Board cards should appear in order.</li>
-        </ol>
-        <p id="liveHint" class="hint warning">If microphone permission is blocked on this URL, use the file replay debug panel below.</p>
+    </header>
+
+    <!-- 画板：核心、最大、最显眼。2×3 卡片 -->
+    <section class="board-section">
+      <div class="board-header">
+        <span class="step-pill">BOARD</span>
+        <h2>display_object_on_board</h2>
+        <span class="board-hint">2 × 3 cards · FIFO when full</span>
+      </div>
+      <div id="board" class="board empty-board">
+        <div class="empty-state">说出具体物体，例如「你看这只猫」「桌上有个苹果」</div>
       </div>
     </section>
 
-    <section class="main-grid">
-      <section class="panel board-panel">
-        <div class="section-title">
-          <span class="step-pill">Board</span>
-          <h2>Cards</h2>
-        </div>
-        <div id="board" class="board empty-board">
-          <div class="empty-state">No cards yet. Start mic live and speak about concrete objects.</div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="section-title">
-          <span class="step-pill">Trace</span>
-          <h2>Timeline</h2>
-        </div>
-        <div id="timeline" class="timeline"></div>
-      </section>
-    </section>
-
-    <section class="grid">
-      <section class="panel">
+    <!-- 中段：左 AI Speech 列；右 Think / Tool-Call streaming 两层 block 列 -->
+    <section class="main-cols">
+      <section class="ai-speech-col panel">
         <h2>AI Speech</h2>
-        <div id="aiSpeech" class="speech-list"></div>
-        <div id="aiAudioList" class="audio-list"></div>
+        <div id="aiSpeech" class="speech-stream">
+          <div class="placeholder">AI 还没开口</div>
+        </div>
       </section>
-
-      <section class="panel">
-        <h2>Non-spoken / Tool Events</h2>
-        <div id="eventLog" class="event-log"></div>
+      <section class="non-spoken-col panel">
+        <h2>Think / Tool-Call streaming</h2>
+        <p class="hint">streaming 层 = id-to-token vocab piece（逐 token 出现）；full 层 = 闭合后整体 BPE decode。tool_call 非法时 full 留空。</p>
+        <div id="nonSpokenStream" class="ns-stream">
+          <div class="placeholder">还没有 think / tool_call 块</div>
+        </div>
       </section>
     </section>
 
-    <details class="panel debug-panel">
-      <summary>Debug replay tools</summary>
+    <!-- 底部折叠的 debug 区域 -->
+    <details class="debug-panel">
+      <summary>Debug / Diagnostics</summary>
       <div class="debug-grid">
+        <div>
+          <h3>Health</h3>
+          <ul class="kv">
+            <li>WebSocket: <b id="wsState">idle</b></li>
+            <li>Chunks sent: <b id="sentChunks">0</b></li>
+            <li>AI audio count: <b id="aiAudioCount">0</b></li>
+          </ul>
+          <p id="liveHint" class="hint warning">If microphone permission is blocked on this URL, use the file replay below.</p>
+        </div>
+        <div>
+          <h3>Timeline (raw events)</h3>
+          <div id="timeline" class="timeline"></div>
+        </div>
+        <div>
+          <h3>AI audio replay</h3>
+          <div id="aiAudioList" class="audio-list"></div>
+        </div>
         <div>
           <h3>File Streaming Replay</h3>
           <p class="hint">Browser decodes an audio file, splits it into 1s chunks, and sends chunks like online audio.</p>
@@ -105,7 +93,7 @@
         <div>
           <h3>TrainingData Blocking Replay</h3>
           <label for="casePath">TrainingData case path</label>
-          <textarea id="casePath" rows="4" spellcheck="false"></textarea>
+          <textarea id="casePath" rows="3" spellcheck="false"></textarea>
           <div class="actions">
             <button id="loadDefaults">Load defaults</button>
             <button id="runReplay">Run replay</button>

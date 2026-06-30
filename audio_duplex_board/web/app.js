@@ -33,7 +33,8 @@ const el = {
   timeline: document.getElementById('timeline'),
   board: document.getElementById('board'),
   aiSpeech: document.getElementById('aiSpeech'),
-  eventLog: document.getElementById('eventLog'),
+  // non-spoken streaming column (think / tool_call two-layer blocks)
+  nsStream: document.getElementById('nonSpokenStream'),
 };
 
 let sentChunkCount = 0;
@@ -202,13 +203,13 @@ function stopMicLive() {
 }
 
 function applyEvent(event) {
+  // Always feed the raw event to the debug timeline (collapsed by default).
+  appendTimeline(`${event.type} u=${event.unit_index ?? '-'}`);
   switch (event.type) {
-    case 'unit_started':
-      appendTimeline(`unit ${event.unit_index}: audio=${event.payload?.n_audio ?? 0}, speaking=${event.payload?.is_speaking}`);
-      return;
     case 'spoken_final':
-      appendTimeline(`unit ${event.unit_index}: spoken "${event.text || ''}" (${(event.token_ids || []).length} tokens)`);
-      if (event.text) appendSpeech(event.unit_index, event.text);
+      // Just the AI text. No token counts, no unit numbers — user wants the
+      // conversation, not telemetry.
+      if (event.text) appendSpeech(event.text);
       if (event.payload?.audio_wav_base64) {
         appendAiAudio(event.unit_index, event.payload.audio_wav_base64);
       }
@@ -223,11 +224,8 @@ function applyEvent(event) {
       closeNonSpokenBlock(event);
       return;
     case 'think_final':
-      // 已通过 non_spoken_block_closed 渲染 full 层；这里只做 log
-      appendLog('think', event.think_text || '');
-      return;
     case 'tool_call_final':
-      appendLog('tool_call', JSON.stringify(event.tool_call, null, 2));
+      // Already rendered in the two-layer block by non_spoken_block_closed.
       return;
     case 'board_card_created':
     case 'board_card_updated':
@@ -235,14 +233,12 @@ function applyEvent(event) {
       renderBoard();
       return;
     case 'session_finished':
-      appendLog('summary', JSON.stringify(event.payload || {}, null, 2));
-      return;
     case 'session_error':
-      appendLog('error', event.text || 'unknown error');
-      return;
+    case 'unit_started':
+    case 'unit_finished':
+    case 'session_started':
     default:
-      // 未识别事件不阻塞，但写进 log 便于排查 protocol 演进
-      appendLog('event', `${event.type}: ${JSON.stringify(event)}`);
+      // Stay in the debug timeline only.
       return;
   }
 }
@@ -251,6 +247,8 @@ function beginNonSpokenBlock(event) {
   const blockId = event.block_id;
   if (!blockId) return;
   const kind = event.block_kind || 'unknown';
+  const placeholder = el.nsStream.querySelector('.placeholder');
+  if (placeholder) placeholder.remove();
   const wrap = document.createElement('article');
   wrap.className = `ns-block kind-${kind}`;
   wrap.dataset.blockId = blockId;
@@ -258,19 +256,20 @@ function beginNonSpokenBlock(event) {
   wrap.innerHTML = `
     <header class="ns-block-header">
       <span class="kind-tag">${escapeHtml(kind)}</span>
-      <span class="unit-tag">unit ${event.unit_index}</span>
-      <span class="status-tag">streaming</span>
+      <span class="status-tag">streaming…</span>
     </header>
     <section class="ns-layer streaming">
-      <div class="layer-tag">streaming_content (id-to-token)</div>
+      <div class="layer-tag">streaming</div>
       <pre class="layer-body" data-role="streaming"></pre>
     </section>
     <section class="ns-layer full">
-      <div class="layer-tag">full_content (BPE merged after close)</div>
+      <div class="layer-tag">full</div>
       <pre class="layer-body" data-role="full"></pre>
     </section>
   `;
-  el.eventLog.appendChild(wrap);
+  el.nsStream.appendChild(wrap);
+  // keep newest at bottom and auto-scroll
+  el.nsStream.scrollTop = el.nsStream.scrollHeight;
   nonSpokenBlocks.set(blockId, { kind, streamingPieces: [], fullText: null, closed: false, node: wrap });
 }
 
@@ -279,9 +278,13 @@ function appendNonSpokenDelta(event) {
   if (!blockId) return;
   const block = nonSpokenBlocks.get(blockId);
   if (!block) return;
-  const pieces = event.token_strs || [];
-  block.streamingPieces.push(...pieces);
-  // 如果 kind 在 started 时还是 unknown 而 delta 已经能判断，更新一下
+  // Prefer the id-to-token vocab piece (what user explicitly asked for —
+  // raw token strings; fall back to step_text BPE chunk only if token_strs
+  // is empty (e.g. tokenizer adapter glitch on real model).
+  const pieces = (event.token_strs && event.token_strs.length)
+    ? event.token_strs
+    : (event.step_text ? [event.step_text] : []);
+  if (pieces.length) block.streamingPieces.push(...pieces);
   if (block.kind === 'unknown' && event.block_kind && event.block_kind !== 'unknown') {
     block.kind = event.block_kind;
     block.node.classList.remove('kind-unknown');
@@ -293,6 +296,7 @@ function appendNonSpokenDelta(event) {
   if (target) {
     target.textContent = block.streamingPieces.join('');
   }
+  el.nsStream.scrollTop = el.nsStream.scrollHeight;
 }
 
 function closeNonSpokenBlock(event) {
@@ -310,9 +314,9 @@ function closeNonSpokenBlock(event) {
     if (block.fullText) {
       full.textContent = block.fullText;
     } else {
-      // tool_call 非法 / parser 拿不到 full 时，原始需求要求 full 层不显示
+      // 原始需求：tool_call 非法 / parser 拿不到 full 时，full 层不显示。
       const section = full.closest('section.ns-layer.full');
-      if (section) section.classList.add('empty');
+      if (section) section.style.display = 'none';
     }
   }
 }
@@ -349,18 +353,25 @@ function appendTimeline(text) {
   el.timeline.appendChild(item);
 }
 
-function appendSpeech(unitIndex, text) {
-  const item = document.createElement('div');
-  item.className = 'speech-row';
-  item.innerHTML = `<span>unit ${unitIndex}</span><strong>${escapeHtml(text)}</strong>`;
-  el.aiSpeech.appendChild(item);
-}
-
-function appendLog(kind, text) {
-  const item = document.createElement('pre');
-  item.className = `log-row ${kind}`;
-  item.textContent = `[${kind}]\n${text}`;
-  el.eventLog.appendChild(item);
+function appendSpeech(text) {
+  const placeholder = el.aiSpeech.querySelector('.placeholder');
+  if (placeholder) placeholder.remove();
+  // Append text to the last speech row if it's recent (< 1.5s ago), so the
+  // AI's per-unit fragments coalesce into readable sentences instead of one
+  // 1-3 char chip per unit.
+  const last = el.aiSpeech.lastElementChild;
+  const now = Date.now();
+  if (last && last.classList.contains('speech-row') && (now - Number(last.dataset.ts || 0)) < 1500) {
+    last.textContent = (last.textContent || '') + text;
+    last.dataset.ts = String(now);
+  } else {
+    const item = document.createElement('div');
+    item.className = 'speech-row';
+    item.dataset.ts = String(now);
+    item.textContent = text;
+    el.aiSpeech.appendChild(item);
+  }
+  el.aiSpeech.scrollTop = el.aiSpeech.scrollHeight;
 }
 
 function clearViews() {
@@ -369,8 +380,8 @@ function clearViews() {
   el.timeline.innerHTML = '';
   el.board.innerHTML = '';
   renderBoard();
-  el.aiSpeech.innerHTML = '';
-  el.eventLog.innerHTML = '';
+  el.aiSpeech.innerHTML = '<div class="placeholder">AI 还没开口</div>';
+  el.nsStream.innerHTML = '<div class="placeholder">还没有 think / tool_call 块</div>';
   el.aiAudioList.innerHTML = '';
   sentChunkCount = 0;
   aiAudioCount = 0;
@@ -400,8 +411,8 @@ function appendAiAudio(unitIndex, wavBase64) {
 
 function updateMicLevel(level) {
   const clamped = Math.max(0, Math.min(1, level / 0.08));
-  el.micLevelBar.style.width = `${Math.round(clamped * 100)}%`;
-  el.micLevelText.textContent = level.toFixed(4);
+  if (el.micLevelBar) el.micLevelBar.style.width = `${Math.round(clamped * 100)}%`;
+  if (el.micLevelText) el.micLevelText.textContent = level.toFixed(2);
 }
 
 function updateStats() {

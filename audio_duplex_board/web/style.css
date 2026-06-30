@@ -448,3 +448,217 @@ button.primary {
   color: #64748b;
   font-style: italic;
 }
+
+/* ============================================================
+   v2 layout — focus on board + speech + non-spoken streaming
+   ============================================================ */
+
+.app-shell {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 18px 22px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* topbar */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 18px;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+}
+.brand h1 {
+  font-size: 22px;
+  margin: 0;
+  color: #f8fafc;
+}
+.mode-line {
+  margin: 4px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.mic-meter.compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+.mic-meter.compact .meter-track {
+  width: 100px;
+  height: 6px;
+  background: #1e293b;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.mic-meter.compact .meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #f59e0b, #ef4444);
+  width: 0%;
+}
+.status-pill {
+  padding: 6px 12px;
+  background: #1e293b;
+  color: #cbd5e1;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+/* board section: large + prominent */
+.board-section {
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+.board-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.board-header h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 18px;
+}
+.board-hint {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 12px;
+}
+/* board grid is already defined above as repeat(3, 1fr).
+   Add explicit 2 rows + min height so empty / partial board still feels big. */
+.board-section .board {
+  grid-template-rows: repeat(2, minmax(180px, auto));
+  min-height: 420px;
+}
+
+/* main columns: AI speech | non-spoken streaming */
+.main-cols {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 16px;
+}
+.main-cols .panel {
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 14px 16px;
+  min-height: 320px;
+  max-height: 540px;
+  overflow: auto;
+}
+.main-cols h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: #f8fafc;
+}
+.main-cols .hint {
+  margin: -4px 0 10px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+/* AI speech stream: large, conversational */
+.speech-stream .speech-row {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: rgba(34, 197, 94, 0.08);
+  border-left: 3px solid #22c55e;
+  border-radius: 6px;
+  color: #f8fafc;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.placeholder {
+  color: #64748b;
+  font-style: italic;
+  text-align: center;
+  padding: 36px 12px;
+}
+
+/* non-spoken stream: blocks of two layers */
+.ns-stream .ns-block {
+  margin-bottom: 12px;
+}
+.ns-stream .ns-block-header {
+  padding: 6px 12px;
+}
+.ns-stream .ns-layer .layer-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #475569;
+  margin-bottom: 4px;
+}
+
+/* debug panel */
+.debug-panel {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px dashed #1f2937;
+  border-radius: 12px;
+  padding: 12px 18px;
+}
+.debug-panel summary {
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 13px;
+  user-select: none;
+}
+.debug-panel summary::marker { color: #475569; }
+.debug-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+.debug-grid h3 {
+  font-size: 13px;
+  color: #cbd5e1;
+  margin: 0 0 8px;
+}
+.debug-grid .kv {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.debug-grid .kv li { padding: 2px 0; }
+.timeline {
+  max-height: 240px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #64748b;
+}
+.timeline .timeline-row {
+  padding: 2px 0;
+  border-bottom: 1px solid #0f172a;
+}
+.audio-list .audio-item {
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* hide the legacy hero / live-panel / main-grid / grid sections by
+   relying on them not existing in the new HTML. The old CSS rules
+   for .hero, .live-panel etc. are harmless when their selectors
+   don't match anything. */
