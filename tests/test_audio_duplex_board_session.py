@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 
 from audio_duplex_board.config import AudioDuplexBoardConfig
+from audio_duplex_board.mock_view import MockUnifiedProcessor
 from audio_duplex_board.schemas import StreamAudioChunkRequest, StreamPrepareRequest
 from audio_duplex_board.session import AudioDuplexBoardSession
 from core.schemas.fc_duplex import (
@@ -110,3 +111,29 @@ def test_streaming_session_creates_board_card_and_queues_tool_response() -> None
         StreamAudioChunkRequest(audio_base64="AAAA", sample_rate=16000)
     )
     assert second_events[0].payload["tool_response_count"] == 1
+
+
+def test_mock_view_triggers_deterministic_tool_call_on_loud_audio() -> None:
+    session = AudioDuplexBoardSession(
+        config=AudioDuplexBoardConfig(model_path="/tmp/model", use_mock_view=True),
+        processor=MockUnifiedProcessor(energy_threshold=0.01),  # type: ignore[arg-type]
+    )
+    session.prepare_stream(StreamPrepareRequest(system_prompt="test", generate_audio=True))
+    loud = np.full(16000, 0.08, dtype=np.float32)
+    import base64
+
+    events = session.process_audio_chunk(
+        StreamAudioChunkRequest(
+            audio_base64=base64.b64encode(loud.tobytes()).decode("ascii"),
+            sample_rate=16000,
+        )
+    )
+
+    tool_event = next(event for event in events if event.type == "tool_call_final")
+    board_event = next(event for event in events if event.type == "board_card_updated")
+    spoken_event = next(event for event in events if event.type == "spoken_final")
+    assert tool_event.tool_call is not None
+    assert tool_event.tool_call.arguments == {"name": "苹果"}
+    assert board_event.card is not None
+    assert board_event.card.query == "苹果"
+    assert spoken_event.payload["audio_wav_base64"]

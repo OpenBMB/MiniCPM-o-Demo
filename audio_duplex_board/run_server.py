@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from audio_duplex_board.config import AudioDuplexBoardConfig, make_default_config
+from audio_duplex_board.mock_view import MockUnifiedProcessor
 from audio_duplex_board.schemas import (
     ReplayCaseRequest,
     ReplayCaseResponse,
@@ -34,13 +35,16 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
     """
 
     _prepend_sdk_src(config.sdk_src)
-    processor = UnifiedProcessor(
-        model_path=config.model_path,
-        pt_path=config.pt_path,
-        device="cuda",
-        compile=False,
-        attn_implementation="sdpa",
-    )
+    if config.use_mock_view:
+        processor = MockUnifiedProcessor(energy_threshold=config.mock_energy_threshold)
+    else:
+        processor = UnifiedProcessor(
+            model_path=config.model_path,
+            pt_path=config.pt_path,
+            device="cuda",
+            compile=False,
+            attn_implementation="sdpa",
+        )
     session = AudioDuplexBoardSession(config=config, processor=processor)
     web_dir = Path(__file__).resolve().parent / "web"
     live_image_dir = Path(__file__).resolve().parent / "tools" / "display_object_on_board" / "live_image_downloads"
@@ -68,6 +72,8 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
             "sdk_src": config.sdk_src,
             "case_folder": config.case_folder,
             "max_board_cards": config.max_board_cards,
+            "use_mock_view": config.use_mock_view,
+            "mock_energy_threshold": config.mock_energy_threshold,
         }
 
     @app.websocket("/ws/session")
@@ -119,6 +125,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sdk-src", default=defaults.sdk_src)
     parser.add_argument("--case-folder", default=defaults.case_folder)
     parser.add_argument("--max-board-cards", type=int, default=defaults.max_board_cards)
+    parser.add_argument("--mock", action="store_true", help="Use GPU-free mock FcDuplexView")
+    parser.add_argument("--mock-energy-threshold", type=float, default=defaults.mock_energy_threshold)
     return parser.parse_args()
 
 
@@ -134,6 +142,8 @@ def main() -> None:
         host=args.host,
         port=args.port,
         max_board_cards=args.max_board_cards,
+        use_mock_view=args.mock,
+        mock_energy_threshold=args.mock_energy_threshold,
     )
     uvicorn.run(create_app(config), host=config.host, port=config.port)
 

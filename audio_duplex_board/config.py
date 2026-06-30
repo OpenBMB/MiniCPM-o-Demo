@@ -25,6 +25,8 @@ class AudioDuplexBoardConfig:
         port: HTTP server port.
         max_board_cards: Maximum cards kept in the frontend board state.
         image_search_timeout_sec: Timeout budget for image search service.
+        use_mock_view: Whether to use a GPU-free mock FcDuplexView.
+        mock_energy_threshold: RMS threshold that triggers mock tool calls.
     """
 
     model_path: str
@@ -35,6 +37,8 @@ class AudioDuplexBoardConfig:
     port: int = 18080
     max_board_cards: int = 10
     image_search_timeout_sec: float = 3.0
+    use_mock_view: bool = False
+    mock_energy_threshold: float = 0.012
 
     @property
     def case_folder_path(self) -> Path | None:

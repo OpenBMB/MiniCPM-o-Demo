@@ -32,6 +32,24 @@ PYTHONPATH=. .venv/base/bin/python -m audio_duplex_board.run_server \
   --sdk-src /user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_sdk/src
 ```
 
+GPU-free mock mode for UI/tool testing:
+
+```bash
+PYTHONPATH=. .venv/base/bin/python -m audio_duplex_board.run_server \
+  --host 0.0.0.0 \
+  --port 18080 \
+  --mock
+```
+
+In mock mode, loud audio chunks trigger deterministic tool calls in order:
+
+```text
+苹果 -> 番茄 -> 腌白菜 -> ...
+```
+
+This validates the page, WebSocket session, board cards, audio playback, and
+image search path without loading a GPU model.
+
 Open:
 
 ```text
