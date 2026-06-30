@@ -3,6 +3,11 @@ import { decodeFileToChunks, float32ToBase64 } from './file-audio-provider.js';
 import { LiveBoardClient } from './live-board-client.js';
 import { LiveMicProvider } from './live-mic-provider.js';
 import { fetchDefaults, replayCase } from './replay-client.js';
+// Demo's gapless pre-scheduled audio player (verbatim copy from
+// static/duplex/lib/audio-player.js). Consumes raw Float32 base64 chunks
+// from `spoken_final.payload.audio_float32_base64`.
+import { AudioPlayer } from './audio-player.js';
+
 // 2 x 3 grid = 6 可见 card，FIFO 挤出最早。
 const state = new BoardState({ maxCards: 6 });
 // non_spoken_block 两层 streaming 状态：block_id -> { kind, streamingPieces[], fullText?, closed }
