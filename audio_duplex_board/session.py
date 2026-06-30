@@ -119,14 +119,28 @@ class AudioDuplexBoardSession:
         self._block_seq_in_unit = 0
         self._current_block_id: str | None = None
         self._current_block_kind: str | None = None  # "think" | "tool_call" | None=unknown
-        # Real-time signaling: ws layer sets this asyncio.Event whenever a NEW
-        # audio_chunk arrives but the previous unit's non-spoken decode loop is
-        # still running. The decode loop polls the event between steps and
-        # bails out cleanly when set, so the next prefill can proceed without
-        # waiting for the model to gracefully close its non-spoken slot — the
-        # view will treat that as `<|non_spoken_budget_reached|>` on the next
-        # streaming_prefill, which is the correct training-distribution
-        # close reason for a real-time-budget overrun.
+        # Real-time signaling: the ws layer sets this asyncio.Event whenever
+        # a NEW audio_chunk arrives but the previous unit's non-spoken decode
+        # loop is still running. The decode loop polls the event between
+        # steps and exits cleanly when set, so the next prefill can proceed
+        # without waiting for the model to terminate the non-spoken slot.
+        #
+        # When the loop exits this way, control returns to process_audio_chunk
+        # which calls view.finalize_unit. The view's finalize_unit auto-emits
+        # `<|non_spoken_budget_reached|>` + `<|ai_non_spoken_slot_end|>` if
+        # the non-spoken slot is still open (unified.py finalize_unit). Per
+        # SDK protocol (`ai_non_spoken.py` slot rules + `parser.py`
+        # `active_non_spoken_wrapper` continuation), this token does NOT
+        # close the active think/tool_call wrapper — it marks "this unit's
+        # budget is up; the same span continues in the next unit". The
+        # view's `_non_spoken_mode` / `_think_buf` / `_tool_call_buf` state
+        # is NOT reset by `_close_non_spoken_slot`, so when the next unit's
+        # slot opens, sampled tokens continue accumulating into the same
+        # span buffer until the model emits `</think>` / `</tool_call>`.
+        #
+        # Whether the model actually emits the cross-unit continuation tokens
+        # is a model-behavior property of the ckpt and is independent of this
+        # protocol-level cooperative stop signal.
         self._next_prefill_event = asyncio.Event()
         # Per-unit timing for real-time health checks. Keyed by unit_index.
         # Each entry: dict with prefill_arrival_ms, prefill_done_ms,
@@ -392,35 +406,57 @@ class AudioDuplexBoardSession:
     ) -> tuple[int, bool]:
         """Step through non-spoken tokens, emitting delta events and reacting to closed spans.
 
-        Args:
-            unit_index: current FC duplex unit index, used for event tagging.
-            is_speaking: whether this unit is producing spoken output. When True,
-                we cooperatively stop on the next-prefill signal (real-time is
-                critical because the user is listening to AI). When False, the
-                user is talking — AI is silent and doing background work —
-                so we let the model run to view-side termination or the hard
-                cap, giving long <think>...</think> + <tool_call>...</tool_call>
-                sequences enough decode budget to actually emit a closing tag.
+        Stop semantics:
 
-        When the fc client supports `stream_non_spoken_decode`, the decode loop
-        runs server-side and we just consume `decode_step` events; the
-        cooperative stop signal flows over ws as `decode_stop` with the
-        half-token-average latency property (server checks the stop flag at
-        the TOP of every decode iteration; an in-flight step still completes
-        and arrives as a regular step before the loop exits).
+        - **Always protocol-correct**: stopping the decode loop on the
+          next-prefill signal is *not* a model-state corruption. Per SDK
+          (`ai_non_spoken.py` slot rules + `parser.py` cross-unit wrapper
+          handling), when the loop exits early, `process_audio_chunk` calls
+          `view.finalize_unit`, which auto-emits
+          `<|non_spoken_budget_reached|>` + `<|ai_non_spoken_slot_end|>` if
+          the slot is still open. That terminator marks "this unit's budget
+          is up; the same think/tool_call span continues in the next unit",
+          and the view preserves `_non_spoken_mode` / `_think_buf` /
+          `_tool_call_buf` across `finalize_unit`. So whether or not we
+          short-circuit, the on-wire token sequence is protocol-valid.
+
+        - **is_speaking=True**: cooperative stop on the next-prefill signal.
+          Real-time matters because the user is hearing AI speech now and
+          will hear the next 1s soon; we cannot let the unit blow past 1s
+          wall-clock.
+
+        - **is_speaking=False (listen)**: pass a permanently-clear stop
+          event, so the server's decode loop runs to view-side terminate
+          (`no_action` / `non_spoken_eos` / `non_spoken_budget_reached`) or
+          the hard cap. The user is talking, AI is silent in this unit, so
+          a few hundred extra ms of background decode are imperceptible. We
+          do this NOT to "fix" any protocol issue but as a pragmatic
+          workaround for current ckpts whose cross-unit continuation
+          quality is inconsistent: if the model can emit
+          `</think>...<tool_call>...</tool_call>` entirely within one
+          long-enough decode window, we never have to rely on its
+          cross-unit continuation ability at all.
+
+        When the fc client supports `stream_non_spoken_decode`, the decode
+        loop runs server-side and we just consume `decode_step` events; the
+        stop signal flows over ws as `decode_stop`. The server checks the
+        stop flag at the TOP of every iteration, so any in-flight step
+        completes and arrives as a regular `decode_step` before the loop
+        exits — average extra latency on stop ≈ half a token's decode time.
 
         Otherwise we fall back to the legacy per-step RPC pattern.
 
+        Args:
+            unit_index: current FC duplex unit index, used for event tagging.
+            is_speaking: whether this unit's spoken slot produced output.
+
         Returns:
-            (n_steps, short_circuited): short_circuited is True iff the server
-            (or this loop, in the fallback path) ended decode because of
-            client-issued stop / next prefill arrival.
+            (n_steps, short_circuited): short_circuited is True iff the
+            server (or this loop, in the fallback path) exited via the stop
+            signal rather than via view-side terminate.
         """
 
-        # Listen units: a permanently-clear Event, so the stream's stop-watcher
-        # never fires decode_stop and the server runs to view-side terminate
-        # (no_action / non_spoken_slot_eos / non_spoken_budget_reached) or the
-        # hard cap of MAX_DECODE_STEPS_PER_UNIT.
+        # Listen units: never short-circuit. See docstring for rationale.
         stop_event = (
             self._next_prefill_event if is_speaking else asyncio.Event()
         )
