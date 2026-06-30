@@ -66,6 +66,8 @@ from enum import Enum
 # 相对导入（同目录）
 from .configuration_minicpmo import MiniCPMOConfig
 from .configuration_minicpmo import MiniCPMTTSConfig
+from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
+from .modeling_minicpmo import MiniCPMOPreTrainedModel as BaseMiniCPMOPreTrainedModel
 from .modeling_navit_siglip import SiglipVisionTransformer
 from .processing_minicpmo import MiniCPMOProcessor
 from .utils import as_dynamic_cache
@@ -96,9 +98,9 @@ class MiniCPMOPreTrainedModel(Qwen3PreTrainedModel):
     config_class = MiniCPMOConfig
 
 
-class MiniCPMO(MiniCPMOPreTrainedModel):
+class MiniCPMO(BaseMiniCPMO):
     def __init__(self, config):
-        super().__init__(config)
+        BaseMiniCPMOPreTrainedModel.__init__(self, config)
 
         self.llm = Qwen3ForCausalLM(config)
         self.embed_dim = self.llm.config.hidden_size
