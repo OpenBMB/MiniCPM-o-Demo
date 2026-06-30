@@ -41,10 +41,12 @@ from torch.nn.init import trunc_normal_
 from torch.nn.utils.parametrizations import weight_norm
 from tqdm import tqdm
 
-# FlagGems RMSNorm monkey-patching (must be before transformers model imports)
 if os.getenv("USE_FLAGOS") == "1":
-    import flag_gems  # noqa: F401
-    from flag_gems.experimental_ops import rmsnorm as gems_rmsnorm
+    import importlib
+
+    flag_gems = importlib.import_module("flag_gems")  # noqa: F401
+    flag_gems_experimental = importlib.import_module("flag_gems.experimental_ops")
+    gems_rmsnorm = flag_gems_experimental.rmsnorm
 
     class GemsRMSNorm(nn.Module):
         def __init__(self, hidden_size, eps=1e-6):
@@ -92,6 +94,7 @@ from .utils import ChunkPrefillChunkGenerate
 from .utils import drop_tokens_from_cache
 from .utils import DuplexWindowConfig
 from .utils import get_kv_cache_length
+from .utils import normalize_content
 from .utils import realign_rotary_suffix
 from .utils import SpeculativeSnapshot
 from .utils import streaming_token_decoder
@@ -155,8 +158,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         self.force_rope_reindex = False  # RoPE reindex testing switch
 
     def init_streaming_processor(self):
-        if not hasattr(self, "processor") or self.processor is None:
-            self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+        self.prepare_processor(processor=None, tokenizer=None)
 
         if hasattr(self.processor, "set_streaming_mode"):
             self.processor.set_streaming_mode(
@@ -236,33 +238,33 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         return MiniCPMTTS(config=self.config.tts_config, audio_tokenizer=None)
 
-    def init_tts(self, streaming=False, model_dir=None, enable_float16=False, n_timesteps=10):
-        if streaming:
-            if self.config.tts_config.audio_tokenizer_type != "s3tokenizer_step_audio":
-                logger.warning("audio tokenizer type is set to s3tokenizer_step_audio")
-                self.tts.config.audio_tokenizer_type = "s3tokenizer_step_audio"
+    def _ensure_asset_dir(self, asset_subpath: str, model_dir: Optional[str] = None) -> str:
+        """Ensure asset directory exists, downloading from HF if needed."""
+        model_dir = model_dir or os.path.join(self.config._name_or_path, asset_subpath)
+        if not os.path.exists(model_dir):
+            from huggingface_hub import snapshot_download
 
-            try:
-                from stepaudio2 import Token2wav
-            except ImportError:
-                raise ImportError(f"please install Token2wav via: pip install minicpmo-utils[all]")
+            repo_dir = snapshot_download(
+                repo_id="openbmb/MiniCPM-o-4_5",
+                allow_patterns=[f"{asset_subpath}/**"],
+            )
+            model_dir = os.path.join(repo_dir, asset_subpath)
+        assert os.path.exists(model_dir), f"Asset directory not found: {model_dir}"
+        return model_dir
 
-            model_dir = model_dir or os.path.join(self.config._name_or_path, "assets/token2wav")
-            self.tts.audio_tokenizer = Token2wav(model_dir, float16=enable_float16, n_timesteps=n_timesteps)
-            return self.tts.audio_tokenizer
-        else:
-            if self.config.tts_config.audio_tokenizer_type != "s3tokenizer":
-                logger.warning("audio tokenizer type is set to s3tokenizer")
-                self.tts.config.audio_tokenizer_type = "s3tokenizer"
+    def init_tts(self, model_dir=None, enable_float16=False, n_timesteps=10, **kwargs):
+        if self.config.tts_config.audio_tokenizer_type != "s3tokenizer_step_audio":
+            logger.warning("audio tokenizer type is set to s3tokenizer_step_audio")
+            self.tts.config.audio_tokenizer_type = "s3tokenizer_step_audio"
 
-            try:
-                from cosyvoice.cli.cosyvoice import CosyVoice2
-            except ImportError:
-                raise ImportError(f"please install cosyvoice via: pip install minicpmo-utils[all]")
+        try:
+            from stepaudio2 import Token2wav
+        except ImportError:
+            raise ImportError("Please install Token2wav via: pip install minicpmo-utils[all]")
 
-            model_dir = model_dir or os.path.join(self.config._name_or_path, "assets/CosyVoice2-0.5B")
-            self.tts.audio_tokenizer = CosyVoice2(model_dir=model_dir, load_jit=False, load_trt=False, fp16=False)
-            return self.tts.audio_tokenizer
+        model_dir = self._ensure_asset_dir("assets/token2wav", model_dir)
+        self.tts.audio_tokenizer = Token2wav(model_dir, float16=enable_float16, n_timesteps=n_timesteps)
+        return self.tts.audio_tokenizer
 
     def get_input_embeddings(self):
         return self.llm.get_input_embeddings()
@@ -286,22 +288,16 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
     def get_sys_prompt(ref_audio=None, mode="default", language="en", ref_audio_max_ms=None):
         if ref_audio is not None:
             if isinstance(ref_audio, str):
-                if ref_audio == "assets/demo.wav":
-                    import librosa
+                import os
 
+                import librosa
+
+                if os.path.isfile(ref_audio):
                     duration = ref_audio_max_ms / 1000.0 if ref_audio_max_ms else None
                     ref_audio, _ = librosa.load(ref_audio, sr=16000, mono=True, duration=duration)
                 else:
-                    import os
-
-                    import librosa
-
-                    if os.path.isfile(ref_audio) and os.path.exists(ref_audio):
-                        duration = ref_audio_max_ms / 1000.0 if ref_audio_max_ms else None
-                        ref_audio, _ = librosa.load(ref_audio, sr=16000, mono=True, duration=duration)
-                    else:
-                        logger.error(f"Could not find {ref_audio}")
-                        ref_audio = None
+                    logger.error(f"Could not find {ref_audio}")
+                    ref_audio = None
 
             assert isinstance(ref_audio, np.ndarray), "ref_audio error"
 
@@ -328,12 +324,11 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 vc_prompt_prefix = "模仿音频样本的音色并生成新的内容。"
                 vc_prompt_suffix = "你的任务是用这种声音模式来当一个助手。请认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。你是由面壁智能开发的人工智能助手：面壁小钢炮。"
             else:
-                vc_prompt_prefix = "Use the voice in the audio prompt to synthesize new content."
-                vc_prompt_suffix = "You are a helpful assistant with the above voice style."
+                vc_prompt_prefix = "Clone the voice in the provided audio prompt."
+                vc_prompt_suffix = "Please assist users while maintaining this voice style. Please answer the user's questions seriously and in a high quality. Please chat with the user in a highly human-like and oral style. You are a helpful assistant developed by ModelBest: MiniCPM-Omni."
 
             if ref_audio is not None:
                 sys_msgs = {"role": "system", "content": [vc_prompt_prefix, ref_audio, vc_prompt_suffix]}
-
             else:
                 logger.warning(
                     "Warning: ref_audio is None, speech generation will be performed based on the default voice."
@@ -648,9 +643,6 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             return []
 
     def get_audio_embedding(self, data, chunk_length=-1, dummy=True):
-        dtype = self.apm.embed_positions.weight.dtype
-        device = self.apm.embed_positions.weight.device
-
         wavforms = data.get("audio_features", [])  # (bs, 80, frames) or [], multi audios need filled in advance
         audio_feature_lens_raw = data.get("audio_feature_lens", [])  # list, [[x1, x2], [y1], [z1]]
 
@@ -715,6 +707,9 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 final_audio_embeds.append(target_audio_embeds)
             return final_audio_embeds
         elif self.training and dummy:
+            dtype = self.apm.embed_positions.weight.dtype
+            device = self.apm.embed_positions.weight.device
+
             dummy_wavs = torch.zeros((1, 80, 100), device=device, dtype=dtype)
             audio_states = self.apm(dummy_wavs, output_hidden_states=True).hidden_states[self.audio_encoder_layer]
 
@@ -1056,6 +1051,14 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         return generation_config
 
+    def prepare_processor(self, processor=None, tokenizer=None):
+        if processor is not None:
+            self.processor = processor
+        if not hasattr(self, "processor") or self.processor is None:
+            self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+        if tokenizer is not None:
+            self.processor.tokenizer = tokenizer
+
     @torch.inference_mode()
     def chat(
         self,
@@ -1066,8 +1069,6 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         min_new_tokens=0,
         do_sample=True,
         max_inp_length=8192,
-        stream=False,
-        stream_input=False,
         max_slice_nums=None,
         use_image_id=None,
         enable_thinking=False,
@@ -1081,6 +1082,10 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         tts_proj_layer=-1,
         tts_sampling_params: TTSSamplingParams = TTSSamplingParams(),
         merge_audio_from_same_content=True,
+        stream=False,
+        stream_input=False,
+        tokenizer=None,
+        processor=None,
         **kwargs,
     ):
         from PIL import Image
@@ -1096,8 +1101,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             images_list = [None] * len(msgs_list)
         assert len(images_list) == len(msgs_list), "The batch dim of images_list and msgs_list should be the same."
 
-        if not hasattr(self, "processor") or self.processor is None:
-            self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+        self.prepare_processor(processor=processor, tokenizer=tokenizer)
 
         prompts_lists = []
         input_images_list = []
@@ -1124,8 +1128,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 assert role in ["system", "user", "assistant"]
                 if i == 0:
                     assert role in ["user", "system"], "The role of first msg should be user"
-                if isinstance(content, str):
-                    content = [content]
+                # Normalize structured content (OpenAI format) to native format
+                content = normalize_content(content)
                 cur_msgs = []
                 for c in content:
                     if isinstance(c, Image.Image):
@@ -1172,6 +1176,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             max_length=max_inp_length,
         ).to(self.device)
 
+        if stream:
+            kwargs["num_beams"] = 1
         generation_config = self.prepare_generation_config(
             do_sample=do_sample, max_new_tokens=max_new_tokens, min_new_tokens=min_new_tokens, **kwargs
         )
@@ -1189,6 +1195,9 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 stream=stream,
                 **generation_config,
             )
+
+        if stream:
+            return res
 
         # spk bound and tts bound
         tts_bos_token = self.processor.tokenizer.convert_tokens_to_ids("<|tts_bos|>")
@@ -1286,12 +1295,6 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 hidden_embeds = F.normalize(hidden_embeds, p=2, dim=-1)
 
             tts_embeds = llm_embeds + hidden_embeds
-            if self.tts.interleaved:
-                chunks = []
-                cond_length = tts_embeds.shape[0]
-                for i in range(0, cond_length, 10):
-                    chunks.append(tts_embeds[i : i + 10])
-                tts_embeds = chunks
         else:
             raise NotImplementedError
 
@@ -1308,81 +1311,41 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             )
         )
 
-        if self.tts.interleaved:
-            tts_embeds[-1] = torch.cat([tts_embeds[-1], text_eos_embed], dim=0)
-            for i in range(len(tts_embeds)):
-                tts_embeds[i] = torch.cat([tts_embeds[i], audio_bos_embeds], dim=0).unsqueeze(0)
-            outputs = self.tts.interleaved_generate(
-                spk_embeds=spk_embeds,
-                conditions=tts_embeds,
-                temperature=0.8,
-                repetition_penalty=1.05,
-                eos_token=torch.tensor(
-                    [self.tts.config.num_audio_tokens - 1],
-                    dtype=torch.long,
-                    device=self.tts.device,
-                ),
-            )
-        else:
-            if self.tts.condition_type == "tts_token":
-                inputs_embeds = torch.cat([spk_embeds, tts_embeds, text_eos_embed, audio_bos_embeds], dim=0).unsqueeze(
-                    0
-                )
-            elif self.tts.condition_type == "tts_token_streaming":
-                tts_embeds[1] = spk_embeds.squeeze(0)  # apply speaker embedding
-                inputs_embeds = tts_embeds.unsqueeze(0)
-            else:  # modern case
-                inputs_embeds = torch.cat([spk_embeds, tts_embeds, text_eos_embed, audio_bos_embeds], dim=0).unsqueeze(
-                    0
-                )
+        inputs_embeds = torch.cat([spk_embeds, tts_embeds, text_eos_embed, audio_bos_embeds], dim=0).unsqueeze(0)
 
-            # save inputs_embeds to file
-            if output_tts_inputs_embeds_path:
-                torch.save(inputs_embeds, output_tts_inputs_embeds_path)
+        # save inputs_embeds to file
+        if output_tts_inputs_embeds_path:
+            torch.save(inputs_embeds, output_tts_inputs_embeds_path)
 
-            outputs = self.tts.generate(
-                inputs_embeds=inputs_embeds,
-                sampling_params=tts_sampling_params,
-                eos_token=torch.tensor(
-                    [self.tts.config.num_audio_tokens - 1],
-                    dtype=torch.long,
-                    device=self.tts.device,
-                ),
-            )
+        outputs = self.tts.generate(
+            inputs_embeds=inputs_embeds,
+            sampling_params=tts_sampling_params,
+            eos_token=torch.tensor(
+                [self.tts.config.num_audio_tokens - 1],
+                dtype=torch.long,
+                device=self.tts.device,
+            ),
+        )
 
-        if self.tts.config.audio_tokenizer_type == "s3tokenizer":
-            generated_tokens = outputs.new_ids.squeeze(-1)
-            reference_audio = audio_prompt
-            if reference_audio is not None:
-                logger.debug("use reference audio in data to generate waveform")
-                prompt_speech_16k = torch.tensor(reference_audio).unsqueeze(0)
+        import io
 
-            if self.tts.config.s3_stream_generate:
-                waveform_pred = self.tts.audio_tokenizer.inference_token2wav(
-                    speech_tokens=generated_tokens,
-                    prompt_speech_16k=prompt_speech_16k,
-                    prompt_speech=None,
-                    stream=True,
-                    n_timesteps=self.tts.config.s3_stream_n_timesteps,
-                    code_chunk_size=self.tts.config.s3_stream_chunk_size,
-                    chunk_prelook_size=self.tts.config.s3_stream_prelook_size,
-                    use_attn_idx=False,
-                )
-                return waveform_pred[0]
-            else:
-                for i, j in enumerate(
-                    self.tts.audio_tokenizer.token2wav(
-                        speech_token=generated_tokens,
-                        speech_token_len=torch.tensor([generated_tokens.shape[1]], device=generated_tokens.device),
-                        prompt_speech_16k=prompt_speech_16k,
-                        stream=False,
-                    )
-                ):
-                    waveform_pred = j["tts_speech"]
-                    waveform_sample_rate = self.tts.audio_tokenizer.sample_rate  # 24000 here, not 16000 input.
-                return waveform_pred[0]
-        else:
-            raise NotImplementedError
+        import soundfile as sf
+
+        generated_tokens = outputs.new_ids.squeeze(-1)
+        reference_audio = audio_prompt
+        prompt_wav_path = None
+        if reference_audio is not None:
+            logger.debug("use reference audio in data to generate waveform")
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+                prompt_wav_path = tmp_wav.name
+                sf.write(prompt_wav_path, reference_audio, 16000)
+        wav_bytes = self.tts.audio_tokenizer(
+            generated_tokens.squeeze(0).tolist(),
+            prompt_wav_path,
+        )
+        # convert wav bytes back to tensor for caller compatibility
+        waveform, sr = sf.read(io.BytesIO(wav_bytes))
+        return torch.tensor(waveform, dtype=torch.float32)
 
     @torch.inference_mode()
     def init_token2wav_cache(self, prompt_speech_16k):
@@ -1841,6 +1804,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         use_tts_template=True,
         enable_thinking=False,
         is_last_chunk=False,  # for audio chunk, if is the last chunk, set to True
+        tokenizer=None,
+        processor=None,
         **kwargs,
     ):
         from PIL import Image
@@ -1848,8 +1813,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         assert session_id is not None, "session_id cannot be None"
         self.is_first = self.session_id is None or session_id != self.session_id
 
-        if not hasattr(self, "processor") or self.processor is None:
-            self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+        self.prepare_processor(processor=processor, tokenizer=tokenizer)
 
         images = []
         audios = []
@@ -2003,6 +1967,14 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         use_tts_template=True,
         do_sample=True,
         enable_speculative_snapshot=False,
+        tokenizer=None,
+        processor=None,
+        # Teacher forcing (only for the "text → hidden → TTS condition" pipeline in streaming_generate)
+        # When enabled: instead of letting the LLM auto-regressively generate the text to be spoken,
+        # it forces the tokens from teacher_forcing_text to be fed in, using the hidden states
+        # corresponding to these tokens to construct the TTS condition, ensuring the output audio matches the input text.
+        teacher_forcing: bool = False,
+        teacher_forcing_text: str = "",
         **kwargs,
     ):
         # save speculative snapshot (before modifying any state)
@@ -2017,8 +1989,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         self.llm_generate_completed = False
         self.audio_past_key_values = None
 
-        if not hasattr(self, "processor") or self.processor is None:
-            self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+        self.prepare_processor(processor=processor, tokenizer=tokenizer)
 
         # reset current turn generated token IDs
         if hasattr(self, "_streaming_generated_token_ids"):
@@ -2042,6 +2013,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             tts_sampling_params,
             max_new_tokens,
             do_sample,
+            teacher_forcing=False,
+            teacher_forcing_text="",
             **kwargs,
         ):
             generate_chunk_size = 10
@@ -2095,6 +2068,136 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                     logits_processors=logits_processors,
                     logits_warpers=logits_warpers,
                 )
+
+            # Teacher forcing branch
+            # This branch does not rely on ChunkPrefillChunkGenerate's sampling logic, instead:
+            # 1) First prefill bos_input (assistant + tts_bos) into llm_past_key_values
+            # 2) Tokenize teacher_forcing_text into token ids
+            # 3) Feed tokens one by one into the LLM (teacher forcing), obtaining the last_hidden_states for each token
+            # 4) Use (token_ids, hidden_states) to construct tts condition, then feed it to TTSStreamingGenerator
+            if teacher_forcing:
+                # --- 1) prefill bos_input，延续 streaming_prefill 的 KV cache ---
+                bos_outputs = self.llm(
+                    inputs_embeds=generation_inputs_embeds,
+                    past_key_values=self.llm_past_key_values,
+                    use_cache=True,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
+                self.llm_past_key_values = bos_outputs.past_key_values
+
+                if generate_audio:
+                    # Give a length-0 tensor as speaker embedding (no speaker embedding)
+                    spk_emb = torch.empty(
+                        (bos_input_embeds.shape[0], 0, bos_input_embeds.shape[2]),
+                        dtype=bos_input_embeds.dtype,
+                        device=bos_input_embeds.device,
+                    )
+                    tts_streaming_generator.spk_emb = spk_emb
+
+                # --- 2) tokenize teacher_forcing_text ---
+                tf_text = teacher_forcing_text or ""
+                try:
+                    forced_input_ids = tokenizer(tf_text, add_special_tokens=False, return_tensors="pt")["input_ids"]
+                except Exception:
+                    # Compatible with rare tokenizer return object attributes
+                    forced_input_ids = tokenizer(tf_text, add_special_tokens=False, return_tensors="pt").input_ids
+                forced_input_ids = forced_input_ids.to(self.device)
+
+                total_len = int(forced_input_ids.shape[1])
+                ptr = 0
+
+                # Special case: empty text should also let TTS finish (text_finished=True will automatically concatenate text_eos_embed)
+                if total_len == 0:
+                    if not generate_audio:
+                        yield forced_input_ids, True
+                        return
+                    empty_tts_embeds = torch.empty(
+                        (1, 0, self.tts.config.hidden_size),
+                        dtype=bos_input_embeds.dtype,
+                        device=self.device,
+                    )
+                    if not hasattr(self, "_streaming_generated_token_ids"):
+                        self._streaming_generated_token_ids = []
+                    tts_generator = tts_streaming_generator.generate_with_buffer(
+                        condition=empty_tts_embeds,
+                        text_finished=True,
+                    )
+                    for audio_token_chunk, is_last_audio_chunk in tts_generator:
+                        yield audio_token_chunk, is_last_audio_chunk
+                    self.tts_last_turn_tokens = tts_streaming_generator.tts_last_turn_tokens
+                    self._last_streaming_text = ""
+                    yield None, None
+                    return
+
+                # --- 3) chunk-by-chunk teacher forcing ---
+                while ptr < total_len:
+                    end = min(ptr + generate_chunk_size, total_len)
+                    chunk_ids = forced_input_ids[:, ptr:end]  # [1, chunk_len]
+                    chunk_hidden_list = []
+
+                    for j in range(chunk_ids.shape[1]):
+                        tok = chunk_ids[:, j : j + 1]  # [1, 1]
+                        tok_emb = self.llm.get_input_embeddings()(tok)
+                        out = self.llm(
+                            inputs_embeds=tok_emb,
+                            past_key_values=self.llm_past_key_values,
+                            use_cache=True,
+                            output_hidden_states=True,
+                            return_dict=True,
+                        )
+                        self.llm_past_key_values = out.past_key_values
+                        chunk_hidden_list.append(out.hidden_states[-1])  # [1, 1, hidden]
+
+                    chunk_hidden = torch.cat(chunk_hidden_list, dim=1)  # [1, chunk_len, hidden]
+                    text_finished = end >= total_len
+
+                    # Save token IDs cache (external eval script will use _last_streaming_text to write generated_text)
+                    if not hasattr(self, "_streaming_generated_token_ids"):
+                        self._streaming_generated_token_ids = []
+                    self._streaming_generated_token_ids.extend(chunk_ids[0].tolist())
+
+                    if not generate_audio:
+                        yield chunk_ids, text_finished
+                    else:
+                        llm_embeds = self.tts.emb_text(chunk_ids)
+                        hidden_embeds = self.tts.projector_semantic(chunk_hidden)
+                        if self.tts.config.normalize_projected_hidden:
+                            hidden_embeds = F.normalize(hidden_embeds, p=2, dim=-1)
+                        tts_embeds = llm_embeds + hidden_embeds
+
+                        tts_generator = tts_streaming_generator.generate_with_buffer(
+                            condition=tts_embeds,
+                            text_finished=text_finished,
+                        )
+                        for audio_token_chunk, is_last_audio_chunk in tts_generator:
+                            yield audio_token_chunk, is_last_audio_chunk
+
+                    ptr = end
+                    if text_finished:
+                        if generate_audio:
+                            self.tts_last_turn_tokens = tts_streaming_generator.tts_last_turn_tokens
+                        break
+
+                # Finish: decode this round of text
+                if hasattr(self, "_streaming_generated_token_ids"):
+                    try:
+                        self._last_streaming_text = tokenizer.decode(self._streaming_generated_token_ids)
+                        assistant_input_ids = self._encode_text(tokenizer=tokenizer, text=self._last_streaming_text)
+                        self._finalize_round(
+                            round_id=host_round_id, cache_before=cache_length, assistant_input_ids=assistant_input_ids
+                        )
+                    except Exception:
+                        self._last_streaming_text = None
+                else:
+                    self._last_streaming_text = None
+
+                # Finally send the end signal
+                if generate_audio:
+                    yield None, None
+                else:
+                    return
+                return
 
             # LLM chunk generate outer loop
             for chunk_idx in range(num_chunks_decode):
@@ -2216,6 +2319,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             tts_sampling_params=tts_sampling_params,
             max_new_tokens=max_new_tokens,
             do_sample=do_sample,
+            teacher_forcing=teacher_forcing,
+            teacher_forcing_text=teacher_forcing_text,
             **kwargs,
         )
 
@@ -2299,152 +2404,175 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 skip_special_tokens=False,
             )
 
+    def as_duplex(self, device: Optional[str] = None, **kwargs) -> "MiniCPMODuplex":
+        """Convert this MiniCPMO instance to MiniCPMODuplex for full-duplex streaming."""
+        return MiniCPMODuplex.from_existing_model(
+            model=self,
+            device=device,
+            **kwargs,
+        )
+
 
 class MiniCPMODuplex:
-    def __init__(
-        self,
-        name_or_path: str,
-        generate_audio: bool = True,
-        ls_mode: str = "explicit",
-        device: str = "cuda",
-        pt_path: Optional[str] = None,
+    """MiniCPMODuplex model with full-duplex streaming capabilities.
+
+    This is a wrapper class that provides duplex streaming functionality.
+    Use MiniCPMO.as_duplex() to create from an existing model without reloading.
+    """
+
+    # Default duplex parameters
+    _default_duplex_params = {
+        "generate_audio": True,
+        "ls_mode": "explicit",
+        "max_new_speak_tokens_per_chunk": 20,
+        "text_repetition_penalty": 1.05,
+        "temperature": 0.7,
+        "top_k": 100,
+        "top_p": 0.8,
+        "text_repetition_window_size": 512,
+        "listen_prob_scale": 1.0,
+        "force_listen_count": 0,
+        "tts_temperature": 0.8,
+        "tts_repetition_penalty": 1.05,
+        "enable_float16": False,
+        "n_timesteps": 10,
+        "chunk_ms": 1000,
+        "first_chunk_ms": 1035,
+        "cnn_redundancy_ms": 20,
+        "sample_rate": 16000,
+        "sliding_window_mode": "off",
+        "basic_window_high_tokens": 8000,
+        "basic_window_low_tokens": 6000,
+        "context_previous_max_tokens": 500,
+        "context_max_units": 24,
+    }
+
+    @classmethod
+    def from_existing_model(
+        cls,
+        model: "MiniCPMO",
+        device: Optional[str] = None,
         **kwargs,
-    ):
-        """Initialize MiniCPMODuplex.
+    ) -> "MiniCPMODuplex":
+        """Create MiniCPMODuplex from an existing MiniCPMO instance."""
+        # Create instance without calling __init__
+        instance = cls.__new__(cls)
 
-        Args:
-            name_or_path: Path to the pretrained model or model identifier.
-            generate_audio: Whether to generate audio output.
-            ls_mode: Listen/Speak mode, e.g., "explicit".
-            device: Device to load the model on.
-            pt_path: Optional path to additional checkpoint weights.
-            **kwargs: Additional generation config parameters.
-        """
-        self.session_logs = []
-        self.session_start_time = None
-        self.log_file_path = None
+        instance.name_or_path = getattr(model.config, "_name_or_path", "")
 
-        self.name_or_path = name_or_path
+        # Get default params helper
+        def get_param(name):
+            if name in kwargs:
+                return kwargs[name]
+            return cls._default_duplex_params.get(name)
 
-        self.generate_audio = generate_audio
-        self.ls_mode = ls_mode
-        attn_implementation = kwargs.get("attn_implementation", "flash_attention_2")
+        instance.generate_audio = get_param("generate_audio")
+        instance.ls_mode = get_param("ls_mode")
 
-        self.device = device
+        # Determine device
+        if device is not None:
+            instance.device = device
+        else:
+            try:
+                instance.device = str(next(model.parameters()).device)
+            except StopIteration:
+                instance.device = "cuda"
 
-        from transformers import AutoConfig
-        from transformers import AutoTokenizer
+        # Reuse the existing model - THIS IS THE KEY: no reloading!
+        instance.model = model
+        instance.processor = getattr(model, "processor", None)
+        instance.tokenizer = getattr(instance.processor, "tokenizer", None) if instance.processor else None
 
-        from .processing_minicpmo import MiniCPMOProcessor
+        if instance.tokenizer is None:
+            from transformers import AutoTokenizer
+
+            instance.tokenizer = AutoTokenizer.from_pretrained(instance.name_or_path, trust_remote_code=True)
+
+        if instance.processor is None:
+            from .processing_minicpmo import MiniCPMOProcessor
+
+            instance.processor = MiniCPMOProcessor.from_pretrained(instance.name_or_path, trust_remote_code=True)
+            instance.processor.tokenizer = instance.tokenizer
+
+        # Ensure model has processor reference (same as __init__)
+        instance.model.processor = instance.processor
+
+        # Initialize TTS (same as __init__)
+        enable_float16 = get_param("enable_float16")
+        n_timesteps = get_param("n_timesteps")
+        instance.model.init_tts(enable_float16=enable_float16, n_timesteps=n_timesteps)
+
+        instance.break_event = threading.Event()
+        instance.session_stop_event = threading.Event()
+
+        # LLM generation config
+        instance.max_new_speak_tokens_per_chunk = get_param("max_new_speak_tokens_per_chunk")
+        instance.text_repetition_penalty = get_param("text_repetition_penalty")
+        instance.temperature = get_param("temperature")
+        instance.top_k = get_param("top_k")
+        instance.top_p = get_param("top_p")
+        instance.text_repetition_window_size = get_param("text_repetition_window_size")
+        instance.listen_prob_scale = get_param("listen_prob_scale")
+        instance.force_listen_count = get_param("force_listen_count")
+
+        # TTS generation config
+        tts_temp_value = get_param("tts_temperature")
+        instance.tts_temperature = torch.tensor([tts_temp_value], dtype=torch.float, device=instance.device)
+        instance.tts_repetition_penalty = get_param("tts_repetition_penalty")
+
+        # Stream config
+        instance.CHUNK_MS = get_param("chunk_ms")
+        instance.FIRST_CHUNK_MS = get_param("first_chunk_ms")
+        instance.CNN_REDUNDANCY_MS = get_param("cnn_redundancy_ms")
+        instance.SAMPLE_RATE = get_param("sample_rate")
+
+        instance.model.CHUNK_MS = instance.CHUNK_MS
+        instance.model.FIRST_CHUNK_MS = instance.FIRST_CHUNK_MS
+        instance.model.CNN_REDUNDANCY_MS = instance.CNN_REDUNDANCY_MS
+        instance.model.SAMPLE_RATE = instance.SAMPLE_RATE
+
+        # Special tokens
+        instance.unit_token_id = instance.tokenizer.convert_tokens_to_ids("<unit>")
+        instance.image_start_token_id = instance.tokenizer.convert_tokens_to_ids("<image>")
+        instance.image_end_token_id = instance.tokenizer.convert_tokens_to_ids("</image>")
+        instance.slice_start_token_id = instance.tokenizer.convert_tokens_to_ids("<slice>")
+        instance.slice_end_token_id = instance.tokenizer.convert_tokens_to_ids("</slice>")
+
+        instance.listen_token_id = instance.tokenizer.convert_tokens_to_ids("<|listen|>")
+        instance.speak_token_id = instance.tokenizer.convert_tokens_to_ids("<|speak|>")
+        instance.tts_bos_token_id = instance.tokenizer.convert_tokens_to_ids("<|tts_bos|>")
+        instance.tts_eos_token_id = instance.tokenizer.convert_tokens_to_ids("<|tts_eos|>")
+
+        instance.chunk_eos_token_id = instance.tokenizer.convert_tokens_to_ids("<|chunk_eos|>")
+        instance.chunk_tts_eos_token_id = instance.tokenizer.convert_tokens_to_ids("<|chunk_tts_eos|>")
+        instance.turn_eos_token_id = instance.tokenizer.convert_tokens_to_ids("<|turn_eos|>")
+
+        instance.chunk_terminator_token_ids = [
+            instance.listen_token_id,
+            instance.chunk_eos_token_id,
+            instance.chunk_tts_eos_token_id,
+        ]
+        instance.turn_terminator_token_ids = [instance.turn_eos_token_id]
+        instance.chunk_speak_token_ids = [instance.speak_token_id]
+
+        instance.tts_pad_id = instance.tokenizer.convert_tokens_to_ids("<|tts_pad|>")
+        bad_token_ids = getattr(instance.tokenizer, "bad_token_ids", [])
+        instance.forbidden_token_ids = [instance.tts_pad_id] + list(bad_token_ids)
+
         from .utils import StreamDecoder
 
-        self.processor = MiniCPMOProcessor.from_pretrained(name_or_path, trust_remote_code=True)
-        self.tokenizer = AutoTokenizer.from_pretrained(name_or_path, trust_remote_code=True)
-        self.processor.tokenizer = self.tokenizer
-
-        config = AutoConfig.from_pretrained(name_or_path, trust_remote_code=True)
-
-        vision_batch_size = kwargs.pop("vision_batch_size", None)
-        audio_pool_step = kwargs.pop("audio_pool_step", None)
-        audio_chunk_length = kwargs.pop("audio_chunk_length", None)
-        max_slice_nums = kwargs.pop("max_slice_nums", None)
-
-        if vision_batch_size is not None and hasattr(config, "vision_batch_size"):
-            config.vision_batch_size = vision_batch_size
-        if audio_pool_step is not None and hasattr(config, "audio_pool_step"):
-            config.audio_pool_step = audio_pool_step
-        if audio_chunk_length is not None and hasattr(config, "audio_chunk_length"):
-            config.audio_chunk_length = audio_chunk_length
-        if max_slice_nums is not None and hasattr(config.slice_config, "max_slice_nums"):
-            config.slice_config.max_slice_nums = max_slice_nums
-
-        self.model = MiniCPMO.from_pretrained(
-            name_or_path, config=config, trust_remote_code=True, attn_implementation=attn_implementation
-        )
-        self.model.to(torch.bfloat16)
-        self.model.processor = self.processor
-
-        if pt_path is not None:
-            logger.info(f"Loading checkpoint from {pt_path}")
-            state_dict = torch.load(pt_path, map_location="cpu")
-            info = self.model.load_state_dict(state_dict, strict=False)
-            logger.warning(info)
-            del state_dict
-
-        self.model.eval().to(device=device)
-        self.model.init_tts(
-            streaming=True,
-            enable_float16=kwargs.get("enable_float16", False),
-            n_timesteps=kwargs.get("n_timesteps", 10),
+        instance.decoder = StreamDecoder(
+            llm=instance.model.llm, tokenizer=instance.tokenizer, forbidden_token_ids=instance.forbidden_token_ids
         )
 
-        self.break_event = threading.Event()
-        self.session_stop_event = threading.Event()
+        # Sliding window config
+        sliding_window_mode = get_param("sliding_window_mode")
+        basic_window_high_tokens = get_param("basic_window_high_tokens")
+        basic_window_low_tokens = get_param("basic_window_low_tokens")
+        context_previous_max_tokens = get_param("context_previous_max_tokens")
+        context_max_units = get_param("context_max_units")
 
-        # llm generation_config - from duplex_config or defaults
-        self.max_new_speak_tokens_per_chunk = kwargs.get("max_new_speak_tokens_per_chunk", 20)
-        self.text_repetition_penalty = kwargs.get("text_repetition_penalty", 1.05)
-        self.temperature = kwargs.get("temperature", 0.7)
-        self.top_k = kwargs.get("top_k", 20)
-        self.top_p = kwargs.get("top_p", 0.8)
-        self.text_repetition_window_size = kwargs.get("text_repetition_window_size", 512)
-        self.listen_prob_scale = kwargs.get("listen_prob_scale", 1.0)
-        self.force_listen_count = kwargs.get("force_listen_count", 0)
-        # tts generation_config
-        tts_temp_value = kwargs.get("tts_temperature", 0.8)
-        self.tts_temperature = torch.tensor([tts_temp_value], dtype=torch.float, device=self.device)
-        self.tts_repetition_penalty = kwargs.get("tts_repetition_penalty", 1.05)
-        # stream config
-        self.CHUNK_MS = kwargs.get("chunk_ms", 1000)
-        self.FIRST_CHUNK_MS = kwargs.get("first_chunk_ms", 1035)
-        self.CNN_REDUNDANCY_MS = kwargs.get("cnn_redundancy_ms", 20)
-        self.SAMPLE_RATE = kwargs.get("sample_rate", 16000)
-
-        self.model.CHUNK_MS = self.CHUNK_MS
-        self.model.FIRST_CHUNK_MS = self.FIRST_CHUNK_MS
-        self.model.CNN_REDUNDANCY_MS = self.CNN_REDUNDANCY_MS
-        self.model.SAMPLE_RATE = self.SAMPLE_RATE
-
-        # special tokens
-        self.unit_token_id = self.tokenizer.convert_tokens_to_ids("<unit>")
-        self.image_start_token_id = self.tokenizer.convert_tokens_to_ids("<image>")
-        self.image_end_token_id = self.tokenizer.convert_tokens_to_ids("</image>")
-        self.slice_start_token_id = self.tokenizer.convert_tokens_to_ids("<slice>")
-        self.slice_end_token_id = self.tokenizer.convert_tokens_to_ids("</slice>")
-
-        self.listen_token_id = self.tokenizer.convert_tokens_to_ids("<|listen|>")
-        self.speak_token_id = self.tokenizer.convert_tokens_to_ids("<|speak|>")
-        self.tts_bos_token_id = self.tokenizer.convert_tokens_to_ids("<|tts_bos|>")
-        self.tts_eos_token_id = self.tokenizer.convert_tokens_to_ids("<|tts_eos|>")
-
-        self.chunk_eos_token_id = self.tokenizer.convert_tokens_to_ids("<|chunk_eos|>")
-        self.chunk_tts_eos_token_id = self.tokenizer.convert_tokens_to_ids("<|chunk_tts_eos|>")
-        self.turn_eos_token_id = self.tokenizer.convert_tokens_to_ids("<|turn_eos|>")
-
-        self.chunk_terminator_token_ids = [self.listen_token_id, self.chunk_eos_token_id, self.chunk_tts_eos_token_id]
-        self.turn_terminator_token_ids = [self.turn_eos_token_id]
-        self.chunk_speak_token_ids = [self.speak_token_id]
-
-        self.tts_pad_id = self.tokenizer.convert_tokens_to_ids("<|tts_pad|>")
-        bad_token_ids = getattr(self.tokenizer, "bad_token_ids", [])
-        self.forbidden_token_ids = [self.tts_pad_id] + list(bad_token_ids)
-
-        self.decoder = StreamDecoder(
-            llm=self.model.llm, tokenizer=self.tokenizer, forbidden_token_ids=self.forbidden_token_ids
-        )
-
-        # sliding window mode: "off" / "basic" / "context"
-        sliding_window_mode = kwargs.get("sliding_window_mode", "off")
-
-        # sliding window parameters without Context
-        basic_window_high_tokens = kwargs.get("basic_window_high_tokens", 4000)
-        basic_window_low_tokens = kwargs.get("basic_window_low_tokens", 3500)
-
-        # sliding window parameters with Context
-        context_previous_max_tokens = kwargs.get("context_previous_max_tokens", 500)
-        context_max_units = kwargs.get("context_max_units", 24)
-
-        self.decoder.set_window_config(
+        instance.decoder.set_window_config(
             DuplexWindowConfig(
                 sliding_window_mode=sliding_window_mode,
                 basic_window_high_tokens=basic_window_high_tokens,
@@ -2453,44 +2581,25 @@ class MiniCPMODuplex:
                 context_max_units=context_max_units,
             )
         )
-        # set sliding window switch based on mode
         window_enabled = sliding_window_mode != "off"
-        self.decoder.set_window_enabled(window_enabled)
+        instance.decoder.set_window_enabled(window_enabled)
 
-        self.tts_logits_processors = None
-        self.tts_eos_token = None
-        if self.generate_audio:
-            self.tts_logits_processors = gen_logits(
-                num_code=self.model.tts.config.num_audio_tokens,
-                repetition_penalty=self.tts_repetition_penalty,
+        instance.tts_logits_processors = None
+        instance.tts_eos_token = None
+        if instance.generate_audio:
+            instance.tts_logits_processors = gen_logits(
+                num_code=instance.model.tts.config.num_audio_tokens,
+                repetition_penalty=instance.tts_repetition_penalty,
             )
-            self.tts_eos_token = torch.tensor(
-                [self.model.tts.config.num_audio_tokens - 1],
+            instance.tts_eos_token = torch.tensor(
+                [instance.model.tts.config.num_audio_tokens - 1],
                 dtype=torch.long,
-                device=self.device,
+                device=instance.device,
             )
 
-        self._reset_streaming_state()
+        instance._reset_streaming_state()
 
-        import gc
-
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_model_name_or_path: str,
-        device: str = "cuda",
-        pt_path: Optional[str] = None,
-        **kwargs,
-    ) -> "MiniCPMODuplex":
-        return cls(
-            name_or_path=pretrained_model_name_or_path,
-            device=device,
-            pt_path=pt_path,
-            **kwargs,
-        )
+        return instance
 
     def set_break_event(self):
         self.break_event.set()
@@ -2561,15 +2670,21 @@ class MiniCPMODuplex:
     def prepare(
         self,
         prefix_system_prompt: Optional[str] = None,
-        suffix_system_prompt: Optional[str] = None,
         ref_audio: Optional[np.ndarray] = None,
         prompt_wav_path: Optional[str] = None,
         context_previous_marker: str = "\n\nprevious: ",
+        **kwargs,
     ):
+        prefix_system_prompt = prefix_system_prompt or "Streaming Omni Conversation."
+
+        prefix_system_prompt = "<|im_start|>system\n" + prefix_system_prompt
+        suffix_system_prompt = "<|im_end|>"
+        if isinstance(ref_audio, np.ndarray):
+            prefix_system_prompt += "\n<|audio_start|>"
+            suffix_system_prompt = "<|audio_end|>" + suffix_system_prompt
+
         self.clear_break_event()
         self.clear_session_stop()
-
-        self.session_start_time = time.time()
 
         self._reset_streaming_state()
         self.decoder.reset()
@@ -3017,7 +3132,7 @@ class MiniCPMODuplex:
         max_new_speak_tokens_per_chunk=20,
         decode_mode: str = "sampling",
         temperature=0.7,
-        top_k=20,
+        top_k=100,
         top_p=0.8,
         listen_prob_scale=1.0,
         listen_top_k=None,
@@ -3488,6 +3603,19 @@ class MiniCPMODuplex:
 
     def get_current_time(self) -> int:
         return self.audio_chunk_idx
+
+    def as_simplex(self, reset_session: bool = True, reset_token2wav_cache: bool = False) -> "MiniCPMO":
+        """Convert this MiniCPMODuplex instance back to MiniCPMO for simplex mode.
+
+        Args:
+            reset_session: If True, reset streaming session state (KV cache, etc.).
+                          Recommended when switching from duplex to simplex mode.
+
+        Returns the underlying MiniCPMO model instance without reloading.
+        """
+        if reset_session:
+            self.model.reset_session(reset_token2wav_cache=reset_token2wav_cache)
+        return self.model
 
 
 def get_2d_sincos_pos_embed(embed_dim, image_size):

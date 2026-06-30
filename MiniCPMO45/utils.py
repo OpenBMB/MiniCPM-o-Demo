@@ -2220,3 +2220,140 @@ class StreamDecoder:
             self.generated_special_tokens.append(next_token_id.item())
 
         return next_token_id
+
+
+def _download_url_to_tempfile(url: str, suffix: str = "", timeout: int = 60) -> str:
+    """Download a URL to a temporary file and return the path."""
+    import tempfile
+
+    import requests
+
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        f.write(response.content)
+        return f.name
+
+
+def _is_url(path: str) -> bool:
+    return path.startswith(("http://", "https://"))
+
+
+def normalize_content_item(item) -> Union[str, Any, List[Any]]:
+    """Normalize structured content item to native format."""
+    import os
+
+    import numpy as np
+    from PIL import Image
+
+    if isinstance(item, str):
+        return item
+    if isinstance(item, Image.Image):
+        return item
+    if isinstance(item, np.ndarray):
+        return item
+
+    if isinstance(item, dict):
+        item_type = item.get("type")
+
+        if item_type == "text":
+            return item.get("text", "")
+
+        elif item_type == "image_url":
+            image_url_obj = item.get("image_url", {})
+            url = image_url_obj.get("url", "") if isinstance(image_url_obj, dict) else image_url_obj
+
+            if _is_url(url):
+                temp_path = _download_url_to_tempfile(url, suffix=".jpg", timeout=30)
+                img = Image.open(temp_path)
+                os.unlink(temp_path)
+                return img
+            else:
+                return Image.open(url)
+        elif item_type == "audio_url":
+            import librosa
+
+            audio_url_obj = item.get("audio_url", {})
+            url = audio_url_obj.get("url", "") if isinstance(audio_url_obj, dict) else audio_url_obj
+
+            if _is_url(url):
+                temp_path = _download_url_to_tempfile(url, suffix=".wav", timeout=60)
+                audio_np, _ = librosa.load(temp_path, sr=16000, mono=True)
+                os.unlink(temp_path)
+                return audio_np
+            else:
+                audio_np, _ = librosa.load(url, sr=16000, mono=True)
+                return audio_np
+        elif item_type == "video_url":
+            from minicpmo.utils import get_video_frame_audio_segments
+
+            video_url_obj = item.get("video_url", {})
+            if isinstance(video_url_obj, dict):
+                video_url = video_url_obj.get("url", "")
+                stack_frames = video_url_obj.get("stack_frames", 1)
+                use_ffmpeg = video_url_obj.get("use_ffmpeg", False)
+                use_audio = video_url_obj.get("use_audio", True)
+            else:
+                video_url = video_url_obj
+                stack_frames = 1
+                use_ffmpeg = False
+                use_audio = True
+
+            temp_video_path = None
+            if _is_url(video_url):
+                temp_video_path = _download_url_to_tempfile(video_url, suffix=".mp4", timeout=120)
+                video_path = temp_video_path
+            else:
+                video_path = video_url
+
+            video_frames, audio_segments, stacked_frames = get_video_frame_audio_segments(
+                video_path,
+                stack_frames=stack_frames,
+                use_ffmpeg=use_ffmpeg,
+                use_audio=use_audio,
+            )
+
+            if temp_video_path is not None:
+                os.unlink(temp_video_path)
+
+            omni_contents = []
+            for i in range(len(video_frames)):
+                omni_contents.append(video_frames[i])
+                if use_audio and audio_segments is not None:
+                    omni_contents.append(audio_segments[i])
+                if stacked_frames is not None and i < len(stacked_frames) and stacked_frames[i] is not None:
+                    omni_contents.append(stacked_frames[i])
+
+            return "__video_contents__", omni_contents
+        else:
+            raise ValueError(f"Unknown content type: {item_type}")
+
+    raise ValueError(f"Cannot normalize content item of type: {type(item)}")
+
+
+def normalize_content(content) -> list:
+    """Normalize message content to list of native items."""
+    import numpy as np
+    from PIL import Image
+
+    if isinstance(content, str):
+        return [content]
+
+    if isinstance(content, list):
+        result = []
+        for item in content:
+            normalized = normalize_content_item(item)
+            if isinstance(normalized, tuple) and len(normalized) == 2 and normalized[0] == "__video_contents__":
+                result.extend(normalized[1])
+            else:
+                result.append(normalized)
+        return result
+
+    if isinstance(content, (Image.Image, np.ndarray)):
+        return [content]
+
+    normalized = normalize_content_item(content)
+    if isinstance(normalized, tuple) and len(normalized) == 2 and normalized[0] == "__video_contents__":
+        return normalized[1]
+    return [normalized]
