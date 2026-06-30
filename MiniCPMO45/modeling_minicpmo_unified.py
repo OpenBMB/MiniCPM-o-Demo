@@ -4964,7 +4964,6 @@ class FcDuplexCapability:
         K = self.K
         spoken_terms = {
             self.sid(K.SPOKEN_SLOT_EOS),
-            self.sid(K.SPOKEN_TURN_EOS),
             self.sid(K.LISTEN),
             self.sid(K.TTS_PAD),
         }
@@ -4974,11 +4973,19 @@ class FcDuplexCapability:
         is_listen = False
         is_speaking = False
         turn_eos = False
+        spoken_slot_terminated = False
+        termination_reason = None
+        termination_token_id = None
+        generated_steps = 0
         logits = self._spoken_logits
 
         for _ in range(max_tokens):
             nid = self._sample(logits, decode_mode)
+            generated_steps += 1
             if nid == self.sid(K.AI_SPOKEN_SLOT_END):
+                spoken_slot_terminated = True
+                termination_reason = "ai_spoken_slot_end"
+                termination_token_id = nid
                 break
             spoken_ids.append(nid)
             self.output_ids.append(nid)
@@ -5000,10 +5007,19 @@ class FcDuplexCapability:
             ):
                 tts_hidden_in_unit.append([nid, hidden, bool(turn_eos)])
             if nid in spoken_terms:
+                spoken_slot_terminated = True
+                termination_token_id = nid
+                if nid == self.sid(K.SPOKEN_SLOT_EOS):
+                    termination_reason = "spoken_slot_eos"
+                elif nid == self.sid(K.LISTEN):
+                    termination_reason = "listen"
+                elif nid == self.sid(K.TTS_PAD):
+                    termination_reason = "tts_pad"
                 break
 
         self._feed_ids([self.sid(K.AI_SPOKEN_SLOT_END)])
         self._spoken_slot_open = False
+        spoken_generation_reached_max_tokens = generated_steps >= max_tokens and not spoken_slot_terminated
         text = self._flush(text_ids) if text_ids else ""
         llm_end_time = time.time()
         audio_info = self._generate_spoken_audio(
@@ -5014,6 +5030,11 @@ class FcDuplexCapability:
             self._current_unit_info["is_listen"] = bool(is_listen)
             self._current_unit_info["is_speaking"] = bool(is_speaking)
             self._current_unit_info["spoken_ids"] = spoken_ids
+            self._current_unit_info["spoken_slot_terminated"] = bool(spoken_slot_terminated)
+            self._current_unit_info["spoken_termination_reason"] = termination_reason
+            self._current_unit_info["spoken_termination_token_id"] = termination_token_id
+            self._current_unit_info["spoken_slot_unterminated"] = bool(not spoken_slot_terminated)
+            self._current_unit_info["spoken_generation_reached_max_tokens"] = bool(spoken_generation_reached_max_tokens)
             if audio_info.get("audio_waveform") is not None:
                 self._current_unit_info["audio_sample_rate"] = audio_info.get("audio_sample_rate")
                 self._current_unit_info["n_audio_samples"] = int(len(audio_info["audio_waveform"]))
@@ -5025,6 +5046,11 @@ class FcDuplexCapability:
             "text": text,
             "spoken_turn_eos": bool(turn_eos),
             "end_of_turn": bool(turn_eos),
+            "spoken_slot_terminated": bool(spoken_slot_terminated),
+            "spoken_slot_unterminated": bool(not spoken_slot_terminated),
+            "spoken_generation_reached_max_tokens": bool(spoken_generation_reached_max_tokens),
+            "spoken_termination_reason": termination_reason,
+            "spoken_termination_token_id": termination_token_id,
             "cost_llm": llm_end_time - start_time,
             **audio_info,
         }

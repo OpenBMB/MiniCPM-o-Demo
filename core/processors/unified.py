@@ -1413,6 +1413,13 @@ class FcDuplexView:
             cost_tts_prep=data.get("cost_tts_prep", 0.0),
             cost_tts=data.get("cost_tts", 0.0),
             cost_token2wav=data.get("cost_token2wav", 0.0),
+            metadata={
+                "spoken_slot_terminated": bool(data.get("spoken_slot_terminated", False)),
+                "spoken_slot_unterminated": bool(data.get("spoken_slot_unterminated", False)),
+                "spoken_generation_reached_max_tokens": bool(data.get("spoken_generation_reached_max_tokens", False)),
+                "spoken_termination_reason": data.get("spoken_termination_reason"),
+                "spoken_termination_token_id": data.get("spoken_termination_token_id"),
+            },
         )
 
     @staticmethod
@@ -1425,6 +1432,11 @@ class FcDuplexView:
             is_listen=data.get("is_listen"),
             is_speaking=data.get("is_speaking", False),
             spoken_ids=data.get("spoken_ids", []),
+            spoken_slot_terminated=bool(data.get("spoken_slot_terminated", False)),
+            spoken_slot_unterminated=bool(data.get("spoken_slot_unterminated", False)),
+            spoken_generation_reached_max_tokens=bool(data.get("spoken_generation_reached_max_tokens", False)),
+            spoken_termination_reason=data.get("spoken_termination_reason"),
+            spoken_termination_token_id=data.get("spoken_termination_token_id"),
             non_spoken_ids=data.get("non_spoken_ids", []),
             non_spoken_terminator=data.get("non_spoken_terminator"),
             closed_spans=spans,
@@ -1632,6 +1644,8 @@ class FcDuplexView:
         start_time = time.time()
         debug_budget_override = non_spoken_budget_per_unit
         units_info = []
+        audio_waveforms = []
+        n_audio_units = 0
 
         try:
             id_generator = FixedToolCallIdGenerator(task_input.tool_call_ids) if task_input.tool_call_ids else None
@@ -1667,7 +1681,6 @@ class FcDuplexView:
             total_units = max(1, n_audio_units + task_input.config.extra_response_units)
             silence = np.zeros(samples_per_unit, dtype=np.float32)
             scheduled_tool_responses: Dict[int, List[FcToolResponse]] = {}
-            audio_waveforms = []
 
             for unit_idx in range(total_units):
                 chunk = chunks[unit_idx] if unit_idx < n_audio_units else silence
@@ -1749,9 +1762,32 @@ class FcDuplexView:
             )
         except Exception as exc:
             logger.exception("FC duplex offline inference failed")
+            output_ids = []
+            output_render = ""
+            spoken_text = ""
+            think_text = ""
+            tool_calls = []
+            try:
+                decoded = self.decode_output(FcDecodeOutputRequest(tools=task_input.tools))
+                output_ids = decoded.output_ids
+                output_render = decoded.output_render
+                spoken_text = decoded.spoken_text
+                think_text = decoded.think_text
+                tool_calls = self.tool_call_manager.tool_calls or decoded.tool_calls
+            except Exception:
+                logger.exception("Failed to decode FC duplex partial output after offline inference failure")
             return FcDuplexOfflineOutput(
                 success=False,
                 error=str(exc),
+                output_ids=output_ids,
+                output_render=output_render,
+                spoken_text=spoken_text,
+                think_text=think_text,
+                tool_calls=tool_calls,
+                units_info=units_info,
+                audio_waveforms=audio_waveforms,
+                total_units=len(units_info),
+                n_audio_units=n_audio_units,
                 total_duration_ms=(time.time() - start_time) * 1000,
             )
 
@@ -2016,6 +2052,9 @@ class FcDuplexView:
                 self._write_json(artifact_dir / "source.json", structure)
                 self._write_text(artifact_dir / "gt_token_stream.txt", gt_decoded.output_render)
                 self._write_text(artifact_dir / "pred_token_stream.txt", pred.output_render)
+                if not pred.success:
+                    self._write_text(artifact_dir / "pred_prefix_token_stream.txt", pred.output_render)
+                    self._write_json(artifact_dir / "pred_prefix_token_ids.json", pred.output_ids)
                 self._write_json(artifact_dir / "units_info.json", [unit.model_dump() for unit in pred.units_info])
                 if request.generate_audio and pred.success:
                     audio_artifact = self._save_audio_artifact(artifact_dir, pred.audio_waveforms)

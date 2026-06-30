@@ -31,7 +31,7 @@ class FcDuplexConfig(BaseModel):
     sample_rate: int = Field(16000, gt=0, description="Input audio sample rate")
     max_spoken_tokens: int = Field(24, ge=1, description="Max spoken tokens per unit")
     non_spoken_budget_per_unit: int = Field(12, ge=0, description="Offline non-spoken budget per unit")
-    extra_response_units: int = Field(4, ge=0, description="Extra silent units after input audio")
+    extra_response_units: int = Field(0, ge=0, description="Extra silent units after input audio")
     decode_mode: str = Field("greedy", description="Decode mode: greedy or sampling")
 
 
@@ -156,6 +156,7 @@ class FcSpokenGenerateResult(BaseModel):
     cost_tts_prep: float = Field(0.0, description="TTS condition preparation cost in seconds")
     cost_tts: float = Field(0.0, description="TTS token generation cost in seconds")
     cost_token2wav: float = Field(0.0, description="Token2Wav cost in seconds")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional implementation details")
 
 
 class FcNonSpokenGenerateResult(FcDuplexStepResult):
@@ -176,6 +177,11 @@ class FcDuplexUnitInfo(BaseModel):
     is_listen: Optional[bool] = Field(None, description="Whether this unit chose listen")
     is_speaking: bool = Field(False, description="Whether this unit chose speak")
     spoken_ids: List[int] = Field(default_factory=list, description="Spoken slot token ids")
+    spoken_slot_terminated: bool = Field(False, description="Whether the spoken slot ended with a model-predicted terminator")
+    spoken_slot_unterminated: bool = Field(False, description="Whether the framework closed the slot boundary without a spoken slot terminator")
+    spoken_generation_reached_max_tokens: bool = Field(False, description="Whether spoken generation reached max_tokens without a slot terminator")
+    spoken_termination_reason: Optional[str] = Field(None, description="Model-predicted spoken slot termination reason")
+    spoken_termination_token_id: Optional[int] = Field(None, description="Model-predicted spoken slot termination token id")
     non_spoken_ids: List[int] = Field(default_factory=list, description="Non-spoken slot token ids")
     non_spoken_terminator: Optional[str] = Field(None, description="Non-spoken close reason")
     closed_spans: List[FcClosedSpan] = Field(default_factory=list, description="Spans closed in this unit")

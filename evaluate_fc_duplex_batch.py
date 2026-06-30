@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -14,9 +15,9 @@ from core.schemas.fc_duplex import FcDuplexConfig, FcDuplexTrainDataRequest
 
 
 DEFAULT_BASE_MODEL = "/user/heweiquan/project/MiniCPM-o-4_5"
-DEFAULT_PT_PATH = "/user/heweiquan/models/minicpm-o45-fc-overfit/20260629/minicpm-v_50.pt"
+DEFAULT_PT_PATH = "/user/heweiquan/models/minicpm-o45-fc-overfit/20260630/v4/minicpm-v_400.pt"
 DEFAULT_DATA_DIR = "/user/heweiquan/dataset/DuplexFcTest/delivery_train_data"
-DEFAULT_OUTPUT_DIR = "/user/heweiquan/project/MiniCPM-o-Demo-FC/fc_duplex_test_results"
+DEFAULT_OUTPUT_DIR = "/user/heweiquan/dataset/DuplexFcTest/test_res/20260630/v4/fc_duplex_test_results"
 
 
 def read_json(path: Path) -> Dict[str, Any]:
@@ -63,6 +64,9 @@ def run_one(
         )
     )
     dumped = result.model_dump()
+    if not dumped.get("success") and dumped.get("pred_output_render"):
+        (sample_dir / "pred_prefix_token_stream.txt").write_text(dumped["pred_output_render"], encoding="utf-8")
+        write_json(sample_dir / "pred_prefix_token_ids.json", dumped.get("pred_output_ids") or [])
     write_json(sample_dir / "comparison.json", dumped)
     return dumped
 
@@ -145,7 +149,7 @@ def main():
         default=None,
         help="Debug override for non-spoken budget. Omit to use SDK train-data per-unit budgets.",
     )
-    parser.add_argument("--extra-response-units", type=int, default=4)
+    parser.add_argument("--extra-response-units", type=int, default=0)
     parser.add_argument("--decode-mode", default="greedy")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--skip-mutated", action="store_true")
@@ -189,6 +193,7 @@ def main():
     original_dir = output_dir / "original"
     for index, path in enumerate(data_paths, start=1):
         print(f"[original {index:03d}/{len(data_paths):03d}] {path.name}", flush=True)
+        case_start = time.perf_counter()
         try:
             comparison = run_one(
                 fc,
@@ -206,6 +211,8 @@ def main():
             sample_dir = original_dir / path.stem
             write_json(sample_dir / "comparison.json", comparison)
             print(f"  ERROR: {exc}", flush=True)
+        elapsed = time.perf_counter() - case_start
+        print(f"  elapsed: {elapsed:.2f}s", flush=True)
         original_results.append(comparison)
     original_summary = summarize(original_results, output_dir, "original")
     print(f"[original summary] {original_summary}", flush=True)
@@ -217,6 +224,7 @@ def main():
         mutated_dir = output_dir / "modified"
         for index, path in enumerate(mutated_paths, start=1):
             print(f"[modified {index:03d}/{len(mutated_paths):03d}] {path.name}", flush=True)
+            case_start = time.perf_counter()
             try:
                 comparison = run_one(
                     fc,
@@ -234,6 +242,8 @@ def main():
                 sample_dir = mutated_dir / path.stem
                 write_json(sample_dir / "comparison.json", comparison)
                 print(f"  ERROR: {exc}", flush=True)
+            elapsed = time.perf_counter() - case_start
+            print(f"  elapsed: {elapsed:.2f}s", flush=True)
             mutated_results.append(comparison)
         mutated_summary = summarize(mutated_results, output_dir, "modified")
         print(f"[modified summary] {mutated_summary}", flush=True)
@@ -245,3 +255,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    

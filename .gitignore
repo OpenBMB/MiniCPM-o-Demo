@@ -56,3 +56,4 @@ dev_tools/
 
 benchmark.json
 .run-logs/
+.DS_Store

@@ -322,16 +322,24 @@ spoken_result = fc.streaming_spoken_generate(
 也可能是：
 
 ```text
-<ai_spoken_slot><|speak|>好的，我明白了<|spoken_turn_eos|></ai_spoken_slot>
+<ai_spoken_slot><|speak|>好的，我明白了<|spoken_turn_eos|><|spoken_slot_eos|></ai_spoken_slot>
 ```
 
 表示模型说话。
 
-spoken 结束 token 分两类：
+如果当前 unit 只是同一轮语音的中间片段，也可能是：
+
+```text
+<ai_spoken_slot><|speak|>我先继续听你说<|spoken_slot_eos|></ai_spoken_slot>
+```
+
+SDK 004 后，spoken 结束 token 的语义需要区分 turn 结束和 slot 结束：
 
 - `<|spoken_slot_eos|>`：当前 unit 的 spoken 片段结束，但同一轮语音可能下一 unit 继续。
-- `<|spoken_turn_eos|>`：这一轮 spoken turn 完整结束，TTS / Token2Wav 可以 flush。
+- `<|spoken_turn_eos|>`：这一轮 spoken turn 完整结束，TTS / Token2Wav 可以 flush；它本身不闭合当前 spoken slot。
 - `<|tts_pad|>`：当前 unit 没有新的 spoken 文本，但还属于 alignment / TTS padding 结构。
+
+因此 `<|spoken_turn_eos|>` 和 `<|spoken_slot_eos|>` 可能连续出现。调用方不要把 `spoken_turn_eos=True` 理解成“当前 spoken slot 已由模型正常结束”；它只表示这一轮语音 turn 已结束。当前 spoken slot 是否由模型预测的终止 token 正常结束，应看返回值中的 `metadata["spoken_slot_terminated"]` 和 `metadata["spoken_termination_reason"]`。
 
 ### 6.3 返回值
 
@@ -347,6 +355,17 @@ spoken 结束 token 分两类：
 - `n_audio_samples`: waveform sample 数。
 - `n_tts_tokens`: TTS audio token 数。
 - `cost_llm`, `cost_tts_prep`, `cost_tts`, `cost_token2wav`: 分阶段耗时。
+- `metadata`: spoken slot 终止相关调试信息。
+
+`metadata` 中当前包含：
+
+- `spoken_slot_terminated: bool`：模型是否生成了 spoken slot 终止 token。
+- `spoken_slot_unterminated: bool`：模型未生成 spoken slot 终止 token，框架只闭合了结构边界 `</ai_spoken_slot>`。
+- `spoken_generation_reached_max_tokens: bool`：是否因为达到 `max_tokens` 才停止 spoken 生成。
+- `spoken_termination_reason: str | None`：`spoken_slot_eos`、`listen`、`tts_pad` 或 `ai_spoken_slot_end`。
+- `spoken_termination_token_id: int | None`：终止 token id。
+
+正常 speak 分支中，SDK 004 期望由模型预测 `<|spoken_slot_eos|>` 结束当前 spoken slot。如果模型只预测了 `<|spoken_turn_eos|>`，但没有继续预测 `<|spoken_slot_eos|>`，`spoken_turn_eos=True` 仍会返回，但 `metadata["spoken_slot_terminated"]` 会是 `False`。
 
 ### 6.4 如何播放 TTS
 
@@ -365,7 +384,8 @@ if spoken_result.audio_waveform is not None:
 注意：
 
 - TTS waveform 不是每个 speaking unit 都一定有。
-- Token2Wav 是 streaming cache 逻辑，可能在某些 unit 返回一小段音频，在 turn eos 时 flush 更多音频。
+- Token2Wav 是 streaming cache 逻辑，可能在某些 unit 返回一小段音频，在 `spoken_turn_eos=True` 时 flush 更多音频。
+- `spoken_turn_eos=True` 只表示 TTS turn 需要 flush，不表示 spoken slot 已经由模型预测 `<|spoken_slot_eos|>` 正常结束。
 - 前端播放层建议按返回顺序排队播放。
 
 ## 7. 生成 non-spoken slot：streaming_non_spoken_generate
@@ -613,6 +633,11 @@ unit_info = fc.finalize_unit()
 - `is_listen`: 当前 unit 是否 listen。
 - `is_speaking`: 当前 unit 是否 speaking。
 - `spoken_ids`: 当前 unit spoken token ids。
+- `spoken_slot_terminated`: 当前 spoken slot 是否由模型预测终止 token 正常结束。
+- `spoken_slot_unterminated`: 是否由框架只闭合结构边界、但模型未预测 spoken slot 终止 token。
+- `spoken_generation_reached_max_tokens`: spoken 生成是否达到 `max_tokens`。
+- `spoken_termination_reason`: spoken slot 终止原因，例如 `spoken_slot_eos`、`listen`、`tts_pad`。
+- `spoken_termination_token_id`: spoken slot 终止 token id。
 - `non_spoken_ids`: 当前 unit non-spoken token ids。
 - `non_spoken_terminator`: non-spoken 结束原因。
 - `closed_spans`: 当前 unit 闭合的 think / tool_call span。
@@ -827,6 +852,14 @@ SPEAKING_NON_SPOKEN_BUDGET = 15
 
 多 unit 连续 speaking 时，Token2Wav 会维护 streaming cache。`spoken_turn_eos=True` 时会 flush 并重置当前 turn 的 TTS 状态。
 
+注意 SDK 004 下，turn-final spoken slot 的模型输出通常是：
+
+```text
+<|spoken_turn_eos|><|spoken_slot_eos|>
+```
+
+其中 `<|spoken_turn_eos|>` 驱动 TTS turn flush，`<|spoken_slot_eos|>` 才表示当前 spoken slot 结束。在线调用方通常不需要手动处理这两个 token，但排查日志时应区分它们的语义。
+
 ### 14.3 前端播放建议
 
 前端或网关建议按 unit 顺序排队播放：
@@ -940,6 +973,10 @@ prompt_wav_path is required when generate_audio=True
 - `spoken.is_speaking`
 - `spoken.spoken_text`
 - `spoken.spoken_turn_eos`
+- `spoken.metadata.spoken_slot_terminated`
+- `spoken.metadata.spoken_slot_unterminated`
+- `spoken.metadata.spoken_generation_reached_max_tokens`
+- `spoken.metadata.spoken_termination_reason`
 - `spoken.n_audio_samples`
 - non-spoken `generation_flag`
 - non-spoken `close_reason`
