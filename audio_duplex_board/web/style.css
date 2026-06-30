@@ -368,3 +368,83 @@ button.primary {
     justify-self: start;
   }
 }
+
+/* ===== non-spoken streaming two-layer block ===== */
+.ns-block {
+  margin: 10px 0;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  background: #0b1220;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.ns-block.kind-think {
+  border-color: #6366f1;
+}
+.ns-block.kind-tool_call {
+  border-color: #f59e0b;
+}
+.ns-block.kind-unknown {
+  border-color: #64748b;
+  border-style: dashed;
+}
+.ns-block.closed .status-tag {
+  background: #16a34a;
+  color: #f8fafc;
+}
+.ns-block-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  background: rgba(15, 23, 42, 0.6);
+  font-size: 12px;
+  color: #cbd5e1;
+}
+.ns-block-header .kind-tag {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.ns-block-header .unit-tag {
+  color: #94a3b8;
+}
+.ns-block-header .status-tag {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #1e293b;
+  color: #cbd5e1;
+  font-size: 11px;
+}
+.ns-layer {
+  padding: 8px 10px;
+  border-top: 1px solid #1f2937;
+}
+.ns-layer .layer-tag {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.ns-layer.streaming .layer-body {
+  color: #93c5fd;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  font-size: 13px;
+}
+.ns-layer.full .layer-body {
+  color: #f8fafc;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-size: 13px;
+}
+.ns-layer.full.empty .layer-body::before {
+  content: "(parser did not produce a full_content for this block)";
+  color: #64748b;
+  font-style: italic;
+}

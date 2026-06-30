@@ -1,5 +1,7 @@
+// Board FIFO state.
+// 默认 maxCards = 6 = 2 x 3 grid（与训练数据 board 同期对象上限对齐；超出按 FIFO 挤出最早 card）。
 export class BoardState {
-  constructor({ maxCards = 10 } = {}) {
+  constructor({ maxCards = 6 } = {}) {
     this.maxCards = maxCards;
     this.cards = [];
   }

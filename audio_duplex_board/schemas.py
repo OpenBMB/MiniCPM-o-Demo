@@ -16,8 +16,19 @@ BoardEventType = Literal[
     "session_started",
     "unit_started",
     "spoken_final",
+    # 非 spoken slot 的两层 streaming：
+    #   non_spoken_block_started  → 前端建一个 think 或 tool_call 的 block 容器（含两层 streaming/full）
+    #   non_spoken_delta          → 后端 step 出 token 时，追加到 streaming 层（携带 token_id + token_str）
+    #   non_spoken_block_closed   → block 闭合，前端把 full 层填上（携带后端 BPE 整体 decode 的 full_text；
+    #                                若 tool_call wire 非法导致 parser 拿不到 full，full_text 为空）
+    # 旧的粗粒度 think_final / tool_call_final 保留作为派生事件，便于事件 log 阅读，
+    # 但前端两层 UI 的真相源是 *_block_started/_delta/_closed。
+    "non_spoken_block_started",
+    "non_spoken_delta",
+    "non_spoken_block_closed",
     "think_final",
     "tool_call_final",
+    # board card 两步异步：先 created（searching 状态），search 完成回填 updated
     "board_card_created",
     "board_card_updated",
     "unit_finished",
@@ -70,7 +81,21 @@ class ToolCallView(BaseModel):
 
 
 class BoardEvent(BaseModel):
-    """One page-facing event emitted by the board prototype."""
+    """One page-facing event emitted by the board prototype.
+
+    新增字段（非 spoken streaming 两层 UI 协议）：
+
+    - `block_id`：non_spoken block 在一个 session 内的稳定 id（格式 `nsb-<unit>-<seq>`），
+      `*_block_started` / `*_delta` / `*_block_closed` 必须带同一个 id，前端据此找到容器。
+    - `block_kind`：`think` | `tool_call` | `unknown`（first token 未到时还无法判断；
+      允许后端先发 started + delta，等首个 token_str 出来后判定，前端先不渲染 kind 标签）。
+    - `token_ids` / `token_strs`：本次 step 新增的 token id 和 id-to-token vocab piece
+      （vocab piece 不是 BPE 整体 decode；前端用 token_strs 拼 streaming 层）。
+    - `step_text`：本次 step 后端 BPE merge 出的增量文本（参考用，前端可选择以 token_strs
+      为主、step_text 为辅）。
+    - `full_text`：闭合时整体 BPE decode 的文本，前端填到 full 层；如果 tool_call 非法
+      或 think 提前截断，可能为空字符串。
+    """
 
     type: BoardEventType
     session_id: str
@@ -79,6 +104,12 @@ class BoardEvent(BaseModel):
     think_text: str | None = None
     tool_call: ToolCallView | None = None
     card: BoardCard | None = None
+    block_id: str | None = None
+    block_kind: Literal["think", "tool_call", "unknown"] | None = None
+    token_ids: list[int] = Field(default_factory=list)
+    token_strs: list[str] = Field(default_factory=list)
+    step_text: str | None = None
+    full_text: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
 

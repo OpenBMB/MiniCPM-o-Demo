@@ -35,7 +35,7 @@ class AudioDuplexBoardConfig:
     case_folder: str | None = None
     host: str = "127.0.0.1"
     port: int = 18080
-    max_board_cards: int = 10
+    max_board_cards: int = 6
     image_search_timeout_sec: float = 3.0
     use_mock_view: bool = False
     mock_energy_threshold: float = 0.012
@@ -54,19 +54,28 @@ DEFAULT_CASE_FOLDER = (
     "experiments/overfit_midtrain_v2_100/runs/subsets/overfit100_seed0/"
     "delivery_train_data"
 )
+# 当前 demo 主线 checkpoint：SDK 0.0.5a0 overfit100 step100 (cctl tasks/137673)
+# teacher-forced probe tasks/137785 已验证 100/100 token exact，可作为协议 smoke 起点
+DEFAULT_PT_PATH = (
+    "/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_training/"
+    "experiments/overfit_midtrain_v2_100/runs/job_137673/checkpoints/minicpm-v/"
+    "swy_o5_midtrain_v2_overfit/o5_midtrain_v2_overfit100_sdk005a0_v1/"
+    "job_137673_ckpt_100/minicpm-v_100.pt"
+)
 
 
 def make_default_config() -> AudioDuplexBoardConfig:
     """Build the default local development config.
 
     Returns:
-        Default config pointing at the known local base model, SDK source, and
-        overfit100 case folder. `pt_path` is intentionally left unset and should
-        be supplied by CLI for each experiment.
+        Default config pointing at the known local base model, SDK source, the
+        SDK 0.0.5a0 overfit100 ckpt100 and the overfit100 case folder. Override
+        `--pt-path` for other experiments.
     """
 
     return AudioDuplexBoardConfig(
         model_path=DEFAULT_MODEL_PATH,
+        pt_path=DEFAULT_PT_PATH,
         sdk_src=DEFAULT_SDK_SRC,
         case_folder=DEFAULT_CASE_FOLDER,
     )

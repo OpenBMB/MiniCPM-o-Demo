@@ -4,7 +4,10 @@ import { LiveBoardClient } from './live-board-client.js';
 import { LiveMicProvider } from './live-mic-provider.js';
 import { fetchDefaults, replayCase } from './replay-client.js';
 
-const state = new BoardState({ maxCards: 10 });
+// 2 x 3 grid = 6 可见 card，FIFO 挤出最早。
+const state = new BoardState({ maxCards: 6 });
+// non_spoken_block 两层 streaming 状态：block_id -> { kind, streamingPieces[], fullText?, closed }
+const nonSpokenBlocks = new Map();
 let liveClient = null;
 let micProvider = null;
 const el = {
@@ -177,25 +180,118 @@ function stopMicLive() {
 }
 
 function applyEvent(event) {
-  if (event.type === 'unit_started') {
-    appendTimeline(`unit ${event.unit_index}: audio=${event.payload?.n_audio ?? 0}, speaking=${event.payload?.is_speaking}`);
-  } else if (event.type === 'spoken_final') {
-    appendTimeline(`unit ${event.unit_index}: spoken "${event.text || ''}" (${(event.payload?.token_ids || []).length} tokens)`);
-    if (event.text) appendSpeech(event.unit_index, event.text);
-    if (event.payload?.audio_wav_base64) {
-      appendAiAudio(event.unit_index, event.payload.audio_wav_base64);
+  switch (event.type) {
+    case 'unit_started':
+      appendTimeline(`unit ${event.unit_index}: audio=${event.payload?.n_audio ?? 0}, speaking=${event.payload?.is_speaking}`);
+      return;
+    case 'spoken_final':
+      appendTimeline(`unit ${event.unit_index}: spoken "${event.text || ''}" (${(event.token_ids || []).length} tokens)`);
+      if (event.text) appendSpeech(event.unit_index, event.text);
+      if (event.payload?.audio_wav_base64) {
+        appendAiAudio(event.unit_index, event.payload.audio_wav_base64);
+      }
+      return;
+    case 'non_spoken_block_started':
+      beginNonSpokenBlock(event);
+      return;
+    case 'non_spoken_delta':
+      appendNonSpokenDelta(event);
+      return;
+    case 'non_spoken_block_closed':
+      closeNonSpokenBlock(event);
+      return;
+    case 'think_final':
+      // 已通过 non_spoken_block_closed 渲染 full 层；这里只做 log
+      appendLog('think', event.think_text || '');
+      return;
+    case 'tool_call_final':
+      appendLog('tool_call', JSON.stringify(event.tool_call, null, 2));
+      return;
+    case 'board_card_created':
+    case 'board_card_updated':
+      state.upsert(event.card);
+      renderBoard();
+      return;
+    case 'session_finished':
+      appendLog('summary', JSON.stringify(event.payload || {}, null, 2));
+      return;
+    case 'session_error':
+      appendLog('error', event.text || 'unknown error');
+      return;
+    default:
+      // 未识别事件不阻塞，但写进 log 便于排查 protocol 演进
+      appendLog('event', `${event.type}: ${JSON.stringify(event)}`);
+      return;
+  }
+}
+
+function beginNonSpokenBlock(event) {
+  const blockId = event.block_id;
+  if (!blockId) return;
+  const kind = event.block_kind || 'unknown';
+  const wrap = document.createElement('article');
+  wrap.className = `ns-block kind-${kind}`;
+  wrap.dataset.blockId = blockId;
+  wrap.dataset.kind = kind;
+  wrap.innerHTML = `
+    <header class="ns-block-header">
+      <span class="kind-tag">${escapeHtml(kind)}</span>
+      <span class="unit-tag">unit ${event.unit_index}</span>
+      <span class="status-tag">streaming</span>
+    </header>
+    <section class="ns-layer streaming">
+      <div class="layer-tag">streaming_content (id-to-token)</div>
+      <pre class="layer-body" data-role="streaming"></pre>
+    </section>
+    <section class="ns-layer full">
+      <div class="layer-tag">full_content (BPE merged after close)</div>
+      <pre class="layer-body" data-role="full"></pre>
+    </section>
+  `;
+  el.eventLog.appendChild(wrap);
+  nonSpokenBlocks.set(blockId, { kind, streamingPieces: [], fullText: null, closed: false, node: wrap });
+}
+
+function appendNonSpokenDelta(event) {
+  const blockId = event.block_id;
+  if (!blockId) return;
+  const block = nonSpokenBlocks.get(blockId);
+  if (!block) return;
+  const pieces = event.token_strs || [];
+  block.streamingPieces.push(...pieces);
+  // 如果 kind 在 started 时还是 unknown 而 delta 已经能判断，更新一下
+  if (block.kind === 'unknown' && event.block_kind && event.block_kind !== 'unknown') {
+    block.kind = event.block_kind;
+    block.node.classList.remove('kind-unknown');
+    block.node.classList.add(`kind-${block.kind}`);
+    const kindTag = block.node.querySelector('.kind-tag');
+    if (kindTag) kindTag.textContent = block.kind;
+  }
+  const target = block.node.querySelector('[data-role="streaming"]');
+  if (target) {
+    target.textContent = block.streamingPieces.join('');
+  }
+}
+
+function closeNonSpokenBlock(event) {
+  const blockId = event.block_id;
+  if (!blockId) return;
+  const block = nonSpokenBlocks.get(blockId);
+  if (!block) return;
+  block.closed = true;
+  block.fullText = event.full_text || null;
+  block.node.classList.add('closed');
+  const statusTag = block.node.querySelector('.status-tag');
+  if (statusTag) statusTag.textContent = 'closed';
+  const full = block.node.querySelector('[data-role="full"]');
+  if (full) {
+    if (block.fullText) {
+      full.textContent = block.fullText;
+    } else {
+      // tool_call 非法 / parser 拿不到 full 时，原始需求要求 full 层不显示
+      const section = full.closest('section.ns-layer.full');
+      if (section) section.classList.add('empty');
     }
-  } else if (event.type === 'think_final') {
-    appendLog('think', event.think_text || '');
-  } else if (event.type === 'tool_call_final') {
-    appendLog('tool_call', JSON.stringify(event.tool_call, null, 2));
-  } else if (event.type === 'board_card_created' || event.type === 'board_card_updated') {
-    state.upsert(event.card);
-    renderBoard();
-  } else if (event.type === 'session_finished') {
-    appendLog('summary', JSON.stringify(event.payload || {}, null, 2));
-  } else if (event.type === 'session_error') {
-    appendLog('error', event.text || 'unknown error');
   }
 }
 
@@ -247,6 +343,7 @@ function appendLog(kind, text) {
 
 function clearViews() {
   state.cards = [];
+  nonSpokenBlocks.clear();
   el.timeline.innerHTML = '';
   el.board.innerHTML = '';
   renderBoard();

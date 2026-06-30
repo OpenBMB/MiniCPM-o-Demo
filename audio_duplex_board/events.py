@@ -1,4 +1,13 @@
-"""Convert FC duplex replay results into board prototype events."""
+"""Convert FC duplex offline replay results into board prototype events.
+
+Scope: this path is used by `POST /api/replay-case` for one-shot debug replay
+of TrainingData JSON cases. It builds a flat event list (no streaming-two-layer
+`non_spoken_block_*` events) because offline_inference_from_train_data is a
+synchronous batch call — there is no token-by-token streaming to surface.
+
+The live ws path (`AudioDuplexBoardSession`) is the source of truth for the
+async streaming-two-layer protocol; see session.py.
+"""
 
 from __future__ import annotations
 
@@ -6,9 +15,10 @@ from typing import Any
 
 from core.schemas.fc_duplex import FcDecodedToolCall, FcDuplexTrainDataResult
 
-from audio_duplex_board.schemas import BoardCard, BoardEvent, BoardImageResult, ToolCallView
+from audio_duplex_board.schemas import BoardCard, BoardEvent, ToolCallView
 from audio_duplex_board.tools.display_object_on_board.service import (
     DisplayObjectOnBoardService,
+    board_image_result_from_tool_result,
 )
 
 
@@ -159,15 +169,7 @@ def _card_from_tool_call(
 ) -> BoardCard:
     query = _query_from_tool_call(tool_call)
     result = tool_service.search(query)
-    image = BoardImageResult(
-        query=query,
-        asset_id=f"tool:{tool_call.tool_call_id or query}",
-        image_url=result.image_url,
-        source_url=result.source_url,
-        title=result.title or query,
-        elapsed_ms=result.elapsed_ms,
-        error=result.error,
-    )
+    image = board_image_result_from_tool_result(result, tool_call_id=tool_call.tool_call_id)
     return BoardCard(
         card_id=f"card:{tool_call.tool_call_id or query}",
         tool_call_id=tool_call.tool_call_id,
