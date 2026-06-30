@@ -14,6 +14,8 @@ const el = {
   status: document.getElementById('status'),
   micLevelBar: document.getElementById('micLevelBar'),
   micLevelText: document.getElementById('micLevelText'),
+  statusLamp: document.getElementById('statusLamp'),
+  modeBadge: document.getElementById('modeBadge'),
   wsState: document.getElementById('wsState'),
   sentChunks: document.getElementById('sentChunks'),
   aiAudioCount: document.getElementById('aiAudioCount'),
@@ -33,8 +35,13 @@ const el = {
   timeline: document.getElementById('timeline'),
   board: document.getElementById('board'),
   aiSpeech: document.getElementById('aiSpeech'),
-  // non-spoken streaming column (think / tool_call two-layer blocks)
   nsStream: document.getElementById('nonSpokenStream'),
+  kvMode: document.getElementById('kvMode'),
+  kvCkpt: document.getElementById('kvCkpt'),
+  kvRefAudio: document.getElementById('kvRefAudio'),
+  kvTools: document.getElementById('kvTools'),
+  debugToggle: document.getElementById('debugToggle'),
+  debugDrawer: document.getElementById('debugDrawer'),
 };
 
 let sentChunkCount = 0;
@@ -49,25 +56,46 @@ el.loadDefaults.addEventListener('click', async () => {
   setStatus('Idle');
 });
 
-// Reflect runtime mode in the hero badge so the page itself answers "mock or real?".
+// Populate header mode badge + session settings panel from /api/defaults
 (async () => {
-  const badge = document.getElementById('modeBadge');
-  if (!badge) return;
+  if (!el.modeBadge) return;
   try {
     const defaults = await fetchDefaults();
     if (defaults.use_mock_view) {
-      badge.textContent = 'MOCK (no model)';
-      badge.style.color = '#fbbf24';
+      el.modeBadge.textContent = 'MOCK';
+      el.modeBadge.classList.add('mode-mock');
     } else {
+      el.modeBadge.textContent = 'REAL MODEL';
+      el.modeBadge.classList.add('mode-real');
+    }
+    if (el.kvMode) {
+      el.kvMode.textContent = defaults.use_mock_view ? 'mock' : 'real';
+    }
+    if (el.kvCkpt) {
       const ckpt = (defaults.pt_path || '').split('/').slice(-2).join('/');
-      badge.textContent = `REAL MODEL · ${ckpt || 'no overlay'}`;
-      badge.style.color = '#22c55e';
+      el.kvCkpt.textContent = ckpt || '(no overlay)';
+    }
+    if (el.kvRefAudio) {
+      const ref = (defaults.default_ref_audio_path || '').split('/').pop();
+      el.kvRefAudio.textContent = ref || '(none)';
+    }
+    if (el.kvTools) {
+      const tools = defaults.default_tools || [];
+      el.kvTools.textContent = tools.length
+        ? tools.map((t) => t?.function?.name || '?').join(', ')
+        : '(none)';
     }
   } catch (err) {
-    badge.textContent = `error: ${err.message}`;
-    badge.style.color = '#ef4444';
+    el.modeBadge.textContent = `error`;
+    el.modeBadge.classList.add('mode-error');
+    el.modeBadge.title = err.message;
   }
 })();
+
+// Debug drawer toggle
+el.debugToggle?.addEventListener('click', () => {
+  el.debugDrawer?.classList.toggle('open');
+});
 
 el.runReplay.addEventListener('click', async () => {
   const casePath = el.casePath.value.trim();
@@ -103,16 +131,17 @@ el.startMicLive.addEventListener('click', async () => {
       },
       onLevel: updateMicLevel,
       onPermissionHint: (text) => {
-        el.liveHint.textContent = text;
-        el.liveHint.classList.add('warning');
+        if (el.liveHint) {
+          el.liveHint.textContent = text;
+          el.liveHint.classList.add('warning');
+        }
       },
-      onState: (text) => {
-        el.wsState.textContent = text;
-      },
+      onState: setMicState,
       onStatus: setStatus,
     });
     await micProvider.start();
-    setStatus('Mic live: speak naturally; the model decides when to display objects');
+    setMicState('live');
+    setStatus('Listening · 自然说话，提到具体物体会出现在画板');
   } catch (err) {
     setStatus(`Mic live error: ${err.message}`);
     stopMicLive();
@@ -121,8 +150,22 @@ el.startMicLive.addEventListener('click', async () => {
 
 el.stopMicLive.addEventListener('click', () => {
   stopMicLive();
-  setStatus('Mic live stopped');
+  setStatus('Stopped');
 });
+
+function setMicState(state) {
+  // state ∈ {requesting mic, live, stopped}
+  if (!el.statusLamp) return;
+  if (state === 'live') {
+    el.statusLamp.classList.add('live');
+    const label = el.statusLamp.querySelector('.label');
+    if (label) label.textContent = 'LIVE';
+  } else {
+    el.statusLamp.classList.remove('live');
+    const label = el.statusLamp.querySelector('.label');
+    if (label) label.textContent = state ? state.toUpperCase() : 'IDLE';
+  }
+}
 
 el.audioFileInput.addEventListener('change', () => {
   const file = el.audioFileInput.files?.[0];
@@ -161,9 +204,7 @@ el.runFileReplay.addEventListener('click', async () => {
 async function createPreparedClient() {
   // Use training-aligned prepare from /api/defaults so the model sees the
   // same system_prompt / tools / AI reference audio it was trained on.
-  // Without these (especially ref_audio_path) the model is heavily OOD
-  // and tends to stay in listen mode the entire session.
-  setStatus('Loading training-aligned prepare defaults...');
+  setStatus('Loading defaults…');
   const defaults = await fetchDefaults();
   if (!defaults.default_system_prompt) {
     throw new Error('Server did not return default_system_prompt — case folder missing or unreadable.');
@@ -175,16 +216,24 @@ async function createPreparedClient() {
     onEvent: applyEvent,
     onStatus: setStatus,
   });
-  setStatus('Connecting...');
+  setStatus('Connecting…');
   await client.connect();
-  el.wsState.textContent = 'connected';
+  setWsState('connected');
   client.send('prepare', {
     system_prompt: defaults.default_system_prompt,
     tools: defaults.default_tools || [],
     ref_audio_path: defaults.default_ref_audio_path,
-    generate_audio: Boolean(el.generateAudio.checked),
+    generate_audio: Boolean(el.generateAudio?.checked),
   });
   return client;
+}
+
+function setWsState(state) {
+  if (!el.wsState) return;
+  el.wsState.textContent = state;
+  el.wsState.classList.remove('connected', 'closed');
+  if (state === 'connected') el.wsState.classList.add('connected');
+  else if (state === 'closed' || state === 'idle') el.wsState.classList.add('closed');
 }
 
 function stopMicLive() {
@@ -199,7 +248,8 @@ function stopMicLive() {
     liveClient.close();
     liveClient = null;
   }
-  el.wsState.textContent = 'closed';
+  setMicState('stopped');
+  setWsState('closed');
 }
 
 function applyEvent(event) {
@@ -328,15 +378,15 @@ function sleep(ms) {
 function renderBoard() {
   if (!state.cards.length) {
     el.board.classList.add('empty-board');
-    el.board.innerHTML = '<div class="empty-state">No cards yet. Start mic live and speak about concrete objects.</div>';
+    el.board.innerHTML = '<div class="empty-state">说出具体物体，例如「你看这只猫」「桌上有个苹果」</div>';
     return;
   }
   el.board.classList.remove('empty-board');
   el.board.innerHTML = state.cards.map((card) => {
     const image = card.image?.image_url
       ? `<img src="${escapeHtml(card.image.image_url)}" alt="${escapeHtml(card.query)}" />`
-      : `<div class="placeholder">Searching...</div>`;
-    return `<article class="card ${escapeHtml(card.status)}">
+      : `<div class="placeholder">${card.status === 'searching' ? '搜图中…' : (card.error || '—')}</div>`;
+    return `<article class="card ${escapeHtml(card.status)}" title="${escapeHtml(card.tool_call_id || '')}">
       ${image}
       <div class="card-body">
         <strong>${escapeHtml(card.query)}</strong>
