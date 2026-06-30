@@ -111,7 +111,7 @@ el.startMicLive.addEventListener('click', async () => {
       onStatus: setStatus,
     });
     await micProvider.start();
-    setStatus('Mic live: speak loudly to trigger board cards');
+    setStatus('Mic live: speak naturally; the model decides when to display objects');
   } catch (err) {
     setStatus(`Mic live error: ${err.message}`);
     stopMicLive();
@@ -322,7 +322,7 @@ function sleep(ms) {
 function renderBoard() {
   if (!state.cards.length) {
     el.board.classList.add('empty-board');
-    el.board.innerHTML = '<div class="empty-state">No cards yet. Speak loudly to trigger 苹果 / 番茄 / 腌白菜.</div>';
+    el.board.innerHTML = '<div class="empty-state">No cards yet. Start mic live and speak about concrete objects.</div>';
     return;
   }
   el.board.classList.remove('empty-board');
