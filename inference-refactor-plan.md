@@ -277,12 +277,18 @@ runtime 方法也都还在 unified 子类里。此时继承关系只是为后续
 再处理底部组件类：
 
 - 字面一致的类可以从 vendored modeling import 或直接停止在 unified 维护。
-- 不字面一致的类暂时不要动，例如 `MiniCPMWhisperEncoder`、`MiniCPMTTS`。
+- 对近似但不完全字面一致的类，按主线需求判断是否仍需保留。
 
 这个 step 的重点不是减少行数，而是确认哪些 model primitive 真正可以完全来自
 vendored model，哪些仍然是 demo 主线需要的 patch。
 
 验收：重点听音频，尤其 duplex 音频。
+
+实际执行结果：
+
+- 字面一致的组件类和 helper 已改为从 vendored modeling 复用。
+- `MiniCPMTTS` 后续也改为复用 vendored/weight 实现；它和 unified 旧实现的差异主要是格式、注释和一个 warning，不是主线必需逻辑。
+- `MiniCPMWhisperEncoder` 最终也改为复用 vendored/weight 实现；为此放弃 unified 旧的 `return_debug` 调试扩展，因为它不属于 docs-app/API 主线。
 
 ### Step 6：切换 `__init__` 到父类初始化
 
@@ -302,6 +308,13 @@ unified runtime 状态：
 
 验收：这是风险较高的一步，需要完整跑单工和 duplex。
 
+实际执行结果：
+
+- `modeling_minicpmo_unified.MiniCPMO.__init__()` 已改为直接调用 `BaseMiniCPMO.__init__()`。
+- unified 只在父类初始化后追加 `_init_unified_runtime_state()`，设置 mode、duplex、compile/benchmark 等 runtime 字段。
+- 没有保留 `init_tts_module()` shim；TTS 初始化直接走 vendored/weight。
+- 保留 `init_token2wav(streaming=...)`，因为 backend/demo 仍使用这个带 `streaming` 参数的 API，父类 `init_tts()` 不能等价替代。
+
 ### Step 7：逐个收敛近似但不完全相同的 model 方法
 
 对这些方法逐个判断，不能整批搬：
@@ -316,6 +329,12 @@ unified runtime 状态：
 而不是整段复制旧 unified 方法。
 
 验收：每删或改一组都启动 demo 让人工验证。
+
+实际执行结果：
+
+- 上述 model primitive 已委托给 vendored/weight 实现。
+- unified 旧的 `return_debug` 音频调试路径被移除，不作为主线兼容目标。
+- 经过人工验证，单工和 duplex 音频主线正常。
 
 ### Step 8：保留 runtime/facade，停止收缩
 
@@ -332,3 +351,14 @@ unified runtime 状态：
 
 到这个状态就先停止，不追求把所有代码都删干净。目标是主线稳定、边界清楚、
 后续替换 o5 trusted code 容易。
+
+当前状态：
+
+- `MiniCPMO45/modeling_minicpmo.py` 承担 o45 vendored/weight 模型实现。
+- `MiniCPMO45/modeling_minicpmo_unified.py` 继承 vendored `MiniCPMO`，并主要保留 runtime/facade：
+  - mode 切换和 unified 初始化。
+  - docs-app/backend 需要的 non-streaming / streaming / duplex API。
+  - `DuplexCapability` 状态机。
+  - round/speculative/window 相关的 demo runtime 状态。
+- 顶层模型组件类，包括 TTS、audio encoder、Resampler、projector 等，已不在 unified 中维护。
+- 继续收缩时应谨慎处理 `chat()`、`streaming_prefill()`、`streaming_generate()`、`_generate_speech_non_streaming()`、round/speculative 方法；它们已明显属于 demo runtime 或 API 适配，不再是纯模型结构重复。
