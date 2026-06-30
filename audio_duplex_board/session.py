@@ -275,8 +275,18 @@ class AudioDuplexBoardSession:
             )
 
         # 3) non-spoken slot: step loop, emit deltas, react to closed spans.
-        #    Bails out early when next prefill arrives.
-        non_spoken_steps, short_circuited = await self._run_non_spoken_loop(unit_index)
+        #    Bails out early when next prefill arrives — but ONLY for speak
+        #    units (real-time is critical when user is listening to AI). For
+        #    listen units (user is talking, AI works in the background) we
+        #    let the model run to view-side termination or the hard cap, so
+        #    long <think>...</think> + <tool_call>...</tool_call> sequences
+        #    have enough budget to actually emit a closing tag and produce a
+        #    closed_span the business can dispatch. Mid-stream budget cuts
+        #    leave the model stuck in think and never reach tool_call.
+        is_speaking = bool(spoken.is_speaking)
+        non_spoken_steps, short_circuited = await self._run_non_spoken_loop(
+            unit_index, is_speaking=is_speaking
+        )
         non_spoken_done_ts = time.perf_counter()
 
         # 4) finalize unit
@@ -377,8 +387,20 @@ class AudioDuplexBoardSession:
         # is already fast; for the heavy paths we rely on async fc).
         return result
 
-    async def _run_non_spoken_loop(self, unit_index: int) -> tuple[int, bool]:
+    async def _run_non_spoken_loop(
+        self, unit_index: int, *, is_speaking: bool
+    ) -> tuple[int, bool]:
         """Step through non-spoken tokens, emitting delta events and reacting to closed spans.
+
+        Args:
+            unit_index: current FC duplex unit index, used for event tagging.
+            is_speaking: whether this unit is producing spoken output. When True,
+                we cooperatively stop on the next-prefill signal (real-time is
+                critical because the user is listening to AI). When False, the
+                user is talking — AI is silent and doing background work —
+                so we let the model run to view-side termination or the hard
+                cap, giving long <think>...</think> + <tool_call>...</tool_call>
+                sequences enough decode budget to actually emit a closing tag.
 
         When the fc client supports `stream_non_spoken_decode`, the decode loop
         runs server-side and we just consume `decode_step` events; the
@@ -387,8 +409,7 @@ class AudioDuplexBoardSession:
         the TOP of every decode iteration; an in-flight step still completes
         and arrives as a regular step before the loop exits).
 
-        Otherwise we fall back to the legacy per-step RPC pattern (sync HTTP
-        client or in-process FcDuplexView).
+        Otherwise we fall back to the legacy per-step RPC pattern.
 
         Returns:
             (n_steps, short_circuited): short_circuited is True iff the server
@@ -396,20 +417,34 @@ class AudioDuplexBoardSession:
             client-issued stop / next prefill arrival.
         """
 
-        if hasattr(self.fc, "stream_non_spoken_decode"):
-            return await self._run_non_spoken_loop_streaming(unit_index)
-        return await self._run_non_spoken_loop_polling(unit_index)
+        # Listen units: a permanently-clear Event, so the stream's stop-watcher
+        # never fires decode_stop and the server runs to view-side terminate
+        # (no_action / non_spoken_slot_eos / non_spoken_budget_reached) or the
+        # hard cap of MAX_DECODE_STEPS_PER_UNIT.
+        stop_event = (
+            self._next_prefill_event if is_speaking else asyncio.Event()
+        )
 
-    async def _run_non_spoken_loop_streaming(self, unit_index: int) -> tuple[int, bool]:
+        if hasattr(self.fc, "stream_non_spoken_decode"):
+            return await self._run_non_spoken_loop_streaming(
+                unit_index, stop_event=stop_event
+            )
+        return await self._run_non_spoken_loop_polling(
+            unit_index, stop_event=stop_event
+        )
+
+    async def _run_non_spoken_loop_streaming(
+        self, unit_index: int, *, stop_event: asyncio.Event
+    ) -> tuple[int, bool]:
         """Streaming variant: one ws `decode_start` → many `decode_step` → `decode_end`.
 
-        Server-side loop reads `decode_stop` (sent when self._next_prefill_event fires)
+        Server-side loop reads `decode_stop` (sent when stop_event fires)
         from a separate ws frame and checks at the top of every iteration.
         """
 
         stream = self.fc.stream_non_spoken_decode(
             decode_mode=self._decode_mode,
-            stop_event=self._next_prefill_event,
+            stop_event=stop_event,
         )
         n_steps = 0
         async for step in stream:
@@ -423,15 +458,17 @@ class AudioDuplexBoardSession:
         short_circuited = stream.last_reason == "stopped_by_client"
         return stream.last_n_steps or n_steps, short_circuited
 
-    async def _run_non_spoken_loop_polling(self, unit_index: int) -> tuple[int, bool]:
-        """Legacy variant: per-step RPC poll loop with next-prefill check at top."""
+    async def _run_non_spoken_loop_polling(
+        self, unit_index: int, *, stop_event: asyncio.Event
+    ) -> tuple[int, bool]:
+        """Legacy variant: per-step RPC poll loop with stop check at top."""
 
         n_steps = 0
         for _ in range(self._MAX_NON_SPOKEN_STEPS_PER_UNIT):
             # Check stop flag at the TOP of every iteration. Any in-flight
             # step is already in `step` from the previous iteration and was
             # emitted, so we can exit cleanly here.
-            if self._next_prefill_event.is_set():
+            if stop_event.is_set():
                 return n_steps, True
             step = await self._call_fc(
                 self.fc.streaming_non_spoken_generate,
