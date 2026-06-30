@@ -101,6 +101,33 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
 
     @app.get("/api/defaults")
     def defaults() -> dict[str, object]:
+        # Extract the default training-aligned system_prompt + ref_audio_path
+        # from the first case in the default case folder, so the frontend
+        # mic-live flow can send the same prepare request the model was
+        # trained on. Without this, prepare() uses a custom prompt + no
+        # reference audio, the model is heavily OOD, and the AI never speaks.
+        default_system_prompt: str | None = None
+        default_ref_audio_path: str | None = None
+        default_tools: list[dict[str, object]] | None = None
+        default_case_path: str | None = None
+        case_folder_path = (
+            Path(config.case_folder) if config.case_folder else None
+        )
+        if case_folder_path and case_folder_path.exists():
+            cases = sorted(case_folder_path.glob("*.json"))
+            if cases:
+                default_case_path = str(cases[0])
+                try:
+                    extracted = _extract_prepare_defaults_from_case(cases[0])
+                    default_system_prompt = extracted.get("system_prompt")
+                    default_ref_audio_path = extracted.get("ref_audio_path")
+                    default_tools = extracted.get("tools")
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"[api/defaults] failed to extract prepare defaults "
+                        f"from {cases[0]}: {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
         return {
             "model_path": config.model_path,
             "pt_path": config.pt_path,
@@ -109,6 +136,10 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
             "max_board_cards": config.max_board_cards,
             "use_mock_view": config.use_mock_view,
             "mock_energy_threshold": config.mock_energy_threshold,
+            "default_case_path": default_case_path,
+            "default_system_prompt": default_system_prompt,
+            "default_ref_audio_path": default_ref_audio_path,
+            "default_tools": default_tools,
         }
 
     @app.post("/api/replay-case", response_model=ReplayCaseResponse)
@@ -311,6 +342,68 @@ def _prepend_sdk_src(sdk_src: str | None) -> None:
     path = str(Path(sdk_src))
     if path not in sys.path:
         sys.path.insert(0, path)
+
+
+def _extract_prepare_defaults_from_case(case_path: Path) -> dict[str, object]:
+    """Read a TrainingData JSON case and pull out the training-aligned
+    system_prompt, AI reference audio path, and tool definitions.
+
+    Mirrors the logic FcDuplexView's offline_inference_from_train_data uses
+    internally, but exposed as a tiny helper so the live ws path can show
+    the same prepare to the model without re-implementing the SDK contract.
+    """
+
+    import json as _json
+
+    with case_path.open("r", encoding="utf-8") as fp:
+        structure = _json.load(fp)
+    data_root = case_path.parent
+
+    system_prompt_parts: list[str] = []
+    ref_audio_path: str | None = None
+    for segment in (structure.get("system", {}) or {}).get("segments", []) or []:
+        kind = segment.get("kind")
+        if kind == "text":
+            text = segment.get("text") or ""
+            if text:
+                system_prompt_parts.append(text)
+        elif kind == "audio":
+            audio = segment.get("audio") or {}
+            file_path = audio.get("file_path")
+            if file_path:
+                candidate = (data_root / file_path).resolve()
+                if candidate.exists():
+                    ref_audio_path = str(candidate)
+
+    # tools: training case stores them under top-level "tools" if present;
+    # display_object_on_board cases tend to encode the tool implicitly via
+    # ai_non_spoken tool_call segments, so we fall back to a hardcoded
+    # display_object_on_board tool definition matching the training schema.
+    tools = structure.get("tools")
+    if not tools:
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "display_object_on_board",
+                    "description": (
+                        "Display a named concrete object on the visual board "
+                        "so the user can see it. Use only for concrete, "
+                        "visualizable objects mentioned in user speech."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"],
+                    },
+                },
+            }
+        ]
+    return {
+        "system_prompt": "\n".join(system_prompt_parts) or None,
+        "ref_audio_path": ref_audio_path,
+        "tools": tools,
+    }
 
 
 if __name__ == "__main__":

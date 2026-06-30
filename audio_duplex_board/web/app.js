@@ -158,6 +158,18 @@ el.runFileReplay.addEventListener('click', async () => {
 });
 
 async function createPreparedClient() {
+  // Use training-aligned prepare from /api/defaults so the model sees the
+  // same system_prompt / tools / AI reference audio it was trained on.
+  // Without these (especially ref_audio_path) the model is heavily OOD
+  // and tends to stay in listen mode the entire session.
+  setStatus('Loading training-aligned prepare defaults...');
+  const defaults = await fetchDefaults();
+  if (!defaults.default_system_prompt) {
+    throw new Error('Server did not return default_system_prompt — case folder missing or unreadable.');
+  }
+  if (!defaults.default_ref_audio_path) {
+    throw new Error('Server did not return default_ref_audio_path — AI reference audio not found in default case.');
+  }
   const client = new LiveBoardClient({
     onEvent: applyEvent,
     onStatus: setStatus,
@@ -166,19 +178,9 @@ async function createPreparedClient() {
   await client.connect();
   el.wsState.textContent = 'connected';
   client.send('prepare', {
-    system_prompt: '你是一个实时语音助手。听到适合展示到画板上的具体物体时，在后台调用 display_object_on_board。',
-    tools: [{
-      type: 'function',
-      function: {
-        name: 'display_object_on_board',
-        description: 'Display a named object on the board.',
-        parameters: {
-          type: 'object',
-          properties: { name: { type: 'string' } },
-          required: ['name'],
-        },
-      },
-    }],
+    system_prompt: defaults.default_system_prompt,
+    tools: defaults.default_tools || [],
+    ref_audio_path: defaults.default_ref_audio_path,
     generate_audio: Boolean(el.generateAudio.checked),
   });
   return client;

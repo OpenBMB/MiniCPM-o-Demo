@@ -134,11 +134,23 @@ class ReplayCaseResponse(BaseModel):
 
 
 class StreamPrepareRequest(BaseModel):
-    """Prepare a streaming board session."""
+    """Prepare a streaming board session.
+
+    Args:
+        ref_audio_path: AI voice reference audio path (the same wav that the
+            training data's `system.segments[*].kind == "audio"` entry points
+            at — e.g. `media/system_reference/HTRef06.wav`). MUST be passed for
+            real-model sessions, otherwise the model is OOD relative to its
+            training distribution and will likely stay in listen mode forever.
+        prompt_wav_path: Optional Token2Wav prompt wav for TTS streaming cache.
+            Only meaningful when `generate_audio=True`.
+    """
 
     session_id: str | None = None
     system_prompt: str = ""
     tools: list[dict[str, Any]] | None = None
+    ref_audio_path: str | None = None
+    prompt_wav_path: str | None = None
     generate_audio: bool = False
     max_spoken_tokens: int = 24
     decode_mode: str = "greedy"

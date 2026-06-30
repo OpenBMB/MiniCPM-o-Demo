@@ -131,6 +131,8 @@ class AudioDuplexBoardSession:
         prepare_request = FcDuplexPrepareRequest(
             system_prompt=request.system_prompt,
             tools=request.tools,
+            ref_audio_path=request.ref_audio_path,
+            prompt_wav_path=request.prompt_wav_path,
             generate_audio=request.generate_audio,
         )
         await asyncio.to_thread(self.fc.prepare, prepare_request)
