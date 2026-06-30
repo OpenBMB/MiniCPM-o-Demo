@@ -10,62 +10,115 @@
   <main class="app-shell">
     <section class="hero">
       <div>
-        <p class="eyebrow">Independent Prototype</p>
+        <p class="eyebrow">Independent Prototype · Mock / Real Compatible</p>
         <h1>Audio Duplex Board</h1>
-        <p class="subtitle">Static TrainingData replay → FC duplex events → display_object_on_board cards.</p>
+        <p class="subtitle">Click Start, speak loudly, and watch tool calls become board cards. The same WebSocket path works with the mock view and the real FcDuplexView.</p>
       </div>
       <div id="status" class="status">Idle</div>
     </section>
 
-    <section class="panel">
-      <label for="casePath">TrainingData case path</label>
-      <textarea id="casePath" rows="3" spellcheck="false"></textarea>
-      <div class="actions">
-        <button id="loadDefaults">Load defaults</button>
-        <button id="runReplay" class="primary">Run replay</button>
+    <section class="live-panel">
+      <div class="live-main">
+        <div class="section-title">
+          <span class="step-pill">Live</span>
+          <h2>Microphone Board Demo</h2>
+        </div>
+        <p class="hint">In mock mode, each loud speech burst triggers the next object:</p>
+        <div class="trigger-list">
+          <span>苹果</span>
+          <span>番茄</span>
+          <span>腌白菜</span>
+        </div>
+        <div class="mic-meter">
+          <div class="meter-head">
+            <span>Mic level</span>
+            <strong id="micLevelText">0.000</strong>
+          </div>
+          <div class="meter-track"><div id="micLevelBar" class="meter-fill"></div></div>
+        </div>
+        <div class="actions hero-actions">
+          <button id="startMicLive" class="primary big">Start mic live</button>
+          <button id="stopMicLive" class="big">Stop</button>
+        </div>
+        <div class="mini-stats">
+          <span>WebSocket: <b id="wsState">idle</b></span>
+          <span>Chunks sent: <b id="sentChunks">0</b></span>
+          <span>AI audio: <b id="aiAudioCount">0</b></span>
+        </div>
+      </div>
+      <div class="live-side">
+        <h3>How to test</h3>
+        <ol>
+          <li>Open this page from a browser origin that allows microphone access.</li>
+          <li>Click <b>Start mic live</b> and grant mic permission.</li>
+          <li>Speak loudly for one or two seconds.</li>
+          <li>Board cards should appear in order.</li>
+        </ol>
+        <p id="liveHint" class="hint warning">If microphone permission is blocked on this URL, use the file replay debug panel below.</p>
       </div>
     </section>
 
-    <section class="panel">
-      <h2>Mic Live</h2>
-      <p class="hint">Speak into the microphone. In mock mode, loud chunks trigger deterministic board cards: 苹果 → 番茄 → 腌白菜.</p>
-      <div class="actions">
-        <button id="startMicLive" class="primary">Start mic live</button>
-        <button id="stopMicLive">Stop mic live</button>
-      </div>
-    </section>
+    <section class="main-grid">
+      <section class="panel board-panel">
+        <div class="section-title">
+          <span class="step-pill">Board</span>
+          <h2>Cards</h2>
+        </div>
+        <div id="board" class="board empty-board">
+          <div class="empty-state">No cards yet. Start mic live and speak loudly.</div>
+        </div>
+      </section>
 
-    <section class="panel">
-      <h2>File Streaming Replay</h2>
-      <p class="hint">This path reuses the existing Demo idea: browser decodes an audio file, splits it into 1s chunks, and sends chunks like online audio.</p>
-      <input type="file" id="audioFileInput" accept="audio/*" />
-      <div class="form-row">
-        <label>Pad before <input id="padBeforeSec" type="number" value="0" min="0" max="30" /></label>
-        <label>Pad after <input id="padAfterSec" type="number" value="2" min="0" max="30" /></label>
-        <label><input id="generateAudio" type="checkbox" checked /> Generate AI audio</label>
-      </div>
-      <div class="actions">
-        <button id="runFileReplay" class="primary">Run file streaming</button>
-      </div>
-      <audio id="userAudioPlayer" controls></audio>
-      <div id="aiAudioList" class="audio-list"></div>
+      <section class="panel">
+        <div class="section-title">
+          <span class="step-pill">Trace</span>
+          <h2>Timeline</h2>
+        </div>
+        <div id="timeline" class="timeline"></div>
+      </section>
     </section>
 
     <section class="grid">
       <section class="panel">
-        <h2>Timeline</h2>
-        <div id="timeline" class="timeline"></div>
+        <h2>AI Speech</h2>
+        <div id="aiSpeech" class="speech-list"></div>
+        <div id="aiAudioList" class="audio-list"></div>
       </section>
+
       <section class="panel">
-        <h2>Board</h2>
-        <div id="board" class="board"></div>
+        <h2>Non-spoken / Tool Events</h2>
+        <div id="eventLog" class="event-log"></div>
       </section>
     </section>
 
-    <section class="panel">
-      <h2>Non-spoken / Tool Events</h2>
-      <div id="eventLog" class="event-log"></div>
-    </section>
+    <details class="panel debug-panel">
+      <summary>Debug replay tools</summary>
+      <div class="debug-grid">
+        <div>
+          <h3>File Streaming Replay</h3>
+          <p class="hint">Browser decodes an audio file, splits it into 1s chunks, and sends chunks like online audio.</p>
+          <input type="file" id="audioFileInput" accept="audio/*" />
+          <div class="form-row">
+            <label>Pad before <input id="padBeforeSec" type="number" value="0" min="0" max="30" /></label>
+            <label>Pad after <input id="padAfterSec" type="number" value="2" min="0" max="30" /></label>
+            <label><input id="generateAudio" type="checkbox" checked /> Generate AI audio</label>
+          </div>
+          <div class="actions">
+            <button id="runFileReplay" class="primary">Run file streaming</button>
+          </div>
+          <audio id="userAudioPlayer" controls></audio>
+        </div>
+        <div>
+          <h3>TrainingData Blocking Replay</h3>
+          <label for="casePath">TrainingData case path</label>
+          <textarea id="casePath" rows="4" spellcheck="false"></textarea>
+          <div class="actions">
+            <button id="loadDefaults">Load defaults</button>
+            <button id="runReplay">Run replay</button>
+          </div>
+        </div>
+      </div>
+    </details>
   </main>
   <script type="module" src="/static/app.js"></script>
 </body>

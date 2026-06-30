@@ -9,6 +9,12 @@ let liveClient = null;
 let micProvider = null;
 const el = {
   status: document.getElementById('status'),
+  micLevelBar: document.getElementById('micLevelBar'),
+  micLevelText: document.getElementById('micLevelText'),
+  wsState: document.getElementById('wsState'),
+  sentChunks: document.getElementById('sentChunks'),
+  aiAudioCount: document.getElementById('aiAudioCount'),
+  liveHint: document.getElementById('liveHint'),
   casePath: document.getElementById('casePath'),
   loadDefaults: document.getElementById('loadDefaults'),
   runReplay: document.getElementById('runReplay'),
@@ -23,8 +29,12 @@ const el = {
   generateAudio: document.getElementById('generateAudio'),
   timeline: document.getElementById('timeline'),
   board: document.getElementById('board'),
+  aiSpeech: document.getElementById('aiSpeech'),
   eventLog: document.getElementById('eventLog'),
 };
+
+let sentChunkCount = 0;
+let aiAudioCount = 0;
 
 el.loadDefaults.addEventListener('click', async () => {
   setStatus('Loading defaults...');
@@ -64,6 +74,16 @@ el.startMicLive.addEventListener('click', async () => {
           audio_base64: float32ToBase64(chunk),
           sample_rate: 16000,
         });
+        sentChunkCount += 1;
+        updateStats();
+      },
+      onLevel: updateMicLevel,
+      onPermissionHint: (text) => {
+        el.liveHint.textContent = text;
+        el.liveHint.classList.add('warning');
+      },
+      onState: (text) => {
+        el.wsState.textContent = text;
       },
       onStatus: setStatus,
     });
@@ -121,6 +141,7 @@ async function createPreparedClient() {
   });
   setStatus('Connecting...');
   await client.connect();
+  el.wsState.textContent = 'connected';
   client.send('prepare', {
     system_prompt: '你是一个实时语音助手。听到适合展示到画板上的具体物体时，在后台调用 display_object_on_board。',
     tools: [{
@@ -152,6 +173,7 @@ function stopMicLive() {
     liveClient.close();
     liveClient = null;
   }
+  el.wsState.textContent = 'closed';
 }
 
 function applyEvent(event) {
@@ -159,6 +181,7 @@ function applyEvent(event) {
     appendTimeline(`unit ${event.unit_index}: audio=${event.payload?.n_audio ?? 0}, speaking=${event.payload?.is_speaking}`);
   } else if (event.type === 'spoken_final') {
     appendTimeline(`unit ${event.unit_index}: spoken "${event.text || ''}" (${(event.payload?.token_ids || []).length} tokens)`);
+    if (event.text) appendSpeech(event.unit_index, event.text);
     if (event.payload?.audio_wav_base64) {
       appendAiAudio(event.unit_index, event.payload.audio_wav_base64);
     }
@@ -181,6 +204,12 @@ function sleep(ms) {
 }
 
 function renderBoard() {
+  if (!state.cards.length) {
+    el.board.classList.add('empty-board');
+    el.board.innerHTML = '<div class="empty-state">No cards yet. Speak loudly to trigger 苹果 / 番茄 / 腌白菜.</div>';
+    return;
+  }
+  el.board.classList.remove('empty-board');
   el.board.innerHTML = state.cards.map((card) => {
     const image = card.image?.image_url
       ? `<img src="${escapeHtml(card.image.image_url)}" alt="${escapeHtml(card.query)}" />`
@@ -202,6 +231,13 @@ function appendTimeline(text) {
   el.timeline.appendChild(item);
 }
 
+function appendSpeech(unitIndex, text) {
+  const item = document.createElement('div');
+  item.className = 'speech-row';
+  item.innerHTML = `<span>unit ${unitIndex}</span><strong>${escapeHtml(text)}</strong>`;
+  el.aiSpeech.appendChild(item);
+}
+
 function appendLog(kind, text) {
   const item = document.createElement('pre');
   item.className = `log-row ${kind}`;
@@ -213,8 +249,14 @@ function clearViews() {
   state.cards = [];
   el.timeline.innerHTML = '';
   el.board.innerHTML = '';
+  renderBoard();
+  el.aiSpeech.innerHTML = '';
   el.eventLog.innerHTML = '';
   el.aiAudioList.innerHTML = '';
+  sentChunkCount = 0;
+  aiAudioCount = 0;
+  updateStats();
+  updateMicLevel(0);
 }
 
 function setStatus(text) {
@@ -232,6 +274,20 @@ function appendAiAudio(unitIndex, wavBase64) {
   wrap.appendChild(label);
   wrap.appendChild(audio);
   el.aiAudioList.appendChild(wrap);
+  aiAudioCount += 1;
+  updateStats();
+  audio.play().catch(() => {});
+}
+
+function updateMicLevel(level) {
+  const clamped = Math.max(0, Math.min(1, level / 0.08));
+  el.micLevelBar.style.width = `${Math.round(clamped * 100)}%`;
+  el.micLevelText.textContent = level.toFixed(4);
+}
+
+function updateStats() {
+  el.sentChunks.textContent = String(sentChunkCount);
+  el.aiAudioCount.textContent = String(aiAudioCount);
 }
 
 function escapeHtml(value) {

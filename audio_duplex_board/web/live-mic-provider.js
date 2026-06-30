@@ -1,9 +1,12 @@
 const TARGET_SAMPLE_RATE = 16000;
 
 export class LiveMicProvider {
-  constructor({ onChunk, onStatus }) {
+  constructor({ onChunk, onStatus, onLevel, onPermissionHint, onState }) {
     this.onChunk = onChunk;
     this.onStatus = onStatus;
+    this.onLevel = onLevel;
+    this.onPermissionHint = onPermissionHint;
+    this.onState = onState;
     this.audioContext = null;
     this.stream = null;
     this.source = null;
@@ -14,6 +17,11 @@ export class LiveMicProvider {
 
   async start() {
     if (this.running) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.onPermissionHint?.('Microphone requires localhost or HTTPS. Current browser origin cannot access getUserMedia.');
+      throw new Error('getUserMedia is not available on this origin');
+    }
+    this.onState?.('requesting mic');
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -30,6 +38,7 @@ export class LiveMicProvider {
     this.source.connect(this.processor);
     this.processor.connect(this.audioContext.destination);
     this.running = true;
+    this.onState?.('live');
     this.onStatus?.(`Mic live @ ${Math.round(this.audioContext.sampleRate)}Hz`);
   }
 
@@ -49,10 +58,12 @@ export class LiveMicProvider {
     this.source = null;
     this.processor = null;
     this.pending = new Float32Array(0);
+    this.onState?.('stopped');
   }
 
   _handleAudio(input) {
     if (!this.running || !this.audioContext) return;
+    this.onLevel?.(rms(input));
     this.pending = concatFloat32(this.pending, input);
     const sourceRate = this.audioContext.sampleRate;
     const sourceSamplesPerUnit = Math.round(sourceRate);
@@ -63,6 +74,13 @@ export class LiveMicProvider {
       this.onChunk?.(resampled);
     }
   }
+}
+
+function rms(samples) {
+  if (!samples.length) return 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / samples.length);
 }
 
 function concatFloat32(left, right) {
