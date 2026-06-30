@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import uuid
 from pathlib import Path
+
+import numpy as np
+import soundfile as sf
 
 from core.processors import UnifiedProcessor
 from core.schemas.fc_duplex import (
@@ -183,6 +188,10 @@ class AudioDuplexBoardSession:
             )
         )
         if spoken.is_speaking or spoken.spoken_token_ids:
+            audio_wav_base64 = _audio_waveform_to_wav_base64(
+                spoken.audio_waveform,
+                spoken.audio_sample_rate or 24000,
+            )
             events.append(
                 BoardEvent(
                     type="spoken_final",
@@ -192,6 +201,8 @@ class AudioDuplexBoardSession:
                     payload={
                         "token_ids": list(spoken.spoken_token_ids),
                         "spoken_turn_eos": spoken.spoken_turn_eos,
+                        "audio_wav_base64": audio_wav_base64,
+                        "audio_sample_rate": spoken.audio_sample_rate,
                     },
                 )
             )
@@ -343,3 +354,16 @@ class AudioDuplexBoardSession:
             if value is not None:
                 return str(value)
         return tool_call.name or "unknown object"
+
+
+def _audio_waveform_to_wav_base64(audio_waveform: object, sample_rate: int) -> str | None:
+    """Encode a generated waveform as base64 wav for browser playback."""
+
+    if audio_waveform is None:
+        return None
+    array = np.asarray(audio_waveform, dtype=np.float32).reshape(-1)
+    if array.size == 0:
+        return None
+    buffer = io.BytesIO()
+    sf.write(buffer, array, sample_rate, format="WAV")
+    return base64.b64encode(buffer.getvalue()).decode("ascii")

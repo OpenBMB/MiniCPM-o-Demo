@@ -9,7 +9,9 @@ changing the board session API.
 from __future__ import annotations
 
 import html
+import importlib.util
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 from audio_duplex_board.schemas import BoardImageResult
@@ -35,6 +37,19 @@ class DisplayObjectOnBoardService:
 
         started_at = time.perf_counter()
         safe_query = query.strip()
+        live_result = _try_live_search(safe_query)
+        if live_result is not None:
+            return DisplayObjectOnBoardToolResult(
+                query=safe_query,
+                image_url=live_result.asset_url,
+                source_url=live_result.source_url,
+                title=live_result.title,
+                elapsed_ms=live_result.elapsed_ms,
+                tool_response_content={
+                    "status": "success",
+                    "displayed_object_name": safe_query,
+                },
+            )
         image = BoardImageResult(
             query=safe_query,
             asset_id=f"placeholder:{safe_query}",
@@ -73,3 +88,29 @@ def _placeholder_svg_data_url(query: str) -> str:
   <text x="320" y="258" fill="#cbd5e1" font-family="sans-serif" font-size="22" text-anchor="middle">display_object_on_board</text>
 </svg>"""
     return "data:image/svg+xml;charset=utf-8," + quote(svg)
+
+
+def _try_live_search(query: str):
+    """Try the swy-dev live image backend when available.
+
+    The standalone prototype should still run without swy-dev internet helpers,
+    so any import / network / download failure falls back to placeholder cards.
+    """
+
+    backend_path = Path(
+        "/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_dataset/"
+        "display_object_on_board_midtrain/display_object_tool/live_image_search_backend.py"
+    )
+    if not backend_path.exists():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_audio_duplex_board_live_image", backend_path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        download_dir = Path(__file__).resolve().parent / "live_image_downloads"
+        return module.search_live_image(query, download_dir=download_dir)
+    except Exception as exc:
+        print(f"[audio_duplex_board] live image fallback query={query!r}: {exc}", flush=True)
+        return None

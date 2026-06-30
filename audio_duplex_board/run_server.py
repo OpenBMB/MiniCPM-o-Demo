@@ -43,8 +43,11 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
     )
     session = AudioDuplexBoardSession(config=config, processor=processor)
     web_dir = Path(__file__).resolve().parent / "web"
+    live_image_dir = Path(__file__).resolve().parent / "tools" / "display_object_on_board" / "live_image_downloads"
+    live_image_dir.mkdir(parents=True, exist_ok=True)
     app = FastAPI(title="Audio Duplex Board Prototype")
     app.mount("/static", StaticFiles(directory=str(web_dir)), name="audio_duplex_board_static")
+    app.mount("/live-image-downloads", StaticFiles(directory=str(live_image_dir)), name="live_image_downloads")
 
     @app.get("/")
     def index() -> FileResponse:

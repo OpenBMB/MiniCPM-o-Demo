@@ -33,11 +33,13 @@
       <div class="form-row">
         <label>Pad before <input id="padBeforeSec" type="number" value="0" min="0" max="30" /></label>
         <label>Pad after <input id="padAfterSec" type="number" value="2" min="0" max="30" /></label>
+        <label><input id="generateAudio" type="checkbox" checked /> Generate AI audio</label>
       </div>
       <div class="actions">
         <button id="runFileReplay" class="primary">Run file streaming</button>
       </div>
       <audio id="userAudioPlayer" controls></audio>
+      <div id="aiAudioList" class="audio-list"></div>
     </section>
 
     <section class="grid">

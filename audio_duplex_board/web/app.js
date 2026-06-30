@@ -12,8 +12,10 @@ const el = {
   audioFileInput: document.getElementById('audioFileInput'),
   runFileReplay: document.getElementById('runFileReplay'),
   userAudioPlayer: document.getElementById('userAudioPlayer'),
+  aiAudioList: document.getElementById('aiAudioList'),
   padBeforeSec: document.getElementById('padBeforeSec'),
   padAfterSec: document.getElementById('padAfterSec'),
+  generateAudio: document.getElementById('generateAudio'),
   timeline: document.getElementById('timeline'),
   board: document.getElementById('board'),
   eventLog: document.getElementById('eventLog'),
@@ -85,7 +87,7 @@ el.runFileReplay.addEventListener('click', async () => {
         },
       },
     }],
-    generate_audio: false,
+    generate_audio: Boolean(el.generateAudio.checked),
   });
   setStatus(`Streaming ${chunks.length} chunks...`);
   el.userAudioPlayer.currentTime = 0;
@@ -106,7 +108,10 @@ function applyEvent(event) {
   if (event.type === 'unit_started') {
     appendTimeline(`unit ${event.unit_index}: audio=${event.payload?.n_audio ?? 0}, speaking=${event.payload?.is_speaking}`);
   } else if (event.type === 'spoken_final') {
-    appendTimeline(`unit ${event.unit_index}: spoken tokens=${(event.payload?.token_ids || []).length}`);
+    appendTimeline(`unit ${event.unit_index}: spoken "${event.text || ''}" (${(event.payload?.token_ids || []).length} tokens)`);
+    if (event.payload?.audio_wav_base64) {
+      appendAiAudio(event.unit_index, event.payload.audio_wav_base64);
+    }
   } else if (event.type === 'think_final') {
     appendLog('think', event.think_text || '');
   } else if (event.type === 'tool_call_final') {
@@ -159,10 +164,24 @@ function clearViews() {
   el.timeline.innerHTML = '';
   el.board.innerHTML = '';
   el.eventLog.innerHTML = '';
+  el.aiAudioList.innerHTML = '';
 }
 
 function setStatus(text) {
   el.status.textContent = text;
+}
+
+function appendAiAudio(unitIndex, wavBase64) {
+  const wrap = document.createElement('div');
+  wrap.className = 'audio-item';
+  const label = document.createElement('span');
+  label.textContent = `AI unit ${unitIndex}`;
+  const audio = document.createElement('audio');
+  audio.controls = true;
+  audio.src = `data:audio/wav;base64,${wavBase64}`;
+  wrap.appendChild(label);
+  wrap.appendChild(audio);
+  el.aiAudioList.appendChild(wrap);
 }
 
 function escapeHtml(value) {

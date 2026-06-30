@@ -5,6 +5,8 @@ These tests use a fake FC duplex view and do not load GPU models.
 
 from __future__ import annotations
 
+import numpy as np
+
 from audio_duplex_board.config import AudioDuplexBoardConfig
 from audio_duplex_board.schemas import StreamAudioChunkRequest, StreamPrepareRequest
 from audio_duplex_board.session import AudioDuplexBoardSession
@@ -44,6 +46,8 @@ class _FakeFcDuplex:
             is_listen=True,
             is_speaking=False,
             spoken_token_ids=[151705],
+            audio_waveform=np.zeros(16, dtype=np.float32),
+            audio_sample_rate=24000,
         )
 
     def streaming_non_spoken_generate(self, request):
@@ -96,6 +100,8 @@ def test_streaming_session_creates_board_card_and_queues_tool_response() -> None
         StreamAudioChunkRequest(audio_base64="AAAA", sample_rate=16000)
     )
     first_types = [event.type for event in first_events]
+    spoken_event = next(event for event in first_events if event.type == "spoken_final")
+    assert spoken_event.payload["audio_wav_base64"]
     assert "tool_call_final" in first_types
     assert "board_card_created" in first_types
     assert "board_card_updated" in first_types

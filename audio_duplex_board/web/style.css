@@ -111,6 +111,20 @@ audio {
   margin-top: 12px;
 }
 
+.audio-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.audio-item {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px;
+  align-items: center;
+  color: #cbd5e1;
+}
+
 button {
   border: 1px solid #334155;
   border-radius: 10px;
