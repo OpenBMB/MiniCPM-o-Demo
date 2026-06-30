@@ -4909,10 +4909,17 @@ class FcDuplexCapability:
         if self._non_spoken_slot_open:
             self.streaming_non_spoken_generate(close_reason="budget_reached")
         if self._spoken_slot_open:
-            self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_END)])
-            self._spoken_slot_open = False
+            self._close_spoken_slot()
         if self._current_unit_open:
             self.finalize_unit()
+
+    def _close_spoken_slot(self, *, append_spoken_slot_eos: bool = False) -> None:
+        close_ids = []
+        if append_spoken_slot_eos:
+            close_ids.append(self.sid(self.K.SPOKEN_SLOT_EOS))
+        close_ids.append(self.sid(self.K.AI_SPOKEN_SLOT_END))
+        self._feed_ids(close_ids)
+        self._spoken_slot_open = False
 
     def streaming_prefill(
         self,
@@ -5002,8 +5009,7 @@ class FcDuplexCapability:
             if nid in spoken_terms:
                 break
 
-        self._feed_ids([self.sid(K.AI_SPOKEN_SLOT_END)])
-        self._spoken_slot_open = False
+        self._close_spoken_slot(append_spoken_slot_eos=turn_eos)
         text = self._flush(text_ids) if text_ids else ""
         llm_end_time = time.time()
         audio_info = self._generate_spoken_audio(
@@ -5156,8 +5162,7 @@ class FcDuplexCapability:
         if self._non_spoken_slot_open:
             self.streaming_non_spoken_generate(close_reason="budget_reached")
         if self._spoken_slot_open:
-            self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_END)])
-            self._spoken_slot_open = False
+            self._close_spoken_slot()
         self._feed_ids([self.sid(self.K.UNIT_END)])
         info = dict(self._current_unit_info or {"unit": self._current_unit_idx})
         self.units_info.append(info)
