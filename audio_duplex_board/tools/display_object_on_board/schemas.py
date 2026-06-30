@@ -16,7 +16,22 @@ class DisplayObjectOnBoardArgs(BaseModel):
 
 
 class DisplayObjectOnBoardToolResult(BaseModel):
-    """Tool wrapper result for board display and model feedback."""
+    """Tool wrapper result for board display and model feedback.
+
+    Args:
+        query: 模型 tool call 的 name 字段，既是搜图 query 也是 board 上展示的字段。
+        image_url: 前端可加载的图片 URL（live 命中时是 `/live-image-downloads/...` 静态路径，
+            fallback 是 SVG data URL）。
+        source_url: 图片在原搜索源上的页面 URL，前端可加 "查看出处" 链接。
+        title: 搜索结果标题，前端可作为悬浮文案；fallback 时同 query。
+        elapsed_ms: 搜图耗时。
+        error: live search 失败时的错误描述；fallback 时此字段非 None，但 image_url
+            仍指向 placeholder SVG，可正常展示。
+        tool_response_content: 严格按训练 schema 构造的 JSON **字符串**（不是 dict！）。
+            view 端 `_extract_train_tool_responses` 把训练数据的
+            `contents[*].text` 拼成字符串，再 `FcToolResponse.content=<str>` 传给模型，
+            因此推理时必须保持同样的 string 形态，否则与训练分布不一致。
+    """
 
     query: str
     image_url: str | None = None
@@ -24,4 +39,4 @@ class DisplayObjectOnBoardToolResult(BaseModel):
     title: str = ""
     elapsed_ms: float = 0.0
     error: str | None = None
-    tool_response_content: dict[str, object] = Field(default_factory=dict)
+    tool_response_content: str = ""
