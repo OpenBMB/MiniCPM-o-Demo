@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 import types
+from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -356,10 +357,17 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         if pt_path is not None:
             logger.info(f"Loading extra weights: {pt_path}")
             state_dict = torch.load(pt_path, map_location="cpu")
+            prefix_counts = Counter(key.split(".", 1)[0] for key in state_dict)
             embed_key = "llm.model.embed_tokens.weight"
+            resize_info = {"resized": False, "current_vocab": None, "checkpoint_vocab": None}
             if embed_key in state_dict:
                 checkpoint_vocab = int(state_dict[embed_key].shape[0])
                 current_vocab = int(self.llm.get_input_embeddings().weight.shape[0])
+                resize_info = {
+                    "resized": checkpoint_vocab > current_vocab,
+                    "current_vocab": current_vocab,
+                    "checkpoint_vocab": checkpoint_vocab,
+                }
                 if checkpoint_vocab > current_vocab:
                     logger.info(
                         "Resizing LLM token embeddings before loading extra weights: %d -> %d",
@@ -371,6 +379,18 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             logger.info(f"Weights loaded — missing: {len(info.missing_keys)}, unexpected: {len(info.unexpected_keys)}")
             if info.unexpected_keys:
                 logger.warning(f"Unexpected keys: {info.unexpected_keys[:5]}...")
+            print(
+                "[MiniCPMO45 init_unified] extra_weights_loaded "
+                f"pt_path={pt_path} "
+                f"num_keys={len(state_dict)} "
+                f"prefix_counts={dict(sorted(prefix_counts.items()))} "
+                f"resize_info={resize_info} "
+                f"missing_count={len(info.missing_keys)} "
+                f"unexpected_count={len(info.unexpected_keys)} "
+                f"missing_first={list(info.missing_keys[:20])} "
+                f"unexpected_first={list(info.unexpected_keys[:20])}",
+                flush=True,
+            )
             del state_dict
 
         # Update duplex config
