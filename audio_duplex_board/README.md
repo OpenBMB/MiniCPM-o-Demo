@@ -8,7 +8,8 @@ flow so the board interaction can be developed and deleted or migrated safely.
 
 Current MVP:
 
-- Run static `O5DuplexTrainingData` case replay through `UnifiedProcessor.fc_duplex`.
+- Run browser-side audio file streaming through `UnifiedProcessor.fc_duplex`.
+- Keep static `O5DuplexTrainingData` case replay as a debug endpoint.
 - Convert FC replay output into board-facing events.
 - Render spoken / think / tool_call summaries and board cards in a standalone page.
 - Use deterministic placeholder image cards while the real search backend is being integrated.
@@ -37,6 +38,12 @@ Open:
 http://localhost:18080/
 ```
 
+The page supports two prototype flows:
+
+- `File Streaming Replay`: browser decodes an audio file, splits it into 1s
+  chunks, sends chunks through `/ws/session`, and plays the user file locally.
+- `TrainingData case path`: blocking debug replay through `/api/replay-case`.
+
 ## CLI Replay
 
 ```bash
@@ -49,6 +56,28 @@ Outputs:
 
 - `events.jsonl`
 - `summary.json`
+
+## API
+
+WebSocket:
+
+```text
+ws://<host>:<port>/ws/session
+```
+
+Messages:
+
+```json
+{ "type": "prepare", "payload": { "system_prompt": "...", "tools": [...] } }
+{ "type": "audio_chunk", "payload": { "audio_base64": "...", "sample_rate": 16000 } }
+{ "type": "finish", "payload": { "reason": "file_replay_finished" } }
+```
+
+Debug HTTP endpoint:
+
+```text
+POST /api/replay-case
+```
 
 ## Layout
 

@@ -1,4 +1,6 @@
 import { BoardState } from './board-state.js';
+import { decodeFileToChunks, float32ToBase64 } from './file-audio-provider.js';
+import { LiveBoardClient } from './live-board-client.js';
 import { fetchDefaults, replayCase } from './replay-client.js';
 
 const state = new BoardState({ maxCards: 10 });
@@ -7,6 +9,11 @@ const el = {
   casePath: document.getElementById('casePath'),
   loadDefaults: document.getElementById('loadDefaults'),
   runReplay: document.getElementById('runReplay'),
+  audioFileInput: document.getElementById('audioFileInput'),
+  runFileReplay: document.getElementById('runFileReplay'),
+  userAudioPlayer: document.getElementById('userAudioPlayer'),
+  padBeforeSec: document.getElementById('padBeforeSec'),
+  padAfterSec: document.getElementById('padAfterSec'),
   timeline: document.getElementById('timeline'),
   board: document.getElementById('board'),
   eventLog: document.getElementById('eventLog'),
@@ -40,6 +47,61 @@ el.runReplay.addEventListener('click', async () => {
   }
 });
 
+el.audioFileInput.addEventListener('change', () => {
+  const file = el.audioFileInput.files?.[0];
+  if (!file) return;
+  el.userAudioPlayer.src = URL.createObjectURL(file);
+});
+
+el.runFileReplay.addEventListener('click', async () => {
+  const file = el.audioFileInput.files?.[0];
+  if (!file) {
+    setStatus('Please choose an audio file');
+    return;
+  }
+  clearViews();
+  setStatus('Decoding file...');
+  const chunks = await decodeFileToChunks(file, {
+    padBeforeSec: Number(el.padBeforeSec.value || 0),
+    padAfterSec: Number(el.padAfterSec.value || 2),
+  });
+  const client = new LiveBoardClient({
+    onEvent: applyEvent,
+    onStatus: setStatus,
+  });
+  setStatus('Connecting...');
+  await client.connect();
+  client.send('prepare', {
+    system_prompt: '你是一个实时语音助手。听到适合展示到画板上的具体物体时，在后台调用 display_object_on_board。',
+    tools: [{
+      type: 'function',
+      function: {
+        name: 'display_object_on_board',
+        description: 'Display a named object on the board.',
+        parameters: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+          required: ['name'],
+        },
+      },
+    }],
+    generate_audio: false,
+  });
+  setStatus(`Streaming ${chunks.length} chunks...`);
+  el.userAudioPlayer.currentTime = 0;
+  el.userAudioPlayer.play().catch(() => {});
+  for (let i = 0; i < chunks.length; i++) {
+    client.send('audio_chunk', {
+      audio_base64: float32ToBase64(chunks[i]),
+      sample_rate: 16000,
+    });
+    setStatus(`Sent chunk ${i + 1}/${chunks.length}`);
+    await sleep(1000);
+  }
+  client.send('finish', { reason: 'file_replay_finished' });
+  setStatus('File replay finished');
+});
+
 function applyEvent(event) {
   if (event.type === 'unit_started') {
     appendTimeline(`unit ${event.unit_index}: audio=${event.payload?.n_audio ?? 0}, speaking=${event.payload?.is_speaking}`);
@@ -57,6 +119,10 @@ function applyEvent(event) {
   } else if (event.type === 'session_error') {
     appendLog('error', event.text || 'unknown error');
   }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function renderBoard() {

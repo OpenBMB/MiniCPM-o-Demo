@@ -26,6 +26,20 @@
       </div>
     </section>
 
+    <section class="panel">
+      <h2>File Streaming Replay</h2>
+      <p class="hint">This path reuses the existing Demo idea: browser decodes an audio file, splits it into 1s chunks, and sends chunks like online audio.</p>
+      <input type="file" id="audioFileInput" accept="audio/*" />
+      <div class="form-row">
+        <label>Pad before <input id="padBeforeSec" type="number" value="0" min="0" max="30" /></label>
+        <label>Pad after <input id="padAfterSec" type="number" value="2" min="0" max="30" /></label>
+      </div>
+      <div class="actions">
+        <button id="runFileReplay" class="primary">Run file streaming</button>
+      </div>
+      <audio id="userAudioPlayer" controls></audio>
+    </section>
+
     <section class="grid">
       <section class="panel">
         <h2>Timeline</h2>

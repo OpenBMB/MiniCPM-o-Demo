@@ -100,3 +100,27 @@ class ReplayCaseResponse(BaseModel):
     error: str | None = None
     events: list[BoardEvent] = Field(default_factory=list)
     summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class StreamPrepareRequest(BaseModel):
+    """Prepare a streaming board session."""
+
+    session_id: str | None = None
+    system_prompt: str = ""
+    tools: list[dict[str, Any]] | None = None
+    generate_audio: bool = False
+    max_spoken_tokens: int = 24
+    decode_mode: str = "greedy"
+
+
+class StreamAudioChunkRequest(BaseModel):
+    """One user audio unit sent by the browser."""
+
+    audio_base64: str
+    sample_rate: int = 16000
+
+
+class StreamFinishRequest(BaseModel):
+    """Finish the streaming board session."""
+
+    reason: str = "client_finished"

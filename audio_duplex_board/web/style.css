@@ -44,6 +44,11 @@ h1, h2 {
   margin: 0;
 }
 
+.hint {
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
 .status {
   justify-self: end;
   padding: 10px 14px;
@@ -83,6 +88,27 @@ textarea {
   margin-top: 12px;
   display: flex;
   gap: 10px;
+}
+
+.form-row {
+  display: flex;
+  gap: 14px;
+  margin: 12px 0;
+  align-items: center;
+}
+
+.form-row input {
+  width: 72px;
+  margin-left: 6px;
+}
+
+input[type="file"], input[type="number"] {
+  color: #e5e7eb;
+}
+
+audio {
+  width: 100%;
+  margin-top: 12px;
 }
 
 button {
