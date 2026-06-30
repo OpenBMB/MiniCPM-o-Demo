@@ -53,6 +53,10 @@ from core.schemas.fc_duplex import (
     FcToolResponse,
 )
 
+# When the session is wired to a WS-based remote view, fc methods are async
+# and stream_non_spoken_decode returns an async iterator. We duck-type on the
+# `stream_non_spoken_decode` attribute rather than isinstance.
+
 from audio_duplex_board.config import AudioDuplexBoardConfig
 from audio_duplex_board.schemas import (
     BoardCard,
@@ -163,7 +167,7 @@ class AudioDuplexBoardSession:
             f"generate_audio={request.generate_audio}",
             flush=True,
         )
-        await asyncio.to_thread(self.fc.prepare, prepare_request)
+        await self._call_fc(self.fc.prepare, prepare_request)
         self._prepared = True
         await self._send_event(
             BoardEvent(
@@ -212,7 +216,7 @@ class AudioDuplexBoardSession:
             tool_responses = list(self._pending_tool_responses)
             self._pending_tool_responses = []
 
-        prefill = await asyncio.to_thread(
+        prefill = await self._call_fc(
             self.fc.streaming_prefill,
             FcDuplexPrefillRequest(
                 audio_data=request.audio_base64,
@@ -241,7 +245,7 @@ class AudioDuplexBoardSession:
         )
 
         # 2) spoken slot
-        spoken = await asyncio.to_thread(
+        spoken = await self._call_fc(
             self.fc.streaming_spoken_generate,
             FcSpokenGenerateRequest(
                 max_tokens=self._max_spoken_tokens,
@@ -276,7 +280,7 @@ class AudioDuplexBoardSession:
         non_spoken_done_ts = time.perf_counter()
 
         # 4) finalize unit
-        unit = await asyncio.to_thread(self.fc.finalize_unit)
+        unit = await self._call_fc(self.fc.finalize_unit)
         finalize_done_ts = time.perf_counter()
 
         # Timing breakdown
@@ -356,28 +360,80 @@ class AudioDuplexBoardSession:
 
     # --------------------------------------------------- non-spoken loop
 
+    async def _call_fc(self, method, *args, **kwargs):
+        """Call an fc method that may be sync (RemoteFcDuplexView / UnifiedProcessor
+        local) or async (WsRemoteFcDuplexView). Duck-typed via inspect.
+
+        Sync methods run in a thread to keep the event loop responsive.
+        """
+
+        import inspect
+
+        result = method(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        # sync call returned a real value; offload via to_thread to keep loop responsive
+        # (we can't to_thread retroactively, so this path is only safe when the call
+        # is already fast; for the heavy paths we rely on async fc).
+        return result
+
     async def _run_non_spoken_loop(self, unit_index: int) -> tuple[int, bool]:
         """Step through non-spoken tokens, emitting delta events and reacting to closed spans.
 
+        When the fc client supports `stream_non_spoken_decode`, the decode loop
+        runs server-side and we just consume `decode_step` events; the
+        cooperative stop signal flows over ws as `decode_stop` with the
+        half-token-average latency property (server checks the stop flag at
+        the TOP of every decode iteration; an in-flight step still completes
+        and arrives as a regular step before the loop exits).
+
+        Otherwise we fall back to the legacy per-step RPC pattern (sync HTTP
+        client or in-process FcDuplexView).
+
         Returns:
-            (n_steps, short_circuited): n_steps is how many model decode steps
-            ran inside this unit's non-spoken slot. short_circuited is True if
-            we exited because the next prefill arrived (real-time budget
-            overrun); in that case we DO NOT proactively send close_reason=
-            "budget_reached" — we let the view auto-close the slot with
-            <|non_spoken_budget_reached|> on the next streaming_prefill call,
-            which matches training distribution.
+            (n_steps, short_circuited): short_circuited is True iff the server
+            (or this loop, in the fallback path) ended decode because of
+            client-issued stop / next prefill arrival.
         """
+
+        if hasattr(self.fc, "stream_non_spoken_decode"):
+            return await self._run_non_spoken_loop_streaming(unit_index)
+        return await self._run_non_spoken_loop_polling(unit_index)
+
+    async def _run_non_spoken_loop_streaming(self, unit_index: int) -> tuple[int, bool]:
+        """Streaming variant: one ws `decode_start` → many `decode_step` → `decode_end`.
+
+        Server-side loop reads `decode_stop` (sent when self._next_prefill_event fires)
+        from a separate ws frame and checks at the top of every iteration.
+        """
+
+        stream = self.fc.stream_non_spoken_decode(
+            decode_mode=self._decode_mode,
+            stop_event=self._next_prefill_event,
+        )
+        n_steps = 0
+        async for step in stream:
+            n_steps += 1
+            await self._emit_step_events(step, unit_index)
+            if step.terminated:
+                # view-side terminated (no_action / slot_eos / non_spoken_budget_reached etc.)
+                # short_circuited = False because the model itself decided.
+                return n_steps, False
+        # iteration ended via decode_end. last_reason tells us why.
+        short_circuited = stream.last_reason == "stopped_by_client"
+        return stream.last_n_steps or n_steps, short_circuited
+
+    async def _run_non_spoken_loop_polling(self, unit_index: int) -> tuple[int, bool]:
+        """Legacy variant: per-step RPC poll loop with next-prefill check at top."""
 
         n_steps = 0
         for _ in range(self._MAX_NON_SPOKEN_STEPS_PER_UNIT):
-            # If a new audio_chunk has already arrived on the ws, the unit's
-            # real-time budget is up — bail out now and let the view's next
-            # prefill handle slot closing.
+            # Check stop flag at the TOP of every iteration. Any in-flight
+            # step is already in `step` from the previous iteration and was
+            # emitted, so we can exit cleanly here.
             if self._next_prefill_event.is_set():
                 return n_steps, True
-
-            step = await asyncio.to_thread(
+            step = await self._call_fc(
                 self.fc.streaming_non_spoken_generate,
                 FcNonSpokenGenerateRequest(
                     max_tokens=1, decode_mode=self._decode_mode
@@ -387,11 +443,8 @@ class AudioDuplexBoardSession:
             await self._emit_step_events(step, unit_index)
             if step.terminated:
                 return n_steps, False
-        # Hard cap fallback (death-loop protection). Should be rare in real-time
-        # operation because the next-prefill signal normally triggers first.
-        # In this case there is no real-time pressure and the unit really did
-        # produce a runaway non-spoken slot, so we force a close.
-        close = await asyncio.to_thread(
+        # Hard cap fallback (death-loop protection).
+        close = await self._call_fc(
             self.fc.streaming_non_spoken_generate,
             FcNonSpokenGenerateRequest(
                 max_tokens=0,

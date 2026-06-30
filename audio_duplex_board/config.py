@@ -46,6 +46,11 @@ class AudioDuplexBoardConfig:
     # cctl GPU job.
     remote_view_url: str | None = None
     remote_view_verify_tls: bool = False
+    # Preferred transport when remote_view_url is set:
+    #   "ws"  -> persistent WebSocket, streams non_spoken decode tokens with
+    #            cooperative stop (recommended).
+    #   "http" -> legacy per-step HTTP RPC; chatty but simpler.
+    remote_view_transport: str = "ws"
 
     @property
     def case_folder_path(self) -> Path | None:

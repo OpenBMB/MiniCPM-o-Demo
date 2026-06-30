@@ -42,6 +42,7 @@ from audio_duplex_board.config import AudioDuplexBoardConfig, make_default_confi
 from audio_duplex_board.events import events_from_train_data_result
 from audio_duplex_board.mock_view import MockUnifiedProcessor
 from audio_duplex_board.remote_view import RemoteFcDuplexView, RemoteProcessor
+from audio_duplex_board.ws_remote_view import WsRemoteFcDuplexView, WsRemoteProcessor
 from audio_duplex_board.schemas import (
     BoardEvent,
     ReplayCaseRequest,
@@ -71,15 +72,24 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
         # on devbox. The 9B model is not loaded here at all.
         print(
             f"[run_server] remote view enabled: url={config.remote_view_url} "
+            f"transport={config.remote_view_transport} "
             f"verify_tls={config.remote_view_verify_tls}",
             flush=True,
         )
-        processor = RemoteProcessor(
-            RemoteFcDuplexView(
-                config.remote_view_url,
-                verify_tls=config.remote_view_verify_tls,
+        if config.remote_view_transport == "ws":
+            processor = WsRemoteProcessor(
+                WsRemoteFcDuplexView(
+                    config.remote_view_url,
+                    verify_tls=config.remote_view_verify_tls,
+                )
             )
-        )
+        else:
+            processor = RemoteProcessor(
+                RemoteFcDuplexView(
+                    config.remote_view_url,
+                    verify_tls=config.remote_view_verify_tls,
+                )
+            )
     else:
         # Local mode: load 9B model in-process (used by single-machine deploys).
         from core.processors import UnifiedProcessor  # heavy import, lazy
@@ -385,6 +395,14 @@ def parse_args() -> argparse.Namespace:
         help="Verify TLS cert of the remote model server (default off; the "
         "model server typically uses a self-signed cert).",
     )
+    parser.add_argument(
+        "--remote-view-transport",
+        choices=("ws", "http"),
+        default="ws",
+        help="Transport between business and model_server. `ws` (default) uses "
+        "persistent WebSocket with server-side decode streaming (recommended). "
+        "`http` uses legacy per-step HTTP RPC (chatty).",
+    )
     return parser.parse_args()
 
 
@@ -404,6 +422,7 @@ def main() -> None:
         mock_energy_threshold=args.mock_energy_threshold,
         remote_view_url=args.remote_view_url,
         remote_view_verify_tls=args.remote_view_verify_tls,
+        remote_view_transport=args.remote_view_transport,
     )
     uvicorn_kwargs: dict[str, object] = {"host": config.host, "port": config.port}
     if args.ssl_keyfile and args.ssl_certfile:
