@@ -29,6 +29,12 @@ from typing import Any
 
 import numpy as np
 import requests
+import urllib3
+
+# Silence the "Unverified HTTPS request" spam when talking to the model server
+# over its self-signed cert. The connection is in-cluster and the trust boundary
+# is the cctl pod, not TLS hostname verification.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from core.schemas.fc_duplex import (
     FcDuplexPrefillRequest,

@@ -135,6 +135,14 @@ class AudioDuplexBoardSession:
             prompt_wav_path=request.prompt_wav_path,
             generate_audio=request.generate_audio,
         )
+        print(
+            f"[session {self.session_id}] prepare: "
+            f"system_prompt_len={len(request.system_prompt or '')} "
+            f"tools={len(request.tools or [])} "
+            f"ref_audio_path={request.ref_audio_path!r} "
+            f"generate_audio={request.generate_audio}",
+            flush=True,
+        )
         await asyncio.to_thread(self.fc.prepare, prepare_request)
         self._prepared = True
         await self._send_event(
@@ -220,6 +228,22 @@ class AudioDuplexBoardSession:
 
         # 4) finalize unit
         unit = await asyncio.to_thread(self.fc.finalize_unit)
+        # One-liner business log so grep tells the story even without per-event
+        # JSON dumps. `is_listen` and `non_spoken_terminator=no_action` for every
+        # unit means the model is choosing to stay silent on this user audio
+        # distribution — a strong signal that the ckpt is OOD vs the mic input
+        # rather than that the service is broken.
+        n_spoken = len(spoken.spoken_token_ids or [])
+        n_non_spoken = len(unit.closed_spans)
+        speak_text = (spoken.spoken_text or "")[:40].replace("\n", "\\n")
+        print(
+            f"[session {self.session_id} unit={unit.unit}] "
+            f"listen={unit.is_listen} speak={unit.is_speaking} "
+            f"spoken_tok={n_spoken} text={speak_text!r} "
+            f"non_spoken_term={unit.non_spoken_terminator} "
+            f"closed_spans={n_non_spoken}",
+            flush=True,
+        )
         await self._send_event(
             BoardEvent(
                 type="unit_finished",
