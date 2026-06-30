@@ -233,6 +233,15 @@ async def _run_ws_session(
         # dead socket (silently swallowed by send_event) and clean up state.
         await session.finish_stream(reason="websocket_disconnected")
     except Exception as exc:  # noqa: BLE001
+        # Print the full traceback to server stdout (= cctl job log) so we can
+        # diagnose what blew up inside session.prepare / process_audio_chunk
+        # without relying on browser console.
+        import traceback as _tb
+        print(
+            f"[ws_session_error] session_id={session.session_id} "
+            f"exc={type(exc).__name__}: {exc}\n{_tb.format_exc()}",
+            flush=True,
+        )
         await send_event(
             BoardEvent(
                 type="session_error",
