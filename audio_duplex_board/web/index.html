@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audio Duplex Board Prototype</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Independent Prototype</p>
+        <h1>Audio Duplex Board</h1>
+        <p class="subtitle">Static TrainingData replay → FC duplex events → display_object_on_board cards.</p>
+      </div>
+      <div id="status" class="status">Idle</div>
+    </section>
+
+    <section class="panel">
+      <label for="casePath">TrainingData case path</label>
+      <textarea id="casePath" rows="3" spellcheck="false"></textarea>
+      <div class="actions">
+        <button id="loadDefaults">Load defaults</button>
+        <button id="runReplay" class="primary">Run replay</button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <section class="panel">
+        <h2>Timeline</h2>
+        <div id="timeline" class="timeline"></div>
+      </section>
+      <section class="panel">
+        <h2>Board</h2>
+        <div id="board" class="board"></div>
+      </section>
+    </section>
+
+    <section class="panel">
+      <h2>Non-spoken / Tool Events</h2>
+      <div id="eventLog" class="event-log"></div>
+    </section>
+  </main>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

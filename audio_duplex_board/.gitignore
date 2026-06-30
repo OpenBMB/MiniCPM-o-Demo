@@ -1,0 +1,5 @@
+/runs/
+/tools/display_object_on_board/live_image_downloads/
+__pycache__/
+*.pyc
+*.log
