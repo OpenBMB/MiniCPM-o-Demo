@@ -259,6 +259,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mock-energy-threshold", type=float, default=defaults.mock_energy_threshold
     )
+    parser.add_argument(
+        "--ssl-keyfile",
+        default=None,
+        help="Path to TLS private key (PEM). HTTPS is required for getUserMedia mic access on non-localhost URLs.",
+    )
+    parser.add_argument(
+        "--ssl-certfile",
+        default=None,
+        help="Path to TLS certificate chain (PEM). Pair with --ssl-keyfile to enable HTTPS.",
+    )
     return parser.parse_args()
 
 
@@ -277,7 +287,13 @@ def main() -> None:
         use_mock_view=args.mock,
         mock_energy_threshold=args.mock_energy_threshold,
     )
-    uvicorn.run(create_app(config), host=config.host, port=config.port)
+    uvicorn_kwargs: dict[str, object] = {"host": config.host, "port": config.port}
+    if args.ssl_keyfile and args.ssl_certfile:
+        uvicorn_kwargs["ssl_keyfile"] = args.ssl_keyfile
+        uvicorn_kwargs["ssl_certfile"] = args.ssl_certfile
+    elif args.ssl_keyfile or args.ssl_certfile:
+        raise SystemExit("--ssl-keyfile and --ssl-certfile must be supplied together")
+    uvicorn.run(create_app(config), **uvicorn_kwargs)
 
 
 def _prepend_sdk_src(sdk_src: str | None) -> None:
