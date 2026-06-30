@@ -50,6 +50,10 @@ In mock mode, loud audio chunks trigger deterministic tool calls in order:
 This validates the page, WebSocket session, board cards, audio playback, and
 image search path without loading a GPU model.
 
+For microphone testing, open the page on a browser origin that allows
+`getUserMedia` (for example `localhost` or HTTPS), click `Start mic live`, and
+speak loudly. The same WebSocket protocol is used for mock and real model modes.
+
 Open:
 
 ```text

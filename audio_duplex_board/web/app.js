@@ -1,9 +1,12 @@
 import { BoardState } from './board-state.js';
 import { decodeFileToChunks, float32ToBase64 } from './file-audio-provider.js';
 import { LiveBoardClient } from './live-board-client.js';
+import { LiveMicProvider } from './live-mic-provider.js';
 import { fetchDefaults, replayCase } from './replay-client.js';
 
 const state = new BoardState({ maxCards: 10 });
+let liveClient = null;
+let micProvider = null;
 const el = {
   status: document.getElementById('status'),
   casePath: document.getElementById('casePath'),
@@ -11,6 +14,8 @@ const el = {
   runReplay: document.getElementById('runReplay'),
   audioFileInput: document.getElementById('audioFileInput'),
   runFileReplay: document.getElementById('runFileReplay'),
+  startMicLive: document.getElementById('startMicLive'),
+  stopMicLive: document.getElementById('stopMicLive'),
   userAudioPlayer: document.getElementById('userAudioPlayer'),
   aiAudioList: document.getElementById('aiAudioList'),
   padBeforeSec: document.getElementById('padBeforeSec'),
@@ -49,6 +54,32 @@ el.runReplay.addEventListener('click', async () => {
   }
 });
 
+el.startMicLive.addEventListener('click', async () => {
+  clearViews();
+  try {
+    liveClient = await createPreparedClient();
+    micProvider = new LiveMicProvider({
+      onChunk: (chunk) => {
+        liveClient.send('audio_chunk', {
+          audio_base64: float32ToBase64(chunk),
+          sample_rate: 16000,
+        });
+      },
+      onStatus: setStatus,
+    });
+    await micProvider.start();
+    setStatus('Mic live: speak loudly to trigger board cards');
+  } catch (err) {
+    setStatus(`Mic live error: ${err.message}`);
+    stopMicLive();
+  }
+});
+
+el.stopMicLive.addEventListener('click', () => {
+  stopMicLive();
+  setStatus('Mic live stopped');
+});
+
 el.audioFileInput.addEventListener('change', () => {
   const file = el.audioFileInput.files?.[0];
   if (!file) return;
@@ -67,6 +98,23 @@ el.runFileReplay.addEventListener('click', async () => {
     padBeforeSec: Number(el.padBeforeSec.value || 0),
     padAfterSec: Number(el.padAfterSec.value || 2),
   });
+  const client = await createPreparedClient();
+  setStatus(`Streaming ${chunks.length} chunks...`);
+  el.userAudioPlayer.currentTime = 0;
+  el.userAudioPlayer.play().catch(() => {});
+  for (let i = 0; i < chunks.length; i++) {
+    client.send('audio_chunk', {
+      audio_base64: float32ToBase64(chunks[i]),
+      sample_rate: 16000,
+    });
+    setStatus(`Sent chunk ${i + 1}/${chunks.length}`);
+    await sleep(1000);
+  }
+  client.send('finish', { reason: 'file_replay_finished' });
+  setStatus('File replay finished');
+});
+
+async function createPreparedClient() {
   const client = new LiveBoardClient({
     onEvent: applyEvent,
     onStatus: setStatus,
@@ -89,20 +137,22 @@ el.runFileReplay.addEventListener('click', async () => {
     }],
     generate_audio: Boolean(el.generateAudio.checked),
   });
-  setStatus(`Streaming ${chunks.length} chunks...`);
-  el.userAudioPlayer.currentTime = 0;
-  el.userAudioPlayer.play().catch(() => {});
-  for (let i = 0; i < chunks.length; i++) {
-    client.send('audio_chunk', {
-      audio_base64: float32ToBase64(chunks[i]),
-      sample_rate: 16000,
-    });
-    setStatus(`Sent chunk ${i + 1}/${chunks.length}`);
-    await sleep(1000);
+  return client;
+}
+
+function stopMicLive() {
+  if (micProvider) {
+    micProvider.stop();
+    micProvider = null;
   }
-  client.send('finish', { reason: 'file_replay_finished' });
-  setStatus('File replay finished');
-});
+  if (liveClient) {
+    try {
+      liveClient.send('finish', { reason: 'mic_live_stopped' });
+    } catch (_) {}
+    liveClient.close();
+    liveClient = null;
+  }
+}
 
 function applyEvent(event) {
   if (event.type === 'unit_started') {
