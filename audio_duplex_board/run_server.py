@@ -41,6 +41,7 @@ from fastapi.staticfiles import StaticFiles
 from audio_duplex_board.config import AudioDuplexBoardConfig, make_default_config
 from audio_duplex_board.events import events_from_train_data_result
 from audio_duplex_board.mock_view import MockUnifiedProcessor
+from audio_duplex_board.remote_view import RemoteFcDuplexView, RemoteProcessor
 from audio_duplex_board.schemas import (
     BoardEvent,
     ReplayCaseRequest,
@@ -53,7 +54,6 @@ from audio_duplex_board.session import AudioDuplexBoardSession
 from audio_duplex_board.tools.display_object_on_board.service import (
     DisplayObjectOnBoardService,
 )
-from core.processors import UnifiedProcessor
 from core.schemas.fc_duplex import (
     FcDuplexConfig,
     FcDuplexTrainDataRequest,
@@ -66,7 +66,23 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
     _prepend_sdk_src(config.sdk_src)
     if config.use_mock_view:
         processor = MockUnifiedProcessor(energy_threshold=config.mock_energy_threshold)
+    elif config.remote_view_url:
+        # Decoupled mode: model lives in a separate cctl job, business stays
+        # on devbox. The 9B model is not loaded here at all.
+        print(
+            f"[run_server] remote view enabled: url={config.remote_view_url} "
+            f"verify_tls={config.remote_view_verify_tls}",
+            flush=True,
+        )
+        processor = RemoteProcessor(
+            RemoteFcDuplexView(
+                config.remote_view_url,
+                verify_tls=config.remote_view_verify_tls,
+            )
+        )
     else:
+        # Local mode: load 9B model in-process (used by single-machine deploys).
+        from core.processors import UnifiedProcessor  # heavy import, lazy
         processor = UnifiedProcessor(
             model_path=config.model_path,
             pt_path=config.pt_path,
@@ -309,6 +325,22 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to TLS certificate chain (PEM). Pair with --ssl-keyfile to enable HTTPS.",
     )
+    parser.add_argument(
+        "--remote-view-url",
+        default=None,
+        help=(
+            "If set (e.g. https://10.156.9.151:18081), skip loading the 9B "
+            "model locally and proxy FC duplex primitives to a remote "
+            "model_server.py over HTTP. Lets business code iterate on the "
+            "devbox without paying the model reload cost."
+        ),
+    )
+    parser.add_argument(
+        "--remote-view-verify-tls",
+        action="store_true",
+        help="Verify TLS cert of the remote model server (default off; the "
+        "model server typically uses a self-signed cert).",
+    )
     return parser.parse_args()
 
 
@@ -326,6 +358,8 @@ def main() -> None:
         max_board_cards=args.max_board_cards,
         use_mock_view=args.mock,
         mock_energy_threshold=args.mock_energy_threshold,
+        remote_view_url=args.remote_view_url,
+        remote_view_verify_tls=args.remote_view_verify_tls,
     )
     uvicorn_kwargs: dict[str, object] = {"host": config.host, "port": config.port}
     if args.ssl_keyfile and args.ssl_certfile:

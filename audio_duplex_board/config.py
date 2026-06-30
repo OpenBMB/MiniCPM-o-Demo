@@ -39,6 +39,13 @@ class AudioDuplexBoardConfig:
     image_search_timeout_sec: float = 3.0
     use_mock_view: bool = False
     mock_energy_threshold: float = 0.012
+    # When set, business server skips loading UnifiedProcessor and instead
+    # talks to a remote model_server.py over HTTP. Decoupling lets us iterate
+    # on business code (session.py, run_server.py, schemas) without paying
+    # the 60s+ model reload cost. The remote server typically lives in a
+    # cctl GPU job.
+    remote_view_url: str | None = None
+    remote_view_verify_tls: bool = False
 
     @property
     def case_folder_path(self) -> Path | None:
