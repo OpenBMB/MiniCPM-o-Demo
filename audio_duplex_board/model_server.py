@@ -118,6 +118,9 @@ def create_app(
     model_path: str,
     pt_path: str | None,
     sdk_src: str | None,
+    compile: bool = False,
+    ref_audio_path: str | None = None,
+    attn_implementation: str = "sdpa",
 ) -> FastAPI:
     """Create the GPU-side model server FastAPI app.
 
@@ -126,6 +129,17 @@ def create_app(
         pt_path: Optional fine-tuned checkpoint overlay (.pt).
         sdk_src: Optional local SDK src to prepend on sys.path before any
             tokenize call inside the view.
+        compile: Pass through to `UnifiedProcessor(compile=...)`. When True,
+            the model runs `apply_torch_compile + warmup_compile` after
+            weight load, costing ~5-10 minutes of extra startup but
+            giving the latency that real-time audio_duplex_board needs.
+            `warmup_compile` requires `ref_audio_path` to exercise the TTS
+            path, so when compile=True you must also pass ref_audio_path.
+        ref_audio_path: Default TTS reference wav. Used both as the warmup
+            input (when compile=True) and as the default voice when the
+            ws prepare request does not override it.
+        attn_implementation: Attention implementation override
+            (auto / flash_attention_2 / sdpa / eager).
     """
 
     if sdk_src:
@@ -135,12 +149,18 @@ def create_app(
 
     from core.processors import UnifiedProcessor
 
+    if compile and not ref_audio_path:
+        raise ValueError(
+            "compile=True requires ref_audio_path (warmup_compile needs it)."
+        )
+
     processor = UnifiedProcessor(
         model_path=model_path,
         pt_path=pt_path,
         device="cuda",
-        compile=False,
-        attn_implementation="sdpa",
+        ref_audio_path=ref_audio_path,
+        compile=compile,
+        attn_implementation=attn_implementation,
     )
     view = processor.fc_duplex
     lock = asyncio.Lock()
@@ -514,6 +534,25 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional TLS cert chain (PEM) for HTTPS model server.",
     )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Apply torch.compile + warmup to the loaded model. Adds "
+        "~5-10 minutes of startup but matches the demo's production "
+        "deployment latency. Requires --ref-audio-path for warmup.",
+    )
+    parser.add_argument(
+        "--ref-audio-path",
+        default=None,
+        help="Default TTS reference wav. Required when --compile is set; "
+        "also used as default voice when ws prepare omits ref_audio_path.",
+    )
+    parser.add_argument(
+        "--attn-implementation",
+        default="sdpa",
+        choices=("auto", "flash_attention_2", "sdpa", "eager"),
+        help="Attention implementation (default sdpa).",
+    )
     return parser.parse_args()
 
 
@@ -523,6 +562,9 @@ def main() -> None:
         model_path=args.model_path,
         pt_path=args.pt_path,
         sdk_src=args.sdk_src,
+        compile=args.compile,
+        ref_audio_path=args.ref_audio_path,
+        attn_implementation=args.attn_implementation,
     )
     kwargs: dict[str, Any] = {"host": args.host, "port": args.port}
     if args.ssl_keyfile and args.ssl_certfile:

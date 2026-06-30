@@ -555,3 +555,63 @@ body {
   border-color: #2d2d2d;
 }
 .debug-drawer audio { width: 100%; margin-top: 6px; }
+
+/* Settings edit panel (system prompt + ref audio + tts toggle) */
+.settings-edit-panel {
+  flex-shrink: 0;
+  overflow: auto;
+  max-height: 50%;
+}
+.cfg-group {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.cfg-group summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: #666;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 11px;
+  user-select: none;
+}
+.cfg-group summary::marker { color: #ccc; }
+.cfg-group textarea,
+.cfg-group input[type="text"] {
+  width: 100%;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid #e5e5e0;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  color: #2d2d2d;
+  background: #fafaf5;
+  resize: vertical;
+}
+.cfg-group textarea:focus,
+.cfg-group input:focus {
+  outline: none;
+  border-color: #aaa;
+  background: #fff;
+}
+.cfg-group .hint {
+  font-size: 10px;
+  color: #999;
+  margin: 4px 0;
+}
+.cfg-group .inline-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #2d2d2d;
+  margin: 6px 0;
+  cursor: pointer;
+}
+.ctrl-btn.tiny {
+  font-size: 10px;
+  padding: 3px 8px;
+  margin-top: 4px;
+}

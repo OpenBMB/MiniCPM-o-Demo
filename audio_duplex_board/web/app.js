@@ -3,13 +3,17 @@ import { decodeFileToChunks, float32ToBase64 } from './file-audio-provider.js';
 import { LiveBoardClient } from './live-board-client.js';
 import { LiveMicProvider } from './live-mic-provider.js';
 import { fetchDefaults, replayCase } from './replay-client.js';
-
 // 2 x 3 grid = 6 可见 card，FIFO 挤出最早。
 const state = new BoardState({ maxCards: 6 });
 // non_spoken_block 两层 streaming 状态：block_id -> { kind, streamingPieces[], fullText?, closed }
 const nonSpokenBlocks = new Map();
 let liveClient = null;
 let micProvider = null;
+// Demo-aligned gapless audio player. Lazy-init on user gesture.
+const audioPlayer = new AudioPlayer({ outputSampleRate: 24000 });
+let audioPlayerReady = false;
+// Cache of /api/defaults so the settings panel can show + override them.
+let cachedDefaults = null;
 const el = {
   status: document.getElementById('status'),
   micLevelBar: document.getElementById('micLevelBar'),
@@ -38,8 +42,12 @@ const el = {
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),
   kvCkpt: document.getElementById('kvCkpt'),
-  kvRefAudio: document.getElementById('kvRefAudio'),
   kvTools: document.getElementById('kvTools'),
+  systemPrompt: document.getElementById('systemPrompt'),
+  refAudioPath: document.getElementById('refAudioPath'),
+  genAudioToggle: document.getElementById('genAudioToggle'),
+  resetSystemPrompt: document.getElementById('resetSystemPrompt'),
+  resetRefAudio: document.getElementById('resetRefAudio'),
   debugToggle: document.getElementById('debugToggle'),
   debugDrawer: document.getElementById('debugDrawer'),
 };
@@ -60,7 +68,8 @@ el.loadDefaults.addEventListener('click', async () => {
 (async () => {
   if (!el.modeBadge) return;
   try {
-    const defaults = await fetchDefaults();
+    cachedDefaults = await fetchDefaults();
+    const defaults = cachedDefaults;
     if (defaults.use_mock_view) {
       el.modeBadge.textContent = 'MOCK';
       el.modeBadge.classList.add('mode-mock');
@@ -75,15 +84,18 @@ el.loadDefaults.addEventListener('click', async () => {
       const ckpt = (defaults.pt_path || '').split('/').slice(-2).join('/');
       el.kvCkpt.textContent = ckpt || '(no overlay)';
     }
-    if (el.kvRefAudio) {
-      const ref = (defaults.default_ref_audio_path || '').split('/').pop();
-      el.kvRefAudio.textContent = ref || '(none)';
-    }
     if (el.kvTools) {
       const tools = defaults.default_tools || [];
       el.kvTools.textContent = tools.length
         ? tools.map((t) => t?.function?.name || '?').join(', ')
         : '(none)';
+    }
+    // Settings panel editable defaults
+    if (el.systemPrompt) {
+      el.systemPrompt.value = defaults.default_system_prompt || '';
+    }
+    if (el.refAudioPath) {
+      el.refAudioPath.value = defaults.default_ref_audio_path || '';
     }
   } catch (err) {
     el.modeBadge.textContent = `error`;
@@ -91,6 +103,18 @@ el.loadDefaults.addEventListener('click', async () => {
     el.modeBadge.title = err.message;
   }
 })();
+
+// Reset buttons restore the training-aligned defaults.
+el.resetSystemPrompt?.addEventListener('click', () => {
+  if (el.systemPrompt && cachedDefaults?.default_system_prompt) {
+    el.systemPrompt.value = cachedDefaults.default_system_prompt;
+  }
+});
+el.resetRefAudio?.addEventListener('click', () => {
+  if (el.refAudioPath && cachedDefaults?.default_ref_audio_path) {
+    el.refAudioPath.value = cachedDefaults.default_ref_audio_path;
+  }
+});
 
 // Debug drawer toggle
 el.debugToggle?.addEventListener('click', () => {
@@ -118,6 +142,14 @@ el.runReplay.addEventListener('click', async () => {
 
 el.startMicLive.addEventListener('click', async () => {
   clearViews();
+  // AudioPlayer needs a user gesture before AudioContext can resume —
+  // Start mic click qualifies.
+  try {
+    audioPlayer.init();
+    audioPlayerReady = true;
+  } catch (err) {
+    console.warn('[AudioPlayer] init failed:', err);
+  }
   try {
     liveClient = await createPreparedClient();
     micProvider = new LiveMicProvider({
@@ -202,16 +234,28 @@ el.runFileReplay.addEventListener('click', async () => {
 });
 
 async function createPreparedClient() {
-  // Use training-aligned prepare from /api/defaults so the model sees the
-  // same system_prompt / tools / AI reference audio it was trained on.
-  setStatus('Loading defaults…');
-  const defaults = await fetchDefaults();
-  if (!defaults.default_system_prompt) {
-    throw new Error('Server did not return default_system_prompt — case folder missing or unreadable.');
+  // Make sure we have defaults (for tools list at minimum).
+  if (!cachedDefaults) {
+    setStatus('Loading defaults…');
+    cachedDefaults = await fetchDefaults();
   }
-  if (!defaults.default_ref_audio_path) {
-    throw new Error('Server did not return default_ref_audio_path — AI reference audio not found in default case.');
+  // Pick up live edits from the settings panel; fall back to training defaults.
+  const systemPrompt =
+    (el.systemPrompt?.value || '').trim() ||
+    cachedDefaults.default_system_prompt ||
+    '';
+  const refAudioPath =
+    (el.refAudioPath?.value || '').trim() ||
+    cachedDefaults.default_ref_audio_path ||
+    '';
+  if (!systemPrompt) {
+    throw new Error('System prompt is empty and server returned no default.');
   }
+  if (!refAudioPath) {
+    throw new Error('Reference audio path is empty and server returned no default.');
+  }
+  const generateAudio = Boolean(el.genAudioToggle?.checked);
+
   const client = new LiveBoardClient({
     onEvent: applyEvent,
     onStatus: setStatus,
@@ -220,10 +264,10 @@ async function createPreparedClient() {
   await client.connect();
   setWsState('connected');
   client.send('prepare', {
-    system_prompt: defaults.default_system_prompt,
-    tools: defaults.default_tools || [],
-    ref_audio_path: defaults.default_ref_audio_path,
-    generate_audio: Boolean(el.generateAudio?.checked),
+    system_prompt: systemPrompt,
+    tools: cachedDefaults.default_tools || [],
+    ref_audio_path: refAudioPath,
+    generate_audio: generateAudio,
   });
   return client;
 }
@@ -260,6 +304,14 @@ function applyEvent(event) {
       // Just the AI text. No token counts, no unit numbers — user wants the
       // conversation, not telemetry.
       if (event.text) appendSpeech(event.text);
+      // Prefer demo-style gapless playback: raw Float32 base64 → AudioPlayer.
+      // Falls back to <audio src="data:audio/wav;base64,..."> in the debug
+      // drawer for inspection.
+      if (audioPlayerReady && event.payload?.audio_float32_base64) {
+        if (!audioPlayer.turnActive) audioPlayer.beginTurn();
+        audioPlayer.playChunk(event.payload.audio_float32_base64, performance.now());
+        if (event.payload?.spoken_turn_eos) audioPlayer.endTurn?.();
+      }
       if (event.payload?.audio_wav_base64) {
         appendAiAudio(event.unit_index, event.payload.audio_wav_base64);
       }

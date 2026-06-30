@@ -46,9 +46,34 @@
         <ul class="kv">
           <li><span class="k">Mode</span><span class="v" id="kvMode">—</span></li>
           <li><span class="k">Checkpoint</span><span class="v" id="kvCkpt">—</span></li>
-          <li><span class="k">Ref audio</span><span class="v" id="kvRefAudio">—</span></li>
           <li><span class="k">Tools</span><span class="v" id="kvTools">—</span></li>
         </ul>
+      </section>
+
+      <!-- System prompt + reference audio + TTS toggle.
+           Changes take effect on the NEXT Start mic click. -->
+      <section class="panel settings-edit-panel">
+        <details class="cfg-group" open>
+          <summary>System prompt</summary>
+          <textarea id="systemPrompt" rows="6" spellcheck="false"
+                    placeholder="Loading default..."></textarea>
+          <button id="resetSystemPrompt" class="ctrl-btn tiny">Reset to training default</button>
+        </details>
+        <details class="cfg-group">
+          <summary>Reference audio</summary>
+          <input id="refAudioPath" type="text" spellcheck="false"
+                 placeholder="absolute path to .wav" />
+          <p class="hint">AI voice reference. Default is the training case's HTRef06.wav.</p>
+          <button id="resetRefAudio" class="ctrl-btn tiny">Reset to training default</button>
+        </details>
+        <details class="cfg-group">
+          <summary>TTS</summary>
+          <label class="inline-checkbox">
+            <input id="genAudioToggle" type="checkbox" checked />
+            <span>Generate AI audio (TTS)</span>
+          </label>
+          <p class="hint">Requires the ckpt to ship TTS weights. Default ON now that ref_audio is wired.</p>
+        </details>
       </section>
 
     </div>

@@ -268,6 +268,16 @@ class AudioDuplexBoardSession:
         )
         spoken_done_ts = time.perf_counter()
         if spoken.is_speaking or spoken.spoken_token_ids:
+            # Emit both formats so the frontend can pick:
+            #   - audio_float32_base64: raw little-endian Float32 PCM at
+            #     `audio_sample_rate` (typically 24000). This is the format
+            #     the demo's `static/duplex/lib/audio-player.js` consumes
+            #     for gapless pre-scheduled playback. Preferred when present.
+            #   - audio_wav_base64: WAV-encoded fallback for naive
+            #     `<audio src="data:audio/wav;base64,..."` playback.
+            audio_float32_base64 = _audio_waveform_to_float32_base64(
+                spoken.audio_waveform
+            )
             audio_wav_base64 = _audio_waveform_to_wav_base64(
                 spoken.audio_waveform,
                 spoken.audio_sample_rate or 24000,
@@ -282,8 +292,9 @@ class AudioDuplexBoardSession:
                     token_strs=list(spoken.spoken_token_strs),
                     payload={
                         "spoken_turn_eos": spoken.spoken_turn_eos,
+                        "audio_float32_base64": audio_float32_base64,
                         "audio_wav_base64": audio_wav_base64,
-                        "audio_sample_rate": spoken.audio_sample_rate,
+                        "audio_sample_rate": spoken.audio_sample_rate or 24000,
                     },
                 )
             )
@@ -847,3 +858,20 @@ def _audio_waveform_to_wav_base64(audio_waveform: Any, sample_rate: int) -> str 
     buffer = io.BytesIO()
     sf.write(buffer, array, sample_rate, format="WAV")
     return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _audio_waveform_to_float32_base64(audio_waveform: Any) -> str | None:
+    """Encode a generated waveform as base64-encoded little-endian Float32 PCM.
+
+    This is the format the demo's `static/duplex/lib/audio-player.js`
+    consumes for pre-scheduled gapless playback via `AudioBufferSourceNode`.
+    """
+
+    if audio_waveform is None:
+        return None
+    array = np.asarray(audio_waveform, dtype=np.float32).reshape(-1)
+    if array.size == 0:
+        return None
+    # numpy default is platform-native; on x86_64 that's little-endian which
+    # is what AudioBufferSourceNode + Float32Array view expects.
+    return base64.b64encode(array.tobytes()).decode("ascii")
