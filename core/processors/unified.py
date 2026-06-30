@@ -1340,11 +1340,35 @@ class FcDuplexView:
             return NonSpokenStepGenerationFlag.no_action
         return NonSpokenStepGenerationFlag.non_spoken_slot_eos
 
-    @staticmethod
-    def _step_result(data: dict) -> FcNonSpokenGenerateResult:
+    def _token_strs(self, token_ids: List[int]) -> List[str]:
+        """Map token ids to raw vocab pieces via tokenizer id-to-token lookup.
+
+        This is NOT BPE merged decode. It returns the per-token pieces the
+        tokenizer stores in its vocab (e.g. byte-level BPE may show 'Ġapple'
+        for ' apple', and special tokens show as '<|tool_call|>').
+
+        Returns:
+            A list with the same length as `token_ids`. Falls back to an empty
+            list if the tokenizer is missing for any reason; callers should
+            treat empty lists as "tokenizer unavailable".
+        """
+
+        if not token_ids:
+            return []
+        tokenizer = getattr(self._model, "tokenizer", None)
+        if tokenizer is None or not hasattr(tokenizer, "convert_ids_to_tokens"):
+            return []
+        try:
+            return list(tokenizer.convert_ids_to_tokens(list(token_ids)))
+        except Exception:
+            return []
+
+    def _step_result(self, data: dict) -> FcNonSpokenGenerateResult:
         spans = [FcClosedSpan(**span) for span in data.get("closed_spans", []) or []]
+        token_ids = data.get("token_ids", [])
         return FcNonSpokenGenerateResult(
-            token_ids=data.get("token_ids", []),
+            token_ids=token_ids,
+            token_strs=self._token_strs(token_ids),
             terminated=data.get("terminated", False),
             close_reason=data.get("close_reason"),
             closed_spans=spans,
@@ -1385,24 +1409,26 @@ class FcDuplexView:
             prompt_wav_path=data.get("prompt_wav_path"),
         )
 
-    @staticmethod
-    def _prefill_result(data: dict) -> FcDuplexPrefillResult:
+    def _prefill_result(self, data: dict) -> FcDuplexPrefillResult:
+        inserted_ids = data.get("inserted_token_ids", [])
         return FcDuplexPrefillResult(
             unit_index=data.get("unit", 0),
             n_audio_placeholders=data.get("n_audio", 0),
             has_input_event=data.get("has_event", False),
             is_listen=data.get("is_listen"),
             is_speaking=data.get("is_speaking", False),
-            inserted_token_ids=data.get("inserted_token_ids", []),
+            inserted_token_ids=inserted_ids,
+            inserted_token_strs=self._token_strs(inserted_ids),
         )
 
-    @staticmethod
-    def _spoken_result(data: dict) -> FcSpokenGenerateResult:
+    def _spoken_result(self, data: dict) -> FcSpokenGenerateResult:
         audio_waveform = data.get("audio_waveform")
+        spoken_ids = data.get("spoken_ids", [])
         return FcSpokenGenerateResult(
             is_listen=bool(data.get("is_listen", False)),
             is_speaking=bool(data.get("is_speaking", False)),
-            spoken_token_ids=data.get("spoken_ids", []),
+            spoken_token_ids=spoken_ids,
+            spoken_token_strs=self._token_strs(spoken_ids),
             spoken_text=data.get("spoken_text", data.get("text", "")),
             spoken_turn_eos=bool(data.get("spoken_turn_eos", False)),
             audio_waveform=audio_waveform,
