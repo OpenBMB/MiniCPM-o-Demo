@@ -34,8 +34,6 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 from tqdm import tqdm
-from transformers.cache_utils import DynamicCache
-from transformers.cache_utils import EncoderDecoderCache
 
 from enum import Enum
 
@@ -52,7 +50,6 @@ from .utils import drop_tokens_from_cache
 from .utils import DuplexWindowConfig
 from .utils import get_kv_cache_length
 from .utils import realign_rotary_suffix
-from .utils import SpeculativeSnapshot
 from .utils import streaming_token_decoder
 from .utils import torch_clone_recursive
 from .utils import TTSSamplingParams
@@ -1294,120 +1291,6 @@ class MiniCPMO(BaseMiniCPMO):
 
     # for sliding window
 
-    # ============== 抢跑快照/恢复接口 ==============
-
-    def _save_speculative_snapshot(self) -> SpeculativeSnapshot:
-        """Internal method: save speculative snapshot.
-
-        Called at the start of streaming_generate, saves to self._speculative_snapshot.
-
-        Save strategy:
-        - LLM KV Cache: only record length (restore by truncation, zero extra VRAM)
-        - Audio KV Cache: deep clone (as generate sets it to None)
-        - Mel processor: full state snapshot (including buffer)
-        """
-        # 1. 获取 LLM cache 信息
-        llm_cache_length = self._get_kv_cache_length()
-        llm_cache_checksum = None
-        if self.llm_past_key_values is not None and hasattr(self.llm_past_key_values, "key_cache"):
-            if len(self.llm_past_key_values.key_cache) > 0:
-                llm_cache_checksum = self.llm_past_key_values.key_cache[0].sum().item()
-
-        # 2. 获取 audio cache 长度并克隆 audio_past_key_values
-        audio_cache_length = 0
-        audio_cache_checksum = None
-        audio_past_key_values_clone = None
-        if self.audio_past_key_values is not None:
-            # 处理 DynamicCache 格式（Whisper encoder 可能返回此格式）
-            if isinstance(self.audio_past_key_values, DynamicCache):
-                if hasattr(self.audio_past_key_values, "key_cache") and len(self.audio_past_key_values.key_cache) > 0:
-                    audio_cache_length = self.audio_past_key_values.key_cache[0].shape[2]
-                    audio_cache_checksum = self.audio_past_key_values.key_cache[0].sum().item()
-                # 深度克隆 DynamicCache
-                cloned_cache = DynamicCache()
-                for k, v in zip(self.audio_past_key_values.key_cache, self.audio_past_key_values.value_cache):
-                    cloned_cache.update(k.clone(), v.clone(), layer_idx=len(cloned_cache.key_cache))
-                audio_past_key_values_clone = cloned_cache
-                logger.debug(f"[Speculative] Cloned DynamicCache with length {audio_cache_length}")
-            # 处理 EncoderDecoderCache 格式
-            elif isinstance(self.audio_past_key_values, EncoderDecoderCache):
-                self_attn_cache = self.audio_past_key_values.self_attention_cache
-                if hasattr(self_attn_cache, "key_cache") and len(self_attn_cache.key_cache) > 0:
-                    audio_cache_length = self_attn_cache.key_cache[0].shape[2]
-                    audio_cache_checksum = self_attn_cache.key_cache[0].sum().item()
-                # 深度克隆 EncoderDecoderCache
-                cloned_self_attn = DynamicCache()
-                if hasattr(self_attn_cache, "key_cache"):
-                    for k, v in zip(self_attn_cache.key_cache, self_attn_cache.value_cache):
-                        cloned_self_attn.update(k.clone(), v.clone(), layer_idx=len(cloned_self_attn.key_cache))
-                cross_attn_cache = self.audio_past_key_values.cross_attention_cache
-                cloned_cross_attn = DynamicCache()
-                if hasattr(cross_attn_cache, "key_cache"):
-                    for k, v in zip(cross_attn_cache.key_cache, cross_attn_cache.value_cache):
-                        cloned_cross_attn.update(k.clone(), v.clone(), layer_idx=len(cloned_cross_attn.key_cache))
-                audio_past_key_values_clone = EncoderDecoderCache(cloned_self_attn, cloned_cross_attn)
-                logger.debug(f"[Speculative] Cloned EncoderDecoderCache with length {audio_cache_length}")
-            # 处理 tuple 格式（兼容旧格式）
-            elif isinstance(self.audio_past_key_values, tuple) and len(self.audio_past_key_values) > 0:
-                audio_cache_length = self.audio_past_key_values[0][0].shape[2]
-                audio_cache_checksum = self.audio_past_key_values[0][0].sum().item()
-                # 深度克隆 audio_past_key_values（tuple of tuples of tensors）
-                audio_past_key_values_clone = tuple(
-                    tuple(t.clone() for t in layer_cache) for layer_cache in self.audio_past_key_values
-                )
-
-        # 3. 获取 mel processor 快照
-        mel_processor_snapshot = None
-        mel_buffer_checksum = None
-        if hasattr(self, "processor") and self.processor is not None:
-            mel_processor_snapshot = self.processor.get_streaming_snapshot()
-            if mel_processor_snapshot:
-                buf = mel_processor_snapshot.get("buffer")
-                if buf is not None and len(buf) > 0:
-                    mel_buffer_checksum = float(buf.sum())
-
-        # 4. 保存 RNG 状态（关键：用于恢复后确保 dithering 等随机操作的确定性）
-        rng_state_cpu = torch.get_rng_state()
-        rng_state_cuda = None
-        if torch.cuda.is_available() and self.device.type == "cuda":
-            rng_state_cuda = torch.cuda.get_rng_state(self.device)
-
-        # 5. 创建快照
-        snapshot = SpeculativeSnapshot(
-            llm_cache_length=llm_cache_length,
-            audio_cache_length=audio_cache_length,
-            new_user_msg=self.new_user_msg,
-            llm_generated=self.llm_generated,
-            llm_generate_completed=self.llm_generate_completed,
-            next_round_id=self._next_round_id,
-            pending_round_id=self._pending_round_id,
-            omni_chunk_history_length=len(self._omni_chunk_history),
-            tts_last_turn_tokens=self.tts_last_turn_tokens.clone() if self.tts_last_turn_tokens is not None else None,
-            audio_chunk_idx=self.audio_chunk_idx,
-            mel_processor_snapshot=mel_processor_snapshot,
-            audio_past_key_values=audio_past_key_values_clone,
-            timestamp=time.time(),
-            # 调试字段
-            llm_cache_checksum=llm_cache_checksum,
-            audio_cache_checksum=audio_cache_checksum,
-            mel_buffer_checksum=mel_buffer_checksum,
-            # RNG 状态
-            rng_state_cpu=rng_state_cpu,
-            rng_state_cuda=rng_state_cuda,
-        )
-
-        logger.info("[Speculative] Saved snapshot: %s", snapshot.summary())
-        logger.debug(
-            "[Speculative] Snapshot checksums: llm=%.6f, audio=%.6f, mel_buf=%.6f",
-            llm_cache_checksum or 0.0,
-            audio_cache_checksum or 0.0,
-            mel_buffer_checksum or 0.0,
-        )
-
-        return snapshot
-
-    # ============== 抢跑快照/恢复接口 结束 ==============
-
     @torch.inference_mode()
     def non_streaming_prefill(
         self,
@@ -1980,7 +1863,7 @@ class MiniCPMO(BaseMiniCPMO):
         # 用于 VAD 抢跑场景：如果抢跑失败，可调用 restore_speculative_snapshot() 恢复
         # enable_speculative_snapshot=True 时启用，False 时跳过（节省少量开销）
         if enable_speculative_snapshot:
-            self._speculative_snapshot = self._save_speculative_snapshot()
+            self._speculative_snapshot = self.save_speculative_snapshot()
 
         # reset buf
         self.new_user_msg = True
