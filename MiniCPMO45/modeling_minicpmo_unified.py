@@ -23,8 +23,6 @@ import threading
 import time
 import types
 from copy import deepcopy
-from dataclasses import dataclass
-from functools import partial
 from threading import Thread
 from typing import Dict
 from typing import List
@@ -39,35 +37,34 @@ import torch.nn.functional as F
 import torch.nn.utils.parametrize as P
 from PIL import Image
 from torch import nn
-from torch.nn.init import trunc_normal_
 from torch.nn.utils.parametrizations import weight_norm
 from tqdm import tqdm
 from transformers import LlamaConfig
 from transformers import LlamaModel
 from transformers import PreTrainedModel
 from transformers import Qwen3ForCausalLM
-from transformers import Qwen3PreTrainedModel
 from transformers import TextIteratorStreamer
 from transformers.activations import ACT2FN
-from transformers.cache_utils import Cache
 from transformers.cache_utils import DynamicCache
 from transformers.cache_utils import EncoderDecoderCache
-from transformers.cache_utils import StaticCache
-from transformers.generation.logits_process import TopKLogitsWarper
-from transformers.generation.logits_process import TopPLogitsWarper
-from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.modeling_outputs import BaseModelOutputWithPast
-from transformers.modeling_outputs import ModelOutput
 from transformers.models.whisper.configuration_whisper import WhisperConfig
 from transformers.models.whisper.modeling_whisper import WhisperEncoder
 
 from enum import Enum
 
 # 相对导入（同目录）
-from .configuration_minicpmo import MiniCPMOConfig
 from .configuration_minicpmo import MiniCPMTTSConfig
+from .modeling_minicpmo import gen_logits
+from .modeling_minicpmo import MiniCPMMLP
 from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
+from .modeling_minicpmo import MiniCPMOPreTrainedModel
 from .modeling_minicpmo import MiniCPMOPreTrainedModel as BaseMiniCPMOPreTrainedModel
+from .modeling_minicpmo import MiniCPMTTSGenerationOutput
+from .modeling_minicpmo import MiniCPMWhisperEncoderLayer
+from .modeling_minicpmo import MultiModalProjector
+from .modeling_minicpmo import prepare_inputs_for_generation
+from .modeling_minicpmo import Resampler
 from .modeling_navit_siglip import SiglipVisionTransformer
 from .processing_minicpmo import MiniCPMOProcessor
 from .utils import as_dynamic_cache
@@ -92,10 +89,6 @@ class ProcessorMode(Enum):
     CHAT = "chat"           # 单工对话（非流式 TTS）
     STREAMING = "streaming" # 流式对话（流式 TTS）
     DUPLEX = "duplex"       # 双工对话（流式 TTS + 双工组件）
-
-
-class MiniCPMOPreTrainedModel(Qwen3PreTrainedModel):
-    config_class = MiniCPMOConfig
 
 
 class MiniCPMO(BaseMiniCPMO):
@@ -5064,246 +5057,6 @@ class DuplexCapability:
             print(f"{prefix} [{event_type}] {message}")
 
 
-def get_2d_sincos_pos_embed(embed_dim, image_size):
-    """
-    image_size: image_size or (image_height, image_width)
-    return:
-    pos_embed: [image_height, image_width, embed_dim]
-    """
-    if isinstance(image_size, int):
-        grid_h_size, grid_w_size = image_size, image_size
-    else:
-        grid_h_size, grid_w_size = image_size[0], image_size[1]
-
-    grid_h = np.arange(grid_h_size, dtype=np.float32)
-    grid_w = np.arange(grid_w_size, dtype=np.float32)
-    grid = np.meshgrid(grid_w, grid_h)  # here w goes first
-    grid = np.stack(grid, axis=0)
-
-    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
-    return pos_embed
-
-
-def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
-    assert embed_dim % 2 == 0
-
-    # use half of dimensions to encode grid_h
-    emb_h = get_1d_sincos_pos_embed_from_grid_new(embed_dim // 2, grid[0])  # (H, W, D/2)
-    emb_w = get_1d_sincos_pos_embed_from_grid_new(embed_dim // 2, grid[1])  # (H, W, D/2)
-
-    emb = np.concatenate([emb_h, emb_w], axis=-1)  # (H, W, D)
-    return emb
-
-
-def get_1d_sincos_pos_embed_from_grid_new(embed_dim, pos):
-    """
-    embed_dim: output dimension for each position
-    pos: a list of positions to be encoded: size (H, W)
-    out: (H, W, D)
-    """
-    assert embed_dim % 2 == 0
-    omega = np.arange(embed_dim // 2, dtype=np.float32)
-    omega /= embed_dim / 2.0
-    omega = 1.0 / 10000**omega  # (D/2,)
-
-    out = np.einsum("hw,d->hwd", pos, omega)  # (H, W, D/2), outer product
-
-    emb_sin = np.sin(out)  # (H, W, D/2)
-    emb_cos = np.cos(out)  # (H, W, D/2)
-
-    emb = np.concatenate([emb_sin, emb_cos], axis=-1)  # (H, W, D)
-    return emb
-
-
-class Resampler(nn.Module):
-    """
-    A 2D perceiver-resampler network with one cross attention layers by
-       given learnable queries and 2d sincos pos_emb
-    Outputs:
-        A tensor with the shape of (batch_size, num_queries, embed_dim)
-    """
-
-    def __init__(
-        self,
-        num_queries,
-        embed_dim,
-        num_heads,
-        kv_dim=None,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        adaptive=False,
-        max_size=(70, 70),
-    ):
-        super().__init__()
-        self.num_queries = num_queries
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.adaptive = adaptive
-        self.max_size = max_size
-
-        self.query = nn.Parameter(torch.zeros(self.num_queries, embed_dim))
-
-        if kv_dim is not None and kv_dim != embed_dim:
-            self.kv_proj = nn.Linear(kv_dim, embed_dim, bias=False)
-        else:
-            self.kv_proj = nn.Identity()
-
-        self.attn = nn.MultiheadAttention(embed_dim, num_heads)
-        self.ln_q = norm_layer(embed_dim)
-        self.ln_kv = norm_layer(embed_dim)
-
-        self.ln_post = norm_layer(embed_dim)
-        self.proj = nn.Parameter((embed_dim**-0.5) * torch.randn(embed_dim, embed_dim))
-
-        self._set_2d_pos_cache(self.max_size)
-
-    def _set_2d_pos_cache(self, max_size, device="cpu"):
-        if is_deepspeed_zero3_enabled():
-            device = "cuda"
-        pos_embed = torch.from_numpy(get_2d_sincos_pos_embed(self.embed_dim, max_size)).float().to(device)
-        self.register_buffer("pos_embed", pos_embed, persistent=False)
-
-    def _adjust_pos_cache(self, tgt_sizes, device):
-        max_h = torch.max(tgt_sizes[:, 0])
-        max_w = torch.max(tgt_sizes[:, 1])
-        if max_h > self.max_size[0] or max_w > self.max_size[1]:
-            self.max_size = [max(max_h, self.max_size[0]), max(max_w, self.max_size[1])]
-            self._set_2d_pos_cache(self.max_size, device)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-
-    def forward(self, x, tgt_sizes=None):
-        assert x.shape[0] == tgt_sizes.shape[0]
-        bs = x.shape[0]
-
-        device = x.device
-        dtype = x.dtype
-
-        patch_len = tgt_sizes[:, 0] * tgt_sizes[:, 1]
-
-        self._adjust_pos_cache(tgt_sizes, device=device)
-
-        max_patch_len = torch.max(patch_len)
-        key_padding_mask = torch.zeros((bs, max_patch_len), dtype=torch.bool, device=device)
-
-        pos_embed = []
-        for i in range(bs):
-            tgt_h, tgt_w = tgt_sizes[i]
-            pos_embed.append(self.pos_embed[:tgt_h, :tgt_w, :].reshape((tgt_h * tgt_w, -1)).to(dtype))  # patches * D
-            key_padding_mask[i, patch_len[i] :] = True
-
-        pos_embed = torch.nn.utils.rnn.pad_sequence(pos_embed, batch_first=True, padding_value=0.0).permute(
-            1, 0, 2
-        )  # BLD => L * B * D
-
-        x = self.kv_proj(x)  # B * L * D
-        x = self.ln_kv(x).permute(1, 0, 2)  # L * B * D
-
-        q = self.ln_q(self.query)  # Q * D
-
-        out = self.attn(
-            self._repeat(q, bs),  # Q * B * D
-            x + pos_embed,  # L * B * D +  L * B * D
-            x,
-            key_padding_mask=key_padding_mask,
-        )[0]
-        #  out: Q * B * D
-        x = out.permute(1, 0, 2)  # B * Q * D
-
-        x = self.ln_post(x)
-        x = x @ self.proj
-        return x
-
-    def _repeat(self, query, N: int):
-        return query.unsqueeze(1).repeat(1, N, 1)
-
-
-class MiniCPMWhisperEncoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig, layer_idx: int = None):
-        super().__init__()
-        self.embed_dim = config.d_model
-        try:
-            # compatible old transformers
-            from transformers.models.whisper.modeling_whisper import WHISPER_ATTENTION_CLASSES
-
-            self.self_attn = WHISPER_ATTENTION_CLASSES[config._attn_implementation](
-                embed_dim=self.embed_dim,
-                num_heads=config.encoder_attention_heads,
-                dropout=config.attention_dropout,
-                config=config,
-                layer_idx=layer_idx,
-            )
-        except:
-            from transformers.models.whisper.modeling_whisper import WhisperAttention
-
-            self.self_attn = WhisperAttention(
-                embed_dim=self.embed_dim,
-                num_heads=config.encoder_attention_heads,
-                dropout=config.attention_dropout,
-                config=config,
-                layer_idx=layer_idx,
-            )
-
-        self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.dropout = config.dropout
-        self.activation_fn = ACT2FN[config.activation_function]
-        self.activation_dropout = config.activation_dropout
-        self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
-        self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
-        self.final_layer_norm = nn.LayerNorm(self.embed_dim)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
-        layer_head_mask: torch.Tensor,
-        output_attentions: bool = False,
-        past_key_values: Optional[EncoderDecoderCache] = None,
-        use_cache: Optional[bool] = False,
-    ) -> torch.Tensor:
-        residual = hidden_states
-        hidden_states = self.self_attn_layer_norm(hidden_states)
-        hidden_states, attn_weights, past_key_values = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            layer_head_mask=layer_head_mask,
-            output_attentions=output_attentions,
-            past_key_value=past_key_values,
-        )
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-
-        residual = hidden_states
-        hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states)
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-
-        if hidden_states.dtype == torch.float16 and (
-            torch.isinf(hidden_states).any() or torch.isnan(hidden_states).any()
-        ):
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-
-        outputs = (hidden_states,)
-
-        if output_attentions:
-            outputs += (attn_weights,)
-
-        if use_cache:
-            outputs += (past_key_values,)
-
-        return outputs
-
-
 # Copied from from transformers.models.whisper.modeling_whisper.WhisperEncoder and add use_cache for streaming inference
 class MiniCPMWhisperEncoder(WhisperEncoder):
 
@@ -5530,56 +5283,6 @@ class MiniCPMWhisperEncoder(WhisperEncoder):
         if return_debug:
             return result, debug_info
         return result
-
-
-class MultiModalProjector(nn.Module):
-    def __init__(self, in_dim, out_dim):
-        super().__init__()
-        self.linear1 = nn.Linear(in_features=in_dim, out_features=out_dim, bias=True)
-        self.relu = nn.ReLU()
-        self.linear2 = nn.Linear(in_features=out_dim, out_features=out_dim, bias=True)
-
-    def forward(self, audio_features):
-        hidden_states = self.relu(self.linear1(audio_features))
-        hidden_states = self.linear2(hidden_states)
-        return hidden_states
-
-
-class MiniCPMMLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.in_dim = config.llm_hidden_size
-        self.out_dim = config.hidden_size
-        self.intermediate_size = config.llm_intermediate_size
-        self.gate_proj = nn.Linear(self.in_dim, self.intermediate_size, bias=True)
-        self.up_proj = nn.Linear(self.in_dim, self.intermediate_size, bias=True)
-        self.down_proj = nn.Linear(self.intermediate_size, self.out_dim, bias=True)
-        self.act_fn = ACT2FN[config.hidden_act]
-
-    def forward(self, x):
-        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-
-        return down_proj
-
-
-@dataclass
-class MiniCPMTTSGenerationOutput(ModelOutput):
-    """
-    Output class for MiniCPMTTS generation.
-
-    Args:
-        new_ids (torch.LongTensor): Newly generated audio code sequence, shape (batch_size, sequence_length, num_vq).
-        audio_input_ids (torch.LongTensor): Updated input IDs including condition and generated audio codes, shape (batch_size, full_sequence_length, num_vq).
-        past_key_values (Tuple[Tuple[torch.FloatTensor]]): Tuple containing pre-computed keys and values used for attention mechanism. Each element has shape (batch_size, num_heads, sequence_length, embed_size_per_head).
-        finished (bool): Boolean indicating whether generation is complete.
-    """
-
-    new_ids: torch.LongTensor = None
-    audio_input_ids: torch.LongTensor = None
-    past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
-    past_input_ids: Optional[torch.LongTensor] = None
-    finished: bool = None
 
 
 def make_streaming_chunk_mask_inference(
@@ -6438,131 +6141,3 @@ class MiniCPMTTS(PreTrainedModel):
                 generated_tokens.append(new_tokens)
 
         return MiniCPMTTSGenerationOutput(new_ids=torch.cat(generated_tokens, dim=1), finished=True)
-
-
-class CustomRepetitionPenaltyLogitsProcessorRepeat:
-    def __init__(self, penalty: float, max_input_ids: int, past_window: int):
-        if not isinstance(penalty, float) or not (penalty > 0):
-            raise ValueError(f"`penalty` has to be a strictly positive float, but is {penalty}")
-
-        self.penalty = penalty
-        self.max_input_ids = max_input_ids
-        self.past_window = past_window
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
-        if input_ids.size(1) > self.past_window:
-            input_ids = input_ids.narrow(1, -self.past_window, self.past_window)
-        freq = F.one_hot(input_ids, scores.size(1)).sum(1)
-        if freq.size(0) > self.max_input_ids:
-            freq.narrow(0, self.max_input_ids, freq.size(0) - self.max_input_ids).zero_()
-        alpha = torch.pow(self.penalty, freq)
-        scores = scores.contiguous()
-        inp = scores.multiply(alpha)
-        oth = scores.divide(alpha)
-        con = scores < 0
-        out = torch.where(con, inp, oth)
-        del inp, oth, scores, con, alpha
-        return out
-
-
-def gen_logits(num_code: int, top_p=0.7, top_k=20, repetition_penalty=1.0):
-    logits_warpers = []
-
-    if top_p is not None:
-        logits_warpers.append(TopPLogitsWarper(top_p, min_tokens_to_keep=3))
-
-    if top_k is not None:
-        logits_warpers.append(TopKLogitsWarper(top_k, min_tokens_to_keep=3))
-
-    logits_processors = []
-    if repetition_penalty is not None and repetition_penalty != 1:
-        logits_processors.append(CustomRepetitionPenaltyLogitsProcessorRepeat(repetition_penalty, num_code, 16))
-
-    return logits_warpers, logits_processors
-
-
-# Copy and modified from transformers.models.llama.modeling_llama.LlamaForCausalLM.prepare_inputs_for_generation
-def prepare_inputs_for_generation(
-    self,
-    input_ids,
-    past_key_values=None,
-    attention_mask=None,
-    inputs_embeds=None,
-    cache_position=None,
-    position_ids=None,
-    use_cache=True,
-    **kwargs,
-):
-    if past_key_values is not None:
-        if isinstance(past_key_values, Cache):
-            cache_length = past_key_values.get_seq_length()
-            past_length = past_key_values.seen_tokens
-        else:
-            cache_length = past_length = past_key_values[0][0].shape[2]
-
-        # Keep only the unprocessed tokens:
-        # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
-        # some of the inputs are exclusivelly passed as part of the cache (e.g. when passing input_embeds as
-        # input)
-        if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
-            input_ids = input_ids[:, -(attention_mask.shape[1] - past_length) :]
-        # 2 - If the past_length is smaller than input_ids', then input_ids holds all input tokens. We can discard
-        # input_ids based on the past_length.
-        elif past_length < input_ids.shape[1]:
-            input_ids = input_ids[:, past_length:]
-        # 3 - Otherwise (past_length >= input_ids.shape[1]), let's assume input_ids only has unprocessed tokens.
-
-    if attention_mask is not None and position_ids is None:
-        # create position_ids on the fly for batch generation
-        position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 1)
-        if past_key_values:
-            position_ids = position_ids[:, -input_ids.shape[1] :]
-
-            # This clo≠clo≠clone call is needed to avoid recapturing cuda graphs with →rch.comπ≤→rch.comπ≤torch.compile's  mode=reduce−overheadmode=reduce-overheadmode="reduce-overhead, as otherwise the input positionidspositionidsposition_ids would have various stride during the decoding. Here, simply using .contiguous().contiguous().contiguous() is not sufficient as in the batch size = 1 case, positionidspositionidsposition_ids is already contiguous but with varying stride which retriggers a capture.
-            position_ids = position_ids.clone(memory_format=torch.contiguous_format)
-
-    # if ∈putsembeds∈putsembedsinputs_embeds are passed, we only want to use them in the 1st generation step
-    if inputs_embeds is not None and cache_position[0] == 0:
-        model_inputs = {"inputs_embeds": inputs_embeds, "input_ids": None}
-    else:
-        # The clone here is for the same reason as for positionidspositionidsposition_ids.
-        model_inputs = {"input_ids": input_ids.clone(memory_format=torch.contiguous_format), "inputs_embeds": None}
-
-    if isinstance(past_key_values, StaticCache) and attention_mask.ndim == 2:
-        if model_inputs["inputs_embeds"] is not None:
-            batch_size, sequence_length, _ = model_inputs["inputs_embeds"].shape
-            device = model_inputs["inputs_embeds"].device
-        else:
-            batch_size, sequence_length = model_inputs["input_ids"].shape
-            device = model_inputs["input_ids"].device
-
-        dtype = self.lm_head.weight.dtype
-        min_dtype = torch.finfo(dtype).min
-
-        from transformers.models.paligemma.modeling_paligemma import (
-            _prepare_4d_causal_attention_mask_with_cache_position,
-        )
-
-        attention_mask = _prepare_4d_causal_attention_mask_with_cache_position(
-            attention_mask,
-            sequence_length=sequence_length,
-            target_length=past_key_values.get_max_length(),
-            dtype=dtype,
-            device=device,
-            min_dtype=min_dtype,
-            cache_position=cache_position,
-            batch_size=batch_size,
-        )
-
-    model_inputs.update(
-        {
-            "position_ids": position_ids,
-            # "cache_position": cache_position,
-            "past_key_values": past_key_values,
-            "use_cache": use_cache,
-            "attention_mask": attention_mask,
-        }
-    )
-
-    return model_inputs
