@@ -108,23 +108,6 @@ class MiniCPMO(BaseMiniCPMO):
             "tts_repetition_penalty": 1.05,
         }
 
-    def init_streaming_processor(self):
-        if not hasattr(self, "processor") or self.processor is None:
-            self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
-
-        if hasattr(self.processor, "set_streaming_mode"):
-            self.processor.set_streaming_mode(
-                mode="exact",
-                chunk_ms=self.CHUNK_MS,
-                first_chunk_ms=self.FIRST_CHUNK_MS,
-                cnn_redundancy_ms=self.CNN_REDUNDANCY_MS,
-                enable_sliding_window=True,
-                slide_trigger_seconds=30.0,
-                slide_stride_seconds=10.0,
-            )
-            self.processor.reset_streaming()
-            self.audio_chunk_idx = 0
-
     def init_token2wav(self, streaming=False, model_dir=None, enable_float16=False, n_timesteps=5):
         if streaming:
             if self.config.tts_config.audio_tokenizer_type != "s3tokenizer_step_audio":
@@ -1159,205 +1142,148 @@ class MiniCPMO(BaseMiniCPMO):
         tts_ref_audio: Optional[np.ndarray] = None,
         **kwargs,
     ):
-        # todo: deprecated
         if sampling is not None:
             do_sample = sampling
         if omni_input is not None:
             omni_mode = omni_input
+        if tts_sampling_params is None:
+            tts_sampling_params = TTSSamplingParams()
 
-        batched = isinstance(msgs[0], list)
-        msgs_list = msgs
-        images_list = image
+        should_return_waveform = bool(use_tts_template and generate_audio and not stream)
+        temp_audio_path = None
+        audio_path_for_base = output_audio_path
+        if should_return_waveform and not audio_path_for_base:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", prefix="minicpmo_chat_", delete=False)
+            temp_audio_path = tmp.name
+            tmp.close()
+            audio_path_for_base = temp_audio_path
 
-        if not batched:
-            images_list, msgs_list = [images_list], [msgs_list]
-        else:
-            assert images_list is None, "Please integrate image to msgs when using batch inference."
-            images_list = [None] * len(msgs_list)
-        assert len(images_list) == len(msgs_list), "The batch dim of images_list and msgs_list should be the same."
+        import types
 
-        if not hasattr(self, "processor") or self.processor is None:
-            self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+        captured_stats = {}
+        original_generate = self.generate
+        sentinel = object()
+        previous_generate_attr = self.__dict__.get("generate", sentinel)
+        previous_tts_attr = self.__dict__.get("_generate_speech_non_streaming", sentinel)
 
-        prompts_lists = []
-        input_images_list = []
-        input_audios_list = []
-        audio_parts_list = []
+        def _capture_generate(*args, **generate_kwargs):
+            res, outputs = original_generate(*args, **generate_kwargs)
+            input_ids = generate_kwargs.get("input_ids")
+            sequences = getattr(outputs, "sequences", None)
+            if input_ids is not None and sequences is not None:
+                try:
+                    captured_stats["input_tokens"] = int(input_ids[0].shape[0])
+                    captured_stats["generated_tokens"] = int(sequences[0].shape[0])
+                except Exception:
+                    pass
+            return res, outputs
 
-        for image, msgs in zip(images_list, msgs_list):
-            if isinstance(msgs, str):
-                msgs = json.loads(msgs)
-            copy_msgs = deepcopy(msgs)
+        def _base_generate_speech(
+            _self,
+            outputs,
+            tts_bound,
+            tts_proj_layer,
+            audio_prompt,
+            output_tts_inputs_embeds_path=None,
+            tts_sampling_params=TTSSamplingParams(),
+        ):
+            if tts_ref_audio is not None:
+                audio_prompt = tts_ref_audio
+            return BaseMiniCPMO._generate_speech_non_streaming(
+                _self,
+                outputs=outputs,
+                tts_bound=tts_bound,
+                tts_proj_layer=tts_proj_layer,
+                audio_prompt=audio_prompt,
+                output_tts_inputs_embeds_path=output_tts_inputs_embeds_path,
+                tts_sampling_params=tts_sampling_params,
+            )
 
-            assert len(msgs) > 0, "msgs is empty"
-            assert do_sample or not stream, "if use stream mode, make sure do_sample=True"
-
-            if image is not None and isinstance(copy_msgs[0]["content"], str):
-                copy_msgs[0]["content"] = [image, copy_msgs[0]["content"]]
-
-            images = []
-            audios = []
-            audio_parts = []
-            for i, msg in enumerate(copy_msgs):
-                role = msg["role"]
-                content = msg["content"]
-                assert role in ["system", "user", "assistant"]
-                if i == 0:
-                    assert role in ["user", "system"], "The role of first msg should be user"
-                if isinstance(content, str):
-                    content = [content]
-                cur_msgs = []
-                for c in content:
-                    if isinstance(c, Image.Image):
-                        images.append(c)
-                        cur_msgs.append("<image>./</image>")
-                    elif isinstance(c, np.ndarray):  # audio
-                        audios.append(c)
-                        audio_parts.append(i)
-                        cur_msgs.append("<audio>./</audio>")
-                        use_tts_template = True
-                    elif isinstance(c, str):
-                        cur_msgs.append(c)
-
-                if omni_mode or stream_input:
-                    msg["content"] = "".join(cur_msgs)
-                else:
-                    msg["content"] = "\n".join(cur_msgs)
-
-            prompts_lists.append(
-                self.processor.tokenizer.apply_chat_template(
-                    copy_msgs,
-                    tokenize=False,
-                    add_generation_prompt=False if teacher_forcing else True,
-                    use_tts_template=use_tts_template,
+        try:
+            try:
+                self.generate = _capture_generate
+                self._generate_speech_non_streaming = types.MethodType(_base_generate_speech, self)
+                result = BaseMiniCPMO.chat(
+                    self,
+                    image=image,
+                    msgs=msgs,
+                    tokenizer=tokenizer,
+                    processor=processor,
+                    vision_hidden_states=vision_hidden_states,
+                    max_new_tokens=max_new_tokens,
+                    min_new_tokens=min_new_tokens,
+                    do_sample=do_sample,
+                    max_inp_length=max_inp_length,
+                    stream=stream,
+                    stream_input=stream_input,
+                    max_slice_nums=max_slice_nums,
+                    use_image_id=use_image_id,
                     enable_thinking=enable_thinking,
+                    use_tts_template=use_tts_template,
+                    generate_audio=generate_audio,
+                    output_audio_path=audio_path_for_base,
+                    output_tts_inputs_embeds_path=output_tts_inputs_embeds_path,
+                    omni_mode=omni_mode,
+                    teacher_forcing=teacher_forcing,
+                    return_prompt=return_prompt,
+                    tts_proj_layer=tts_proj_layer,
+                    tts_sampling_params=tts_sampling_params,
+                    merge_audio_from_same_content=merge_audio_from_same_content,
+                    **kwargs,
                 )
-            )
-            input_images_list.append(images)
-            input_audios_list.append(audios)
-            audio_parts_list.append(audio_parts)
+            finally:
+                if previous_generate_attr is sentinel:
+                    self.__dict__.pop("generate", None)
+                else:
+                    self.generate = previous_generate_attr
+                if previous_tts_attr is sentinel:
+                    self.__dict__.pop("_generate_speech_non_streaming", None)
+                else:
+                    self._generate_speech_non_streaming = previous_tts_attr
+        except Exception:
+            if temp_audio_path is not None and os.path.exists(temp_audio_path):
+                try:
+                    os.unlink(temp_audio_path)
+                except OSError:
+                    pass
+            raise
 
-        if not merge_audio_from_same_content:
-            audio_parts_list = None
-
-        inputs = self.processor(
-            prompts_lists,
-            input_images_list,
-            input_audios_list,
-            audio_parts_list,
-            max_slice_nums=max_slice_nums,
-            use_image_id=use_image_id,
-            stream_input=stream_input,
-            return_tensors="pt",
-            max_length=max_inp_length,
-        ).to(self.device)
-
-        generation_config = self.prepare_generation_config(
-            do_sample=do_sample, max_new_tokens=max_new_tokens, min_new_tokens=min_new_tokens, **kwargs
-        )
-        generation_config.pop("max_new_tokens", None)
-
-        inputs.pop("image_sizes")
-
-        # teacher_forcing = True => generate audio with given text
-        with torch.inference_mode():
-            res, outputs = self.generate(
-                **inputs,
-                tokenizer=self.processor.tokenizer,
-                max_new_tokens=1 if teacher_forcing else max_new_tokens,
-                vision_hidden_states=vision_hidden_states,
-                stream=stream,
-                **generation_config,
-            )
-
-        # spk bound and tts bound
-        tts_bos_token = self.processor.tokenizer.convert_tokens_to_ids("<|tts_bos|>")
-        tts_eos_token = self.processor.tokenizer.convert_tokens_to_ids("<|tts_eos|>")
-
-        # Combine input_ids and generated sequences to get complete sequence
-        input_ids = inputs["input_ids"][0]
-        generated_ids = outputs.sequences[0]
-        # Combine by concatenating input_ids with the new tokens from generated sequence
-        full_sequence = torch.cat([input_ids, generated_ids])
-        # Update the sequences in outputs
-        full_sequences = full_sequence.unsqueeze(0)
-
-        outputs["full_sequences"] = full_sequences
-
-        # 存储 token 统计，供 ChatView 等外部消费者读取
-        # input_tokens: tokenizer 级别（含 audio/image 占位符，不含 embedding 展开）
-        # generated_tokens: LLM 实际生成的 token 数
-        self._last_chat_token_stats = {
-            "input_tokens": len(input_ids),
-            "generated_tokens": len(generated_ids),
-        }
-
-        tts_bos_indices = []
-        tts_eos_indices = []
-        for i, x in enumerate(full_sequences[0]):
-            if x == tts_bos_token:
-                tts_bos_indices.append(i + 1)  # tts_bos + 1 才是第一个tts的位置，这样方便直接给tts去slice hidden states
-            elif x == tts_eos_token:
-                if teacher_forcing and i == len(full_sequences[0]) - 1:
-                    continue
-                tts_eos_indices.append(i)
-
-        tts_bos_idx = tts_bos_indices[-1] if tts_bos_indices else -1
-        # Use None instead of -1 when no EOS token found, so that slice [start:None]
-        # means "to the end" rather than [start:-1] which excludes the last element
-        tts_eos_idx = tts_eos_indices[-1] if tts_eos_indices else None
-
-        tts_bound = (tts_bos_idx, tts_eos_idx)
-
-        answer = res[0]
-        if answer is not None:
-            answer = answer.rstrip("<|tts_eos|>")
+        if captured_stats:
+            self._last_chat_token_stats = captured_stats
 
         generated_waveform = None
-        if use_tts_template and generate_audio:
+        if (
+            should_return_waveform
+            and audio_path_for_base
+            and os.path.exists(audio_path_for_base)
+            and os.path.getsize(audio_path_for_base) > 0
+        ):
             try:
-                # TTS ref audio 优先级：
-                # 1. tts_ref_audio（显式指定的 TTS 参考音频，与 LLM ref audio 分离）
-                # 2. input_audios_list[0][0]（messages 中第一个音频，即 LLM ref audio）
-                # 3. None（无参考音频）
-                if tts_ref_audio is not None:
-                    _tts_audio_prompt = tts_ref_audio
-                    logger.info(f"[Chat TTS] Using separate tts_ref_audio: {len(tts_ref_audio)} samples ({len(tts_ref_audio)/16000:.1f}s)")
-                elif len(input_audios_list) > 0 and len(input_audios_list[0]) > 0:
-                    _tts_audio_prompt = input_audios_list[0][0]
-                    logger.info(f"[Chat TTS] Using LLM ref audio from messages: {len(_tts_audio_prompt)} samples ({len(_tts_audio_prompt)/16000:.1f}s)")
-                else:
-                    _tts_audio_prompt = None
-                    logger.warning("[Chat TTS] No ref audio available for TTS")
-
-                generated_waveform = self._generate_speech_non_streaming(
-                    outputs=outputs,
-                    tts_bound=tts_bound,
-                    tts_proj_layer=tts_proj_layer,
-                    audio_prompt=_tts_audio_prompt,
-                    output_tts_inputs_embeds_path=output_tts_inputs_embeds_path,
-                    tts_sampling_params=tts_sampling_params,
-                )
-                # 统一为 numpy array
-                if isinstance(generated_waveform, torch.Tensor):
-                    generated_waveform = generated_waveform.cpu().numpy()
-
-                # 如果指定了保存路径，也保存到文件
-                if output_audio_path and generated_waveform is not None:
-                    import soundfile as sf
-                    sf.write(output_audio_path, generated_waveform, samplerate=24000)
-                    logger.debug(f"audio saved to {output_audio_path}")
-            except:
-                import traceback
-                traceback.print_exc()
+                generated_waveform, _ = sf.read(audio_path_for_base, dtype="float32")
+            except Exception:
+                logger.exception("Failed to read generated chat audio from %s", audio_path_for_base)
                 generated_waveform = None
+            finally:
+                if temp_audio_path is not None:
+                    try:
+                        os.unlink(temp_audio_path)
+                    except OSError:
+                        pass
+
+        if not should_return_waveform or generated_waveform is None:
+            return result
 
         if return_prompt:
-            return answer, prompts_lists[0], generated_waveform
-        elif generated_waveform is not None:
-            return answer, generated_waveform
-        else:
-            return answer
+            if isinstance(result, tuple):
+                answer = result[0]
+                prompt = result[1] if len(result) > 1 else None
+            else:
+                answer = result
+                prompt = None
+            return answer, prompt, generated_waveform
+
+        answer = result[0] if isinstance(result, tuple) else result
+        return answer, generated_waveform
 
     @torch.inference_mode()
     def _generate_speech_non_streaming(
@@ -1573,87 +1499,6 @@ class MiniCPMO(BaseMiniCPMO):
                 f"不支持的 audio_tokenizer_type: {self.tts.config.audio_tokenizer_type}"
             )
 
-    @torch.inference_mode()
-    def _finalize_round(
-        self, round_id: Optional[int], cache_before: int, assistant_input_ids: Optional[torch.Tensor] = None
-    ):
-        if round_id is None:
-            self._pending_round_id = None
-            return
-        cache_after = self._get_kv_cache_length()
-        if assistant_input_ids is not None:
-            assistant_len = assistant_input_ids.shape[1]
-        else:
-            assistant_len = max(cache_after - cache_before, 0)
-        if assistant_len > 0:
-            self._register_chunk(
-                assistant_len,
-                "assistant",
-                round_id=round_id,
-                input_ids=assistant_input_ids,
-                tokenizer=self.processor.tokenizer if hasattr(self, "processor") else None,
-            )
-        logger.info(
-            "Finalized round=%s cache len before=%s after=%s assistant_len=%s",
-            round_id,
-            cache_before,
-            cache_after,
-            assistant_len,
-        )
-        self._pending_round_id = None
-        self._next_round_id += 1
-
-    def _register_chunk(
-        self,
-        seq_len: int,
-        chunk_type: str,
-        *,
-        round_id: int,
-        input_ids=None,
-        tokenizer=None,
-    ) -> None:
-        if seq_len <= 0:
-            return
-        entry = {"length": int(seq_len), "type": chunk_type, "round": round_id}
-        if input_ids is not None:
-            entry["input_ids"] = input_ids.clone().detach()
-            entry["decoded"] = self._safe_decode(tokenizer, entry["input_ids"])
-        else:
-            entry["input_ids"] = None
-            entry["decoded"] = None
-        self._omni_chunk_history.append(entry)
-        logger.info(
-            "Registered chunk round=%s type=%s len=%s decoded=%s",
-            round_id,
-            chunk_type,
-            entry["length"],
-            entry["decoded"],
-        )
-        if chunk_type == "system":
-            self.streaming_text_preserve = max(self.streaming_text_preserve, entry["length"])
-
-    def _drop_round(self, round_id: int, cache: DynamicCache) -> bool:
-        entries = [e for e in self._omni_chunk_history if e.get("round") == round_id]
-        if not entries:
-            return False
-        total_len = sum(e["length"] for e in entries)
-        if total_len <= 0:
-            for e in entries:
-                self._omni_chunk_history.remove(e)
-            return False
-        if not self._drop_tokens_from_cache(total_len, cache):
-            return False
-        for e in entries:
-            logger.info(
-                "Dropped round=%s chunk type=%s len=%s decoded=%s",
-                round_id,
-                e["type"],
-                e["length"],
-                e.get("decoded"),
-            )
-            self._omni_chunk_history.remove(e)
-        return True
-
     # for sliding window
 
     # ============== 抢跑快照/恢复接口 ==============
@@ -1767,165 +1612,6 @@ class MiniCPMO(BaseMiniCPMO):
         )
 
         return snapshot
-
-    def restore_speculative_snapshot(self) -> bool:
-        """Restore speculative snapshot - called when VAD speculation fails.
-
-        Restores model state to before streaming_generate was called,
-        allowing continued streaming_prefill for newly arrived audio.
-
-        Notes:
-        - Snapshot is saved when streaming_generate is called with enable_speculative_snapshot=True
-        - This method uses the most recent snapshot for restoration
-        - Snapshot is cleared after restore, cannot be called repeatedly
-
-        Returns:
-            bool: Whether restoration was successful
-        """
-        snapshot = getattr(self, "_speculative_snapshot", None)
-
-        if snapshot is None:
-            logger.warning("[Speculative] No snapshot to restore")
-            return False
-
-        try:
-            # 记录恢复前的状态（用于日志对比）
-            current_cache_length = self._get_kv_cache_length()
-            current_history_length = len(self._omni_chunk_history)
-
-            logger.info(
-                "[Speculative] Restoring snapshot: target=%s",
-                snapshot.summary(),
-            )
-            logger.info(
-                "[Speculative] Current state before restore: llm_cache=%d, history_len=%d, "
-                "audio_chunk_idx=%d, new_user_msg=%s, llm_generated=%s",
-                current_cache_length,
-                current_history_length,
-                self.audio_chunk_idx,
-                self.new_user_msg,
-                self.llm_generated,
-            )
-
-            # 1. 裁剪 LLM KV Cache
-            if current_cache_length > snapshot.llm_cache_length:
-                self._truncate_llm_cache(snapshot.llm_cache_length)
-                logger.debug(
-                    "[Speculative] Truncated LLM cache: %d -> %d",
-                    current_cache_length,
-                    snapshot.llm_cache_length,
-                )
-
-            # 2. 恢复 Audio KV Cache（关键：从克隆的副本恢复）
-            # 因为 streaming_generate 会将 audio_past_key_values 设为 None
-            self.audio_past_key_values = snapshot.audio_past_key_values
-            if snapshot.audio_past_key_values is not None:
-                logger.debug(
-                    "[Speculative] Restored audio cache: length=%d, checksum=%.6f",
-                    snapshot.audio_cache_length,
-                    snapshot.audio_cache_checksum or 0.0,
-                )
-            else:
-                logger.debug("[Speculative] Audio cache restored to None")
-
-            # 3. 恢复会话状态
-            self.new_user_msg = snapshot.new_user_msg
-            self.llm_generated = snapshot.llm_generated
-            self.llm_generate_completed = snapshot.llm_generate_completed
-
-            # 4. 恢复 Round 管理
-            self._next_round_id = snapshot.next_round_id
-            self._pending_round_id = snapshot.pending_round_id
-
-            # 5. 截断 chunk 历史
-            if current_history_length > snapshot.omni_chunk_history_length:
-                self._omni_chunk_history = self._omni_chunk_history[: snapshot.omni_chunk_history_length]
-                logger.debug(
-                    "[Speculative] Truncated chunk history: %d -> %d",
-                    current_history_length,
-                    snapshot.omni_chunk_history_length,
-                )
-
-            # 6. 恢复 TTS 状态
-            self.tts_last_turn_tokens = snapshot.tts_last_turn_tokens
-
-            # 7. 恢复 streaming 处理器状态
-            self.audio_chunk_idx = snapshot.audio_chunk_idx
-
-            # 8. 恢复 mel processor 状态（关键！否则后续 prefill 会因帧数不匹配而失败）
-            if (
-                snapshot.mel_processor_snapshot is not None
-                and hasattr(self, "processor")
-                and self.processor is not None
-            ):
-                self.processor.restore_streaming_snapshot(snapshot.mel_processor_snapshot)
-                mel_snap = snapshot.mel_processor_snapshot
-                logger.info(
-                    "[Speculative] Restored mel processor: buffer_len=%d, chunk_count=%d, "
-                    "last_emitted_T=%d, total_samples=%d",
-                    len(mel_snap.get("buffer", [])),
-                    mel_snap.get("chunk_count", 0),
-                    mel_snap.get("last_emitted_T", 0),
-                    mel_snap.get("total_samples_processed", 0),
-                )
-
-            # 9. 恢复 RNG 状态（关键：确保 dithering 等随机操作的确定性）
-            if snapshot.rng_state_cpu is not None:
-                torch.set_rng_state(snapshot.rng_state_cpu)
-                logger.debug("[Speculative] Restored CPU RNG state")
-            if snapshot.rng_state_cuda is not None and torch.cuda.is_available():
-                torch.cuda.set_rng_state(snapshot.rng_state_cuda, self.device)
-                logger.debug("[Speculative] Restored CUDA RNG state")
-
-            # 11. 清理生成过程中产生的临时状态
-            if hasattr(self, "_streaming_generated_token_ids"):
-                del self._streaming_generated_token_ids
-            if hasattr(self, "_last_streaming_text"):
-                del self._last_streaming_text
-
-            # 12. 验证恢复后的状态
-            restored_cache_length = self._get_kv_cache_length()
-            if restored_cache_length != snapshot.llm_cache_length:
-                logger.warning(
-                    "[Speculative] LLM cache length mismatch after restore: expected=%d, actual=%d",
-                    snapshot.llm_cache_length,
-                    restored_cache_length,
-                )
-
-            # 验证 LLM cache checksum（如果有）
-            if snapshot.llm_cache_checksum is not None and self.llm_past_key_values is not None:
-                if hasattr(self.llm_past_key_values, "key_cache") and len(self.llm_past_key_values.key_cache) > 0:
-                    current_checksum = self.llm_past_key_values.key_cache[0].sum().item()
-                    if abs(current_checksum - snapshot.llm_cache_checksum) > 1e-3:
-                        logger.warning(
-                            "[Speculative] LLM cache checksum mismatch: expected=%.6f, actual=%.6f",
-                            snapshot.llm_cache_checksum,
-                            current_checksum,
-                        )
-                    else:
-                        logger.debug(
-                            "[Speculative] LLM cache checksum verified: %.6f",
-                            current_checksum,
-                        )
-
-            # 11. 清除快照（只能恢复一次）
-            self._speculative_snapshot = None
-
-            logger.info(
-                "[Speculative] Restore completed: llm_cache %d -> %d, elapsed=%.3fs",
-                current_cache_length,
-                snapshot.llm_cache_length,
-                time.time() - snapshot.timestamp,
-            )
-
-            return True
-
-        except Exception as e:
-            import traceback
-
-            logger.error("[Speculative] Failed to restore snapshot: %s", e)
-            logger.error("[Speculative] Traceback: %s", traceback.format_exc())
-            return False
 
     # ============== 抢跑快照/恢复接口 结束 ==============
 
