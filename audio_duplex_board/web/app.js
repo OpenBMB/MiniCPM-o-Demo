@@ -48,6 +48,26 @@ el.loadDefaults.addEventListener('click', async () => {
   setStatus('Idle');
 });
 
+// Reflect runtime mode in the hero badge so the page itself answers "mock or real?".
+(async () => {
+  const badge = document.getElementById('modeBadge');
+  if (!badge) return;
+  try {
+    const defaults = await fetchDefaults();
+    if (defaults.use_mock_view) {
+      badge.textContent = 'MOCK (no model)';
+      badge.style.color = '#fbbf24';
+    } else {
+      const ckpt = (defaults.pt_path || '').split('/').slice(-2).join('/');
+      badge.textContent = `REAL MODEL · ${ckpt || 'no overlay'}`;
+      badge.style.color = '#22c55e';
+    }
+  } catch (err) {
+    badge.textContent = `error: ${err.message}`;
+    badge.style.color = '#ef4444';
+  }
+})();
+
 el.runReplay.addEventListener('click', async () => {
   const casePath = el.casePath.value.trim();
   if (!casePath) {
