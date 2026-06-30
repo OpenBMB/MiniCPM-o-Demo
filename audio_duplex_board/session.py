@@ -36,6 +36,7 @@ import asyncio
 import base64
 import io
 import json
+import statistics
 import time
 import uuid
 from typing import Any, Awaitable, Callable, Optional
@@ -83,9 +84,9 @@ class AudioDuplexBoardSession:
         tool_service: Display object board tool service.
     """
 
-    # 每个 unit 内 non-spoken slot 最多 step 数。real view 内部会用 generation_flag
-    # / close_reason 主动停下；这里设硬上限只是兜底，避免极端坏例死循环。
-    _MAX_NON_SPOKEN_STEPS_PER_UNIT = 40
+    # 每个 unit 内 non-spoken slot 最多 step 数。这是死循环兜底；real-time
+    # 节奏下应该靠 next-prefill-arrived 信号提前跳出。
+    _MAX_NON_SPOKEN_STEPS_PER_UNIT = 200
 
     def __init__(
         self,
@@ -114,6 +115,25 @@ class AudioDuplexBoardSession:
         self._block_seq_in_unit = 0
         self._current_block_id: str | None = None
         self._current_block_kind: str | None = None  # "think" | "tool_call" | None=unknown
+        # Real-time signaling: ws layer sets this asyncio.Event whenever a NEW
+        # audio_chunk arrives but the previous unit's non-spoken decode loop is
+        # still running. The decode loop polls the event between steps and
+        # bails out cleanly when set, so the next prefill can proceed without
+        # waiting for the model to gracefully close its non-spoken slot — the
+        # view will treat that as `<|non_spoken_budget_reached|>` on the next
+        # streaming_prefill, which is the correct training-distribution
+        # close reason for a real-time-budget overrun.
+        self._next_prefill_event = asyncio.Event()
+        # Per-unit timing for real-time health checks. Keyed by unit_index.
+        # Each entry: dict with prefill_arrival_ms, prefill_done_ms,
+        # spoken_done_ms, non_spoken_done_ms, finalize_done_ms.
+        # We log a one-line summary at unit_finished.
+        self._last_prefill_arrival_ts: float | None = None
+        # Rolling window of unit total durations (ms), used to log p50/p95
+        # every 10 units.
+        self._unit_duration_ms_window: list[float] = []
+        # Count of non-spoken steps that were short-circuited by next_prefill.
+        self._budget_short_circuit_count = 0
 
     # ----------------------------------------------------------- public API
 
@@ -156,11 +176,36 @@ class AudioDuplexBoardSession:
             )
         )
 
+    def signal_next_prefill_arrived(self) -> None:
+        """Called from the ws layer the moment a NEW audio_chunk arrives, even
+        if the previous unit's decode loop is still running. Lets the in-flight
+        non-spoken decode bail out before its hard step cap.
+        """
+        self._next_prefill_event.set()
+
     async def process_audio_chunk(self, request: StreamAudioChunkRequest) -> None:
         """Process one browser-sent audio unit end-to-end (async)."""
 
         if not self._prepared:
             raise RuntimeError("stream session is not prepared")
+
+        # This call IS the next prefill — clear the cross-unit signal so the
+        # FOLLOWING unit's decode loop starts fresh waiting for the unit AFTER
+        # this one.
+        self._next_prefill_event.clear()
+
+        prefill_arrival_ts = time.perf_counter()
+        # Inter-prefill spacing: how long between this prefill's arrival at the
+        # server and the previous one's. Frontend pushes at ~1s cadence so a
+        # healthy value is ~1000ms. < 1000ms means the frontend is bunching
+        # chunks (often because the previous unit took > 1s and the browser
+        # finally caught up), which is the symptom of being non-real-time.
+        inter_prefill_ms: float | None = None
+        if self._last_prefill_arrival_ts is not None:
+            inter_prefill_ms = (
+                prefill_arrival_ts - self._last_prefill_arrival_ts
+            ) * 1000.0
+        self._last_prefill_arrival_ts = prefill_arrival_ts
 
         # 1) drain tool responses produced by background search since last prefill
         async with self._pending_lock:
@@ -175,6 +220,7 @@ class AudioDuplexBoardSession:
                 tool_responses=tool_responses or None,
             ),
         )
+        prefill_done_ts = time.perf_counter()
         unit_index = prefill.unit_index
         self._block_seq_in_unit = 0
         self._current_block_id = None
@@ -202,6 +248,7 @@ class AudioDuplexBoardSession:
                 decode_mode=self._decode_mode,
             ),
         )
+        spoken_done_ts = time.perf_counter()
         if spoken.is_speaking or spoken.spoken_token_ids:
             audio_wav_base64 = _audio_waveform_to_wav_base64(
                 spoken.audio_waveform,
@@ -223,27 +270,57 @@ class AudioDuplexBoardSession:
                 )
             )
 
-        # 3) non-spoken slot: step loop, emit deltas, react to closed spans
-        await self._run_non_spoken_loop(unit_index)
+        # 3) non-spoken slot: step loop, emit deltas, react to closed spans.
+        #    Bails out early when next prefill arrives.
+        non_spoken_steps, short_circuited = await self._run_non_spoken_loop(unit_index)
+        non_spoken_done_ts = time.perf_counter()
 
         # 4) finalize unit
         unit = await asyncio.to_thread(self.fc.finalize_unit)
-        # One-liner business log so grep tells the story even without per-event
-        # JSON dumps. `is_listen` and `non_spoken_terminator=no_action` for every
-        # unit means the model is choosing to stay silent on this user audio
-        # distribution — a strong signal that the ckpt is OOD vs the mic input
-        # rather than that the service is broken.
+        finalize_done_ts = time.perf_counter()
+
+        # Timing breakdown
+        prefill_ms = (prefill_done_ts - prefill_arrival_ts) * 1000.0
+        spoken_ms = (spoken_done_ts - prefill_done_ts) * 1000.0
+        non_spoken_ms = (non_spoken_done_ts - spoken_done_ts) * 1000.0
+        finalize_ms = (finalize_done_ts - non_spoken_done_ts) * 1000.0
+        total_ms = (finalize_done_ts - prefill_arrival_ts) * 1000.0
+
+        self._unit_duration_ms_window.append(total_ms)
+        if len(self._unit_duration_ms_window) > 50:
+            self._unit_duration_ms_window.pop(0)
+        if short_circuited:
+            self._budget_short_circuit_count += 1
+
         n_spoken = len(spoken.spoken_token_ids or [])
         n_non_spoken = len(unit.closed_spans)
         speak_text = (spoken.spoken_text or "")[:40].replace("\n", "\\n")
+        inter_str = f"{inter_prefill_ms:.0f}" if inter_prefill_ms is not None else "—"
+        rt_marker = "RT" if total_ms < 1000.0 else "SLOW"
         print(
             f"[session {self.session_id} unit={unit.unit}] "
             f"listen={unit.is_listen} speak={unit.is_speaking} "
             f"spoken_tok={n_spoken} text={speak_text!r} "
             f"non_spoken_term={unit.non_spoken_terminator} "
-            f"closed_spans={n_non_spoken}",
+            f"closed_spans={n_non_spoken} "
+            f"ns_steps={non_spoken_steps} short_circuit={short_circuited} "
+            f"timing_ms=[total={total_ms:.0f} prefill={prefill_ms:.0f} "
+            f"spoken={spoken_ms:.0f} non_spoken={non_spoken_ms:.0f} "
+            f"finalize={finalize_ms:.0f}] inter_prefill_ms={inter_str} [{rt_marker}]",
             flush=True,
         )
+
+        # Periodic p50/p95 summary so the operator can read real-time health at a glance.
+        if len(self._unit_duration_ms_window) >= 10 and unit.unit % 10 == 9:
+            sorted_w = sorted(self._unit_duration_ms_window)
+            p50 = statistics.median(sorted_w)
+            p95 = sorted_w[int(len(sorted_w) * 0.95)]
+            print(
+                f"[session {self.session_id} rolling_stats over_last={len(sorted_w)}] "
+                f"unit_total_ms p50={p50:.0f} p95={p95:.0f} "
+                f"budget_short_circuits={self._budget_short_circuit_count}",
+                flush=True,
+            )
         await self._send_event(
             BoardEvent(
                 type="unit_finished",
@@ -279,20 +356,41 @@ class AudioDuplexBoardSession:
 
     # --------------------------------------------------- non-spoken loop
 
-    async def _run_non_spoken_loop(self, unit_index: int) -> None:
-        """Step through non-spoken tokens, emitting delta events and reacting to closed spans."""
+    async def _run_non_spoken_loop(self, unit_index: int) -> tuple[int, bool]:
+        """Step through non-spoken tokens, emitting delta events and reacting to closed spans.
 
+        Returns:
+            (n_steps, short_circuited): n_steps is how many model decode steps
+            ran inside this unit's non-spoken slot. short_circuited is True if
+            we exited because the next prefill arrived (real-time budget
+            overrun); in that case we DO NOT proactively send close_reason=
+            "budget_reached" — we let the view auto-close the slot with
+            <|non_spoken_budget_reached|> on the next streaming_prefill call,
+            which matches training distribution.
+        """
+
+        n_steps = 0
         for _ in range(self._MAX_NON_SPOKEN_STEPS_PER_UNIT):
+            # If a new audio_chunk has already arrived on the ws, the unit's
+            # real-time budget is up — bail out now and let the view's next
+            # prefill handle slot closing.
+            if self._next_prefill_event.is_set():
+                return n_steps, True
+
             step = await asyncio.to_thread(
                 self.fc.streaming_non_spoken_generate,
                 FcNonSpokenGenerateRequest(
                     max_tokens=1, decode_mode=self._decode_mode
                 ),
             )
+            n_steps += 1
             await self._emit_step_events(step, unit_index)
             if step.terminated:
-                return
-        # 兜底：超 step 上限，主动闭合一次
+                return n_steps, False
+        # Hard cap fallback (death-loop protection). Should be rare in real-time
+        # operation because the next-prefill signal normally triggers first.
+        # In this case there is no real-time pressure and the unit really did
+        # produce a runaway non-spoken slot, so we force a close.
         close = await asyncio.to_thread(
             self.fc.streaming_non_spoken_generate,
             FcNonSpokenGenerateRequest(
@@ -302,6 +400,7 @@ class AudioDuplexBoardSession:
             ),
         )
         await self._emit_step_events(close, unit_index)
+        return n_steps, False
 
     async def _emit_step_events(self, step: Any, unit_index: int) -> None:
         """Convert one FcNonSpokenGenerateResult into board events."""
@@ -358,6 +457,25 @@ class AudioDuplexBoardSession:
         """
 
         span_type = getattr(span, "type", None)
+        # Business log: every closed span deserves a line so we can tell whether
+        # the model is emitting `think` blocks (no board impact) vs `tool_call`
+        # blocks (potential board card), and what the raw wire / parse result is.
+        wire_preview = (getattr(span, "wire", None) or "")[:120].replace("\n", "\\n")
+        tool_call = getattr(span, "tool_call", None)
+        span_error = getattr(span, "error", None)
+        text_preview = (getattr(span, "text", None) or "")[:80].replace("\n", "\\n")
+        print(
+            f"[session {self.session_id} unit={unit_index} closed_span] "
+            f"type={span_type} "
+            f"tool_call_id={getattr(span, 'tool_call_id', None)!r} "
+            f"name={(tool_call or {}).get('name') if isinstance(tool_call, dict) else None!r} "
+            f"args={(tool_call or {}).get('arguments') if isinstance(tool_call, dict) else None!r} "
+            f"error={span_error!r} "
+            f"text_preview={text_preview!r} "
+            f"wire_preview={wire_preview!r}",
+            flush=True,
+        )
+
         if self._current_block_id is None:
             await self._begin_block(span_type, unit_index)
 

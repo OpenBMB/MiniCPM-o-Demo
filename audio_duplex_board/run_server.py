@@ -249,9 +249,50 @@ async def _run_ws_session(
         tool_service=tool_service,
     )
 
+    # Bounded queue between ws receive loop and unit-processing loop. Decoupling
+    # the two lets the ws layer fire signal_next_prefill_arrived() the INSTANT a
+    # new audio_chunk arrives, even while the previous unit's non-spoken decode
+    # is still running. The session's non-spoken loop polls that signal and
+    # bails out so the next prefill can start on time (real-time budget).
+    incoming: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
+    receiver_done = asyncio.Event()
+
+    async def receiver() -> None:
+        try:
+            while True:
+                message = await ws.receive_json()
+                message_type = str(message.get("type") or "")
+                # CRITICAL: signal next-prefill arrival from RECEIVER, not from
+                # the consumer. The consumer is busy doing model RPC and would
+                # only notice the new chunk after the slow unit returns.
+                if message_type == "audio_chunk":
+                    session.signal_next_prefill_arrived()
+                await incoming.put(message)
+                if message_type == "finish":
+                    return
+        finally:
+            receiver_done.set()
+
+    receiver_task = asyncio.create_task(receiver())
+
     try:
         while True:
-            message = await ws.receive_json()
+            # Pull next message either from queue or detect ws close.
+            get_task = asyncio.create_task(incoming.get())
+            done, _pending = await asyncio.wait(
+                {get_task, receiver_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if get_task not in done:
+                get_task.cancel()
+                # receiver finished (ws closed or finish message). drain anything left.
+                if not incoming.empty():
+                    message = incoming.get_nowait()
+                else:
+                    break
+            else:
+                message = get_task.result()
+
             message_type = str(message.get("type") or "")
             payload = message.get("payload") or {}
             if message_type == "prepare":
@@ -297,6 +338,9 @@ async def _run_ws_session(
             )
         )
         await session.finish_stream(reason="session_error")
+    finally:
+        if not receiver_task.done():
+            receiver_task.cancel()
 
 
 def parse_args() -> argparse.Namespace:
