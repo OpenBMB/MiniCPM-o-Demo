@@ -21,9 +21,7 @@ import os
 import tempfile
 import threading
 import time
-import types
 from copy import deepcopy
-from threading import Thread
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -42,9 +40,6 @@ from tqdm import tqdm
 from transformers import LlamaConfig
 from transformers import LlamaModel
 from transformers import PreTrainedModel
-from transformers import Qwen3ForCausalLM
-from transformers import TextIteratorStreamer
-from transformers.activations import ACT2FN
 from transformers.cache_utils import DynamicCache
 from transformers.cache_utils import EncoderDecoderCache
 from transformers.modeling_outputs import BaseModelOutputWithPast
@@ -59,13 +54,10 @@ from .modeling_minicpmo import gen_logits
 from .modeling_minicpmo import MiniCPMMLP
 from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
 from .modeling_minicpmo import MiniCPMOPreTrainedModel
-from .modeling_minicpmo import MiniCPMOPreTrainedModel as BaseMiniCPMOPreTrainedModel
 from .modeling_minicpmo import MiniCPMTTSGenerationOutput
 from .modeling_minicpmo import MiniCPMWhisperEncoderLayer
 from .modeling_minicpmo import MultiModalProjector
-from .modeling_minicpmo import prepare_inputs_for_generation
 from .modeling_minicpmo import Resampler
-from .modeling_navit_siglip import SiglipVisionTransformer
 from .processing_minicpmo import MiniCPMOProcessor
 from .utils import as_dynamic_cache
 from .utils import ChunkPrefillChunkGenerate
@@ -75,7 +67,6 @@ from .utils import get_kv_cache_length
 from .utils import realign_rotary_suffix
 from .utils import SpeculativeSnapshot
 from .utils import streaming_token_decoder
-from .utils import StreamingWindowConfig
 from .utils import torch_clone_recursive
 from .utils import TTSSamplingParams
 from .utils import TTSStreamingGenerator
@@ -93,56 +84,15 @@ class ProcessorMode(Enum):
 
 class MiniCPMO(BaseMiniCPMO):
     def __init__(self, config):
-        BaseMiniCPMOPreTrainedModel.__init__(self, config)
+        super().__init__(config)
+        self._init_unified_runtime_state()
 
-        self.llm = Qwen3ForCausalLM(config)
-        self.embed_dim = self.llm.config.hidden_size
-        self.llm.prepare_inputs_for_generation = types.MethodType(prepare_inputs_for_generation, self.llm)  # patch llm
-
-        # init vision module
-        if self.config.init_vision:
-            self.vpm = self.init_vision_module()
-            self.vision_dim = self.vpm.embed_dim
-            self.resampler = self.init_resampler(self.embed_dim, self.vision_dim)
-
-        # init audio module
-        if self.config.init_audio:
-            self.apm = self.init_audio_module()
-            audio_output_dim = int(self.apm.config.encoder_ffn_dim // 4)
-            self.audio_avg_pooler = nn.AvgPool1d(self.config.audio_pool_step, stride=self.config.audio_pool_step)
-            self.audio_projection_layer = MultiModalProjector(in_dim=audio_output_dim, out_dim=self.embed_dim)
-            self.audio_encoder_layer = -1
-
-        # init tts module
-        if self.config.init_tts:
-            self.tts = self.init_speech_decoder()
-
-        self.terminators = ["<|im_end|>", "<|endoftext|>"]
-
-        self.think_str = ""
-        if self.llm.__class__.__name__ == "Qwen3ForCausalLM":
-            self.think_str = "<think>\\n\\n</think>\\n\\n"
-
+    def _init_unified_runtime_state(self):
         self.default_tts_chat_template = (
             "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n"
             + self.think_str
             + "<|tts_bos|>' }}{% endif %}"
         )
-
-        # for streaming
-        self.reset_session(reset_token2wav_cache=True)
-
-        # streaming audio processing constants
-        self.SAMPLE_RATE = 16000
-        self.CHUNK_MS = 1000  # regular chunk length (ms)
-        self.FIRST_CHUNK_MS = 1035  # first chunk length (ms)
-        self.CNN_REDUNDANCY_MS = 0  # CNN redundancy (ms)
-
-        # for sliding window
-        self.streaming_window_config = StreamingWindowConfig()
-        self.streaming_require_system_prompt = True
-        self.streaming_window_enabled = True
-        self.force_rope_reindex = False  # RoPE reindex testing switch
 
         # ========== 统一模式支持（新增）==========
         self._current_mode: Optional[ProcessorMode] = None
@@ -196,6 +146,9 @@ class MiniCPMO(BaseMiniCPMO):
             self.config.audio_config._attn_implementation = "sdpa"
 
         return MiniCPMWhisperEncoder(self.config.audio_config)
+
+    def init_tts_module(self):
+        return self.init_speech_decoder()
 
     def init_speech_decoder(self):
         if self.config._attn_implementation == "flash_attention_2":
