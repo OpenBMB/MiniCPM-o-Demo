@@ -1182,24 +1182,6 @@ class MiniCPMO(BaseMiniCPMO):
     def current_mode(self) -> Optional[ProcessorMode]:
         """当前模式"""
         return self._current_mode
-    
-    def get_input_embeddings(self):
-        return self.llm.get_input_embeddings()
-
-    def set_input_embeddings(self, value):
-        self.llm.embed_tokens = value
-
-    def get_output_embeddings(self):
-        return self.llm.lm_head
-
-    def set_output_embeddings(self, new_embeddings):
-        self.llm.lm_head = new_embeddings
-
-    def set_decoder(self, decoder):
-        self.llm = decoder
-
-    def get_decoder(self):
-        return self.llm
 
     @staticmethod
     def get_sys_prompt(ref_audio=None, mode="default", language="en", ref_audio_max_ms=None):
@@ -1292,49 +1274,6 @@ class MiniCPMO(BaseMiniCPMO):
             sys_msgs = {"role": "system", "content": [sys_prompt]}
 
             return sys_msgs
-
-    @staticmethod
-    def subsequent_chunk_mask(
-        size: int,
-        chunk_size: int,
-        num_left_chunks: int = -1,
-        device: torch.device = torch.device("cpu"),
-        num_lookhead: int = 0,
-    ) -> torch.Tensor:
-        """Create mask for subsequent steps (size, size) with chunk size,
-        this is for streaming encoder
-
-        Args:
-            size (int): size of mask
-            chunk_size (int): size of chunk
-            num_left_chunks (int): number of left chunks
-                <0: use full chunk
-                >=0: use num_left_chunks
-            device (torch.device): "cpu" or "cuda" or torch.Tensor.device
-            num_lookhead:
-
-        Returns:
-            torch.Tensor: mask
-        """
-        ret = torch.zeros(size, size, device=device, dtype=torch.bool)
-        for i in range(size):
-            if num_left_chunks < 0:
-                start = 0
-            else:
-                start = max((i // chunk_size - num_left_chunks) * chunk_size, 0)
-            ending = min((i // chunk_size + 1) * chunk_size + num_lookhead, size)
-            ret[i, start:ending] = True
-        return ret
-
-    def _get_feat_extract_output_lengths(self, input_lengths: torch.LongTensor):
-        """Computes the output length of the convolutional layers and the output length of the audio encoder"""
-        input_lengths_after_cnn = (input_lengths - 1) // 2 + 1
-        input_lengths_after_pooling = (
-            input_lengths_after_cnn - self.config.audio_pool_step
-        ) // self.config.audio_pool_step + 1
-        input_lengths_after_pooling = input_lengths_after_pooling.to(dtype=torch.int32)
-
-        return input_lengths_after_cnn, input_lengths_after_pooling
 
     def get_vision_embedding(self, data):
         if "vision_hidden_states" not in data:
@@ -1761,116 +1700,6 @@ class MiniCPMO(BaseMiniCPMO):
                 input_embeddings += audio_embeddings[0].mean() * 0
 
         return input_embeddings
-
-    def forward(self, data, **kwargs):
-        vllm_embedding, vision_hidden_states = self.get_vllm_embedding(data)
-        vllm_embedding = self.get_omni_embedding(
-            data,
-            input_embeddings=vllm_embedding,
-            chunk_length=self.config.audio_chunk_length,
-        )
-
-        position_ids = data["position_ids"]
-        if position_ids.dtype != torch.int64:
-            position_ids = position_ids.long()
-
-        return self.llm(
-            input_ids=None,
-            position_ids=position_ids,
-            inputs_embeds=vllm_embedding,
-            **kwargs,
-        )
-
-    def _decode(self, inputs_embeds, tokenizer, attention_mask, **kwargs):
-        terminators = [tokenizer.convert_tokens_to_ids(i) for i in self.terminators]
-        outputs = self.llm.generate(
-            inputs_embeds=inputs_embeds,
-            pad_token_id=0,
-            eos_token_id=terminators,
-            attention_mask=attention_mask,
-            output_hidden_states=True,
-            return_dict_in_generate=True,
-            **kwargs,
-        )
-        return outputs
-
-    def _decode_stream(self, inputs_embeds, tokenizer, **kwargs):
-        terminators = [tokenizer.convert_tokens_to_ids(i) for i in self.terminators]
-        streamer = TextIteratorStreamer(tokenizer=tokenizer)
-        generation_config = {
-            "inputs_embeds": inputs_embeds,
-            "pad_token_id": 0,
-            "eos_token_id": terminators,
-            "streamer": streamer,
-        }
-        generation_config.update(kwargs)
-        thread = Thread(target=self.llm.generate, kwargs=generation_config)
-        thread.start()
-        return streamer
-
-    def _decode_text(self, result_ids, tokenizer):
-        terminators = [tokenizer.convert_tokens_to_ids(i) for i in self.terminators]
-        result_text = []
-        for result in result_ids:
-            result = result[result != 0]
-            if result[0] == tokenizer.bos_id:
-                result = result[1:]
-            if result[-1] in terminators:
-                result = result[:-1]
-            result_text.append(tokenizer.decode(result))
-        return result_text
-
-    @torch.inference_mode()
-    def generate(
-        self,
-        input_ids=None,
-        pixel_values=None,
-        tgt_sizes=None,
-        audio_features=None,
-        audio_feature_lens=None,
-        image_bound=None,
-        audio_bounds=None,
-        spk_bounds=None,
-        attention_mask=None,
-        tokenizer=None,
-        vision_hidden_states=None,
-        stream=False,
-        **kwargs,
-    ):
-        assert input_ids is not None
-        assert len(input_ids) == len(pixel_values)
-
-        model_inputs = {
-            "input_ids": input_ids,
-            "audio_features": audio_features,
-            "audio_feature_lens": audio_feature_lens,
-            "image_bound": image_bound,
-            "audio_bounds": audio_bounds,
-            "spk_bounds": spk_bounds,
-        }
-
-        if vision_hidden_states is None:
-            model_inputs["pixel_values"] = pixel_values
-            model_inputs["tgt_sizes"] = tgt_sizes
-        else:
-            model_inputs["vision_hidden_states"] = vision_hidden_states
-
-        with torch.inference_mode():
-            model_inputs["inputs_embeds"], vision_hidden_states = self.get_vllm_embedding(model_inputs)
-            model_inputs["inputs_embeds"] = self.get_omni_embedding(
-                model_inputs,
-                input_embeddings=model_inputs["inputs_embeds"],
-                chunk_length=self.config.audio_chunk_length,
-            )
-
-            if stream:
-                result = self._decode_stream(model_inputs["inputs_embeds"], tokenizer, **kwargs)
-                outputs = {}  # if stream return TextIteratorStreamer and output is empty
-            else:
-                outputs = self._decode(model_inputs["inputs_embeds"], tokenizer, attention_mask, **kwargs)
-                result = self._decode_text(outputs.sequences, tokenizer)
-
-        return result, outputs
 
     def _build_streaming_mask(self, tts_tokens_len):
         tts_sequence_full_length = 1 + self.tts.streaming_text_reserved_len + 1
