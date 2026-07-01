@@ -387,13 +387,16 @@ function appendNonSpokenDelta(event) {
   if (!blockId) return;
   const block = nonSpokenBlocks.get(blockId);
   if (!block) return;
-  // Prefer the id-to-token vocab piece (what user explicitly asked for —
-  // raw token strings; fall back to step_text BPE chunk only if token_strs
-  // is empty (e.g. tokenizer adapter glitch on real model).
-  const pieces = (event.token_strs && event.token_strs.length)
-    ? event.token_strs
-    : (event.step_text ? [event.step_text] : []);
-  if (pieces.length) block.streamingPieces.push(...pieces);
+  // 原始需求："streaming 里边就去呈现它的原始的那个内容就行了，你不需要
+  // 做 XML 解析。包括 <tool_call> 和 </tool_call> 你也是都是带上的。"
+  // step_text 是 SDK 每一步 BPE decode 的增量文本，天然包含所有 XML 标签
+  // 和特殊 marker 的可读形式，是"原样呈现"最合适的来源。
+  // 实测 real ckpt 上 token_strs 常常是空（special id → convert_ids_to_tokens
+  // 回来是空串），只能靠 step_text。
+  const raw = (event.step_text && event.step_text.length)
+    ? event.step_text
+    : (event.token_strs || []).join('');
+  if (raw) block.streamingPieces.push(raw);
   if (block.kind === 'unknown' && event.block_kind && event.block_kind !== 'unknown') {
     block.kind = event.block_kind;
     block.node.classList.remove('kind-unknown');
@@ -405,6 +408,8 @@ function appendNonSpokenDelta(event) {
   if (target) {
     target.textContent = block.streamingPieces.join('');
   }
+  // 用户强调："必须保证 Non-spoken 通道一直处于最下方，这样总能看见最新
+  // block 的 streaming 结果"。每次 delta 都强制 scroll 到底。
   el.nsStream.scrollTop = el.nsStream.scrollHeight;
 }
 
@@ -415,9 +420,28 @@ function closeNonSpokenBlock(event) {
   if (!block) return;
   block.closed = true;
   block.fullText = event.full_text || null;
+  const finalKind = (event.block_kind && event.block_kind !== 'unknown') ? event.block_kind : block.kind;
+  // upgrade kind visual if we didn't know it during streaming
+  if (finalKind && finalKind !== 'unknown' && block.kind !== finalKind) {
+    block.kind = finalKind;
+    block.node.classList.remove('kind-unknown');
+    block.node.classList.add(`kind-${finalKind}`);
+    const kindTag = block.node.querySelector('.kind-tag');
+    if (kindTag) kindTag.textContent = finalKind;
+  }
   block.node.classList.add('closed');
   const statusTag = block.node.querySelector('.status-tag');
   if (statusTag) statusTag.textContent = 'closed';
+  // 原始需求："streaming 里边就去呈现它的原始的那个内容就行了，你不需要
+  // 做 XML 解析。包括 <tool_call> 和 </tool_call> 你也是都是带上的。"
+  // SDK 的 per-step BPE decode 不会带 <think> / <tool_call> tag（那是
+  // special token id，decode 出来就是空），只能在 client 端 wrap 出来。
+  // close 的时候用 finalKind 把 streaming buffer 包一层。
+  const streamingTarget = block.node.querySelector('[data-role="streaming"]');
+  if (streamingTarget && finalKind && finalKind !== 'unknown') {
+    const inner = block.streamingPieces.join('');
+    streamingTarget.textContent = `<${finalKind}>\n${inner}\n</${finalKind}>`;
+  }
   const full = block.node.querySelector('[data-role="full"]');
   if (full) {
     if (block.fullText) {
@@ -428,6 +452,8 @@ function closeNonSpokenBlock(event) {
       if (section) section.style.display = 'none';
     }
   }
+  // 收尾也 scroll 到底，防止 close 事件比最后一 delta 晚到时被卡在上面
+  el.nsStream.scrollTop = el.nsStream.scrollHeight;
 }
 
 function sleep(ms) {
@@ -462,20 +488,21 @@ function appendTimeline(text) {
   el.timeline.appendChild(item);
 }
 
-// AI Speech 用一个字符级别的 "打字机" 队列做 streaming 呈现：spoken_final
-// 每个 unit 一次性给一段文字（SDK 一个 spoken slot 是原子的，没有 sub-unit
-// 逐 token 事件），我们把它拆成字符压进 speechQueue，然后 speechDrainer
-// 每 speechStepMs 弹一个字符出来 append 到当前 speech row。这样视觉上和
-// think / tool_call 面板的 token 流一致，也和 AI 语音播放节奏对得上（
-// 每 unit ~1s 音频 ≈ 4-8 个汉字 → 每字 ~140ms 显示，够慢能看清、又足够
-// 快不会积压）。
+// AI Speech 字符级 "打字机" streaming：SDK 每 unit 一次性给一段文字，我们
+// 按 audio 播放时长把字符匀速铺出来。这样视觉字符与耳朵听到的音节大致
+// 对齐 —— 用户明确要求"AI speech 也是同样"，也要有 streaming 呈现。
 //
-// 不像 think / tool_call 需要"streaming 层 + full 层"两层（因为 BPE
-// merged 后有可能和逐 token 拼接不完全一致），AI spoken 的 spoken_text
-// 就是最终 BPE decode，字符流直接就是最终结果，只有 streaming 层。
-const speechQueue = [];
+// 关键 trick：每次 enqueueSpeech(text, audioMs) 时，根据剩余队列 + 这一
+// 批的 audioMs 动态计算 step delay。如果一批文字对应 1000ms 音频、有 5
+// 个字，那么每字 ~200ms 显示 —— 用户看到字符和 AI 说话节奏对得上，不是
+// "burst 300ms、静等 700ms"那种明显的 burst 感。
+//
+// 不像 think / tool_call 需要"streaming 层 + full 层"两层，AI spoken 的
+// spoken_text 就是最终 BPE decode，字符流本身就是最终结果 —— 只有一层
+// streaming（原始需求："AI spoken 本身没有 full，直接就是 streaming 就好
+// 了"）。
+const speechQueue = [];            // [{ch, stepMs}]
 let speechDrainer = null;
-const SPEECH_STEP_MS = 60;   // 每字符间隔；audio 一般 6-10 字/s
 
 function pumpSpeechQueue() {
   if (speechDrainer) return;
@@ -485,13 +512,10 @@ function pumpSpeechQueue() {
       speechDrainer = null;
       return;
     }
-    appendSpeechChar(item);
-    // 队列越长踩越紧，避免比音频落后太多
-    const dyn = speechQueue.length > 30 ? 20
-              : speechQueue.length > 15 ? 35
-              : SPEECH_STEP_MS;
-    speechDrainer = setTimeout(step, dyn);
+    appendSpeechChar(item.ch);
+    speechDrainer = setTimeout(step, item.stepMs);
   };
+  // 首字立即出，之后按每字自己 stepMs 走
   speechDrainer = setTimeout(step, 0);
 }
 
@@ -514,9 +538,17 @@ function appendSpeechChar(ch) {
   el.aiSpeech.scrollTop = el.aiSpeech.scrollHeight;
 }
 
-function enqueueSpeech(text) {
+// text: 这一 unit 的 spoken 文本
+// audioMs: 这一 unit TTS 出来的音频时长（毫秒），用来 pace 字符出现速度
+function enqueueSpeech(text, audioMs) {
   if (!text) return;
-  for (const ch of text) speechQueue.push(ch);
+  const chars = [...text];
+  // 有音频时按音频时长匀速铺；没音频（罕见）用一个稳的兜底 80ms。
+  // 队列已经有堆积则加速消化，避免视觉比音频滞后太多。
+  const pendingBudget = Math.max(0, audioMs || chars.length * 80);
+  const backlog = speechQueue.length;
+  const stepMs = Math.max(15, Math.round(pendingBudget / Math.max(1, chars.length + backlog * 0.5)));
+  for (const ch of chars) speechQueue.push({ ch, stepMs });
   pumpSpeechQueue();
 }
 
@@ -565,7 +597,14 @@ function handleSpokenFinal(event) {
   const isListen = !!p.is_listen;
   const isSpeaking = !!p.is_speaking;
 
-  if (event.text) enqueueSpeech(event.text);
+  if (event.text) {
+    // 从 audio_float32_base64 反推这一 unit 的音频毫秒数，作为字符打字机
+    // 的 pacing 依据，让字符出现节奏和音频播放节奏对齐。
+    const b64 = p.audio_float32_base64 || '';
+    const sr = p.audio_sample_rate || 24000;
+    const audioMs = b64 ? ((b64.length * 3 / 4) / 4) / sr * 1000 : 0;
+    enqueueSpeech(event.text, audioMs);
+  }
 
   if (audioPlayerReady) {
     if (isListen) {

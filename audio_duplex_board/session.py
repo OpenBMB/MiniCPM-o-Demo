@@ -658,17 +658,41 @@ class AudioDuplexBoardSession:
 
         token_ids = list(step.token_ids or [])
         token_strs = list(step.token_strs or [])
+        step_text = step.text or ""
 
-        # 只有确实看到 <think> / <tool_call> opener 的 token 才开新 block。
-        # 否则（例如 <|non_spoken_no_action|> 单独一个 token 立刻 terminated=True，
-        # 或 spoken/non-spoken slot 边界的 marker token）不算 segment 开始，
-        # 那些开出来永远闭不上、UI 上全是空 UNKNOWN 卡片。
-        if self._current_block_id is None:
-            kind = _guess_block_kind_from_tokens(token_strs) if token_strs else None
-            if kind is not None:
-                await self._begin_block(kind, unit_index)
+        # 判断这一步是否是"有内容"的一步：只要 step 产出的 BPE decode 文本
+        # 非空、或者带任何 token id 就算。之前只在 token_strs 里含
+        # <think>/<tool_call> 才开 block —— 但实际 ckpt 的 tokenizer 把
+        # opener 编成 special id，convert_ids_to_tokens 回来的 str 可能是
+        # `<|think|>` 甚至空串，永远匹配不上，结果 units 9-11 的所有 delta
+        # 都被静默丢掉，只在 unit 12 的 closed_span 里才被合成一个空 block
+        # 立即 close —— 就是用户截图 STREAMING 层完全空的原因。
+        # 现在改成：只要有 token 就开 block，kind 先记 unknown，等 closed_span
+        # 或后续步骤能识别时再 upgrade。
+        # 需要过滤掉的例外：`<|non_spoken_no_action|>` 单 token + 立刻
+        # terminated —— 这不是内容，不该开 block。
+        is_no_action_marker = (
+            bool(step.terminated) and getattr(step, "close_reason", None) == "no_action"
+        )
+        should_open = (
+            self._current_block_id is None
+            and (token_ids or step_text)
+            and not is_no_action_marker
+        )
+        if should_open:
+            # 先给一个 tentative kind：能从 token_strs 一眼看出就直接标注，
+            # 看不出就 unknown（等 closed_span 或后续 step 揭晓）
+            tentative_kind = _guess_block_kind_from_tokens(token_strs) if token_strs else None
+            await self._begin_block(tentative_kind, unit_index)
 
-        if token_ids and self._current_block_id is not None:
+        # 每一步都发 delta —— 前端字符级 streaming 就靠这个。
+        # 原始需求："每当从后端收到这个的，就要把这个字给它显示，及时地
+        #   显示上去" + "streaming 里边就去呈现它的原始的那个内容就行了，
+        #   你不需要做 XML 解析。包括 <tool_call> 和 </tool_call> 你也是
+        #   都是带上的。"
+        # 所以 step_text（BPE 逐 step 增量，包含所有 XML 标签）是唯一可靠
+        # 的 streaming 来源；token_strs 带上做 fallback / 展示用。
+        if (token_ids or step_text) and self._current_block_id is not None:
             await self._send_event(
                 BoardEvent(
                     type="non_spoken_delta",
@@ -678,7 +702,7 @@ class AudioDuplexBoardSession:
                     block_kind=_kind_for_event(self._current_block_kind),
                     token_ids=token_ids,
                     token_strs=token_strs,
-                    step_text=step.text or "",
+                    step_text=step_text,
                 )
             )
 
