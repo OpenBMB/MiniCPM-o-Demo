@@ -420,6 +420,16 @@ def parse_args() -> argparse.Namespace:
         "persistent WebSocket with server-side decode streaming (recommended). "
         "`http` uses legacy per-step HTTP RPC (chatty).",
     )
+    parser.add_argument(
+        "--audio-dump-dir",
+        default=None,
+        help=(
+            "If set, every session dumps per-unit AI TTS waveform as WAV under "
+            "<dir>/<session_id>/unit_<idx>_speak.wav plus a manifest.jsonl. "
+            "Use for post-hoc listening (diagnose overlap / truncation / TTS "
+            "quality). Path is created if missing."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -440,6 +450,7 @@ def main() -> None:
         remote_view_url=args.remote_view_url,
         remote_view_verify_tls=args.remote_view_verify_tls,
         remote_view_transport=args.remote_view_transport,
+        audio_dump_dir=args.audio_dump_dir,
     )
     uvicorn_kwargs: dict[str, object] = {"host": config.host, "port": config.port}
     if args.ssl_keyfile and args.ssl_certfile:

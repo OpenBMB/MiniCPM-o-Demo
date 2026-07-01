@@ -39,6 +39,7 @@ import json
 import statistics
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 import numpy as np
@@ -107,6 +108,18 @@ class AudioDuplexBoardSession:
         self._send_event = send_event
         self.session_id = f"board-{uuid.uuid4().hex[:10]}"
         self._prepared = False
+        # 可选：把每个 speak unit 的 TTS waveform 落盘，供事后回听诊断
+        # 重叠/截断/TTS 质量。
+        self._audio_dump_session_dir: Path | None = None
+        self._audio_dump_manifest_path: Path | None = None
+        if config.audio_dump_dir:
+            self._audio_dump_session_dir = Path(config.audio_dump_dir) / self.session_id
+            self._audio_dump_session_dir.mkdir(parents=True, exist_ok=True)
+            self._audio_dump_manifest_path = self._audio_dump_session_dir / "manifest.jsonl"
+            print(
+                f"[session {self.session_id}] audio dump: {self._audio_dump_session_dir}",
+                flush=True,
+            )
         self._unit_index = 0
         self._max_spoken_tokens = 24
         self._decode_mode = "greedy"
@@ -310,6 +323,12 @@ class AudioDuplexBoardSession:
             spoken.audio_waveform,
             spoken.audio_sample_rate or 24000,
         )
+        # 事后回听诊断用：is_speaking + 有 waveform 的 unit 落盘一份 wav +
+        # 一行 manifest。同步 IO，10 KB/unit 量级，直接写不占大头。
+        self._maybe_dump_speak_wav(
+            unit_index=unit_index,
+            spoken=spoken,
+        )
         await self._send_event(
             BoardEvent(
                 type="spoken_final",
@@ -451,6 +470,61 @@ class AudioDuplexBoardSession:
         # (we can't to_thread retroactively, so this path is only safe when the call
         # is already fast; for the heavy paths we rely on async fc).
         return result
+
+    def _maybe_dump_speak_wav(self, *, unit_index: int, spoken: Any) -> None:
+        """将本 unit 的 TTS waveform 落成一个 WAV + 一行 manifest。
+
+        只对 `is_speaking=True 且 audio_waveform 非空` 的 unit 生效。目录：
+            <audio_dump_dir>/<session_id>/unit_<idx>_speak.wav
+        manifest.jsonl 每行：
+            {"unit": N, "text": "...", "sample_rate": 24000,
+             "n_samples": M, "spoken_turn_eos": bool, "ts": <epoch>}
+
+        用于事后回听诊断"重叠/截断/TTS 走音"这些主观问题——只有事后能拿到
+        每个 unit 的原始波形，才能判断是 TTS 本身的问题还是前端播放路径的
+        问题。为了不阻塞事件循环，写盘走 asyncio.to_thread 也不至于（10KB
+        /unit，同步 write 也就微秒级），这里直接同步写。
+        """
+
+        if self._audio_dump_session_dir is None:
+            return
+        if not getattr(spoken, "is_speaking", False):
+            return
+        waveform = getattr(spoken, "audio_waveform", None)
+        if waveform is None:
+            return
+        array = np.asarray(waveform, dtype=np.float32).reshape(-1)
+        if array.size == 0:
+            return
+        sr = int(getattr(spoken, "audio_sample_rate", None) or 24000)
+        wav_path = self._audio_dump_session_dir / f"unit_{unit_index:04d}_speak.wav"
+        try:
+            sf.write(str(wav_path), array, sr, format="WAV")
+        except Exception as exc:  # noqa: BLE001 - dump 是诊断能力，出错不能挂主流程
+            print(
+                f"[session {self.session_id} audio_dump] wav write failed unit={unit_index}: {exc}",
+                flush=True,
+            )
+            return
+        manifest_line = {
+            "unit": unit_index,
+            "text": getattr(spoken, "spoken_text", "") or "",
+            "sample_rate": sr,
+            "n_samples": int(array.size),
+            "duration_ms": round(1000.0 * array.size / sr, 1),
+            "spoken_turn_eos": bool(getattr(spoken, "spoken_turn_eos", False)),
+            "wav": wav_path.name,
+            "ts": time.time(),
+        }
+        try:
+            assert self._audio_dump_manifest_path is not None
+            with self._audio_dump_manifest_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(manifest_line, ensure_ascii=False) + "\n")
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[session {self.session_id} audio_dump] manifest append failed: {exc}",
+                flush=True,
+            )
 
     async def _run_non_spoken_loop(
         self, unit_index: int, *, is_speaking: bool

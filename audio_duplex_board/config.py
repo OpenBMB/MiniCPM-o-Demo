@@ -51,6 +51,12 @@ class AudioDuplexBoardConfig:
     #            cooperative stop (recommended).
     #   "http" -> legacy per-step HTTP RPC; chatty but simpler.
     remote_view_transport: str = "ws"
+    # 每个 session / 每个 speak unit 都把 TTS 输出 waveform 落盘（WAV），
+    # 便于事后回听诊断"重复播放/截断/杂音"这种主观问题。目录结构：
+    #   <audio_dump_dir>/<session_id>/unit_<idx>_speak.wav
+    # + <audio_dump_dir>/<session_id>/manifest.jsonl
+    # 只写 is_speaking=True 且 audio_waveform 非空的 unit。设为 None 关掉。
+    audio_dump_dir: str | None = None
 
     @property
     def case_folder_path(self) -> Path | None:
