@@ -321,20 +321,7 @@ function applyEvent(event) {
   appendTimeline(`${event.type} u=${event.unit_index ?? '-'}`);
   switch (event.type) {
     case 'spoken_final':
-      // Just the AI text. No token counts, no unit numbers — user wants the
-      // conversation, not telemetry.
-      if (event.text) appendSpeech(event.text);
-      // Prefer demo-style gapless playback: raw Float32 base64 → AudioPlayer.
-      // Falls back to <audio src="data:audio/wav;base64,..."> in the debug
-      // drawer for inspection.
-      if (audioPlayerReady && event.payload?.audio_float32_base64) {
-        if (!audioPlayer.turnActive) audioPlayer.beginTurn();
-        audioPlayer.playChunk(event.payload.audio_float32_base64, performance.now());
-        if (event.payload?.spoken_turn_eos) audioPlayer.endTurn?.();
-      }
-      if (event.payload?.audio_wav_base64) {
-        appendAiAudio(event.unit_index, event.payload.audio_wav_base64);
-      }
+      handleSpokenFinal(event);
       return;
     case 'non_spoken_block_started':
       beginNonSpokenBlock(event);
@@ -513,6 +500,48 @@ function clearViews() {
 
 function setStatus(text) {
   el.status.textContent = text;
+}
+
+// spoken_final 事件到达时的核心处理。**照抄** demo `static/duplex/lib/
+// realtime-session.js` 的 turn-based 状态机（_handleListen + _handleSpeak）：
+//
+//   - is_listen=true：模型这一 unit 不说话。**必须** endTurn（如 turnActive），
+//     让 AudioPlayer 优雅收尾 pending chunks，_startAheadMonitor 停掉。这样
+//     下一次真正 speak 到来时 beginTurn 打断的只是"已经结束的 turn"，不会
+//     截断正在播的 AI 语音。之前只在 spoken_turn_eos 触发 endTurn，模型不
+//     吐 eos 就永远不 end，导致后续 beginTurn 拿 _stopAllSources() 硬切上
+//     一段的尾巴——就是用户看到的"结尾有截断"。
+//
+//   - is_speaking=true + audio：turnActive 就当 continuous append（同 turn
+//     内按 _nextTime 无缝排队；这是 AudioPlayer 里 _scheduleChunk 的 gapless
+//     语义），否则 beginTurn 开新 turn 再 playChunk。同一 turn 内绝不 begin
+//     多次，避免 _stopAllSources() 制造重叠 / 截断。
+//
+// 之前把 begin/play/end 交给"event.payload.spoken_turn_eos"来控制 turn 边界
+// 是错的：spoken_turn_eos 是模型 EOS，不一定每次都吐；而且 turn 边界的
+// **权威信号是 is_listen** 而不是 EOS。
+function handleSpokenFinal(event) {
+  const p = event.payload || {};
+  const isListen = !!p.is_listen;
+  const isSpeaking = !!p.is_speaking;
+
+  if (event.text) appendSpeech(event.text);
+
+  if (audioPlayerReady) {
+    if (isListen) {
+      if (audioPlayer.turnActive) audioPlayer.endTurn();
+    } else if (isSpeaking && p.audio_float32_base64) {
+      if (!audioPlayer.turnActive) audioPlayer.beginTurn();
+      audioPlayer.playChunk(p.audio_float32_base64, performance.now());
+    }
+    // 保险：显式 EOS 也 endTurn（个别 ckpt 会在最后一 speak unit 直接吐
+    // eos 同时不切回 listen，也应该收尾）。
+    if (p.spoken_turn_eos && audioPlayer.turnActive) audioPlayer.endTurn();
+  }
+
+  if (p.audio_wav_base64) {
+    appendAiAudio(event.unit_index, p.audio_wav_base64);
+  }
 }
 
 function appendAiAudio(unitIndex, wavBase64) {

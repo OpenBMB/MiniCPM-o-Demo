@@ -116,7 +116,17 @@ class AudioDuplexBoardSession:
         # background tool tasks, kept so we can await them at session finish
         self._tool_tasks: set[asyncio.Task[None]] = set()
         # per-unit non-spoken block sequence, used to build stable block_id
-        self._block_seq_in_unit = 0
+        # Monotonic block sequence counter. A "block" corresponds to one
+        # <think>...</think> or one <tool_call>...</tool_call> segment. It
+        # MUST NOT reset per unit — the same think/tool_call span can span
+        # multiple 1s units (SDK 0.0.5a0 cross-unit non-spoken continuation:
+        # slot closes with <|non_spoken_budget_reached|> but the SPAN keeps
+        # going in the next unit's non-spoken slot). We only reset
+        # `_current_block_*` when a closed_span arrives.
+        # 原始需求（original_requirement_20260630.md）明确：进入 <think> 开
+        # 一个 block，遇到 </think> 才闭合；工具调用同理。之前按 unit 拆导致
+        # 一个 think 被切成 N 个 block，UI 全是空 UNKNOWN 卡片。
+        self._block_seq_global = 0
         self._current_block_id: str | None = None
         self._current_block_kind: str | None = None  # "think" | "tool_call" | None=unknown
         # Real-time signaling: the ws layer sets this asyncio.Event whenever
@@ -257,9 +267,10 @@ class AudioDuplexBoardSession:
         )
         prefill_done_ts = time.perf_counter()
         unit_index = prefill.unit_index
-        self._block_seq_in_unit = 0
-        self._current_block_id = None
-        self._current_block_kind = None
+        # 不重置 `_current_block_id/_current_block_kind`：一个 <think> 或
+        # <tool_call> segment 可能跨多个 unit，只有 span 闭合才 reset（见
+        # `_emit_close_for_span`）。这里如果 reset 会让下一个 unit 的非空
+        # non_spoken 步骤误开新 block。
 
         await self._send_event(
             BoardEvent(
@@ -284,37 +295,39 @@ class AudioDuplexBoardSession:
             ),
         )
         spoken_done_ts = time.perf_counter()
-        if spoken.is_speaking or spoken.spoken_token_ids:
-            # Emit both formats so the frontend can pick:
-            #   - audio_float32_base64: raw little-endian Float32 PCM at
-            #     `audio_sample_rate` (typically 24000). This is the format
-            #     the demo's `static/duplex/lib/audio-player.js` consumes
-            #     for gapless pre-scheduled playback. Preferred when present.
-            #   - audio_wav_base64: WAV-encoded fallback for naive
-            #     `<audio src="data:audio/wav;base64,..."` playback.
-            audio_float32_base64 = _audio_waveform_to_float32_base64(
-                spoken.audio_waveform
+        # 每个 unit 都要发 spoken_final，不只是 speak unit。
+        # 原因：前端 AudioPlayer 是 turn-based（demo static/duplex/lib/
+        # realtime-session.js 的模式）——speak unit 上如果 turn 未开就
+        # beginTurn 然后 playChunk；**listen unit 上必须 endTurn**，否则
+        # 下一次 speak turn 打开时 AudioPlayer.beginTurn() 会
+        # _stopAllSources() 把上一 turn 尾巴截断（这就是用户看到的"结尾
+        # 有截断"）。同理不区分 listen/speak 的话又会不停 begin/end 造成
+        # 重叠。所以前端必须知道 is_listen / is_speaking。
+        audio_float32_base64 = _audio_waveform_to_float32_base64(
+            spoken.audio_waveform
+        )
+        audio_wav_base64 = _audio_waveform_to_wav_base64(
+            spoken.audio_waveform,
+            spoken.audio_sample_rate or 24000,
+        )
+        await self._send_event(
+            BoardEvent(
+                type="spoken_final",
+                session_id=self.session_id,
+                unit_index=unit_index,
+                text=spoken.spoken_text,
+                token_ids=list(spoken.spoken_token_ids),
+                token_strs=list(spoken.spoken_token_strs),
+                payload={
+                    "is_speaking": bool(spoken.is_speaking),
+                    "is_listen": bool(spoken.is_listen),
+                    "spoken_turn_eos": spoken.spoken_turn_eos,
+                    "audio_float32_base64": audio_float32_base64,
+                    "audio_wav_base64": audio_wav_base64,
+                    "audio_sample_rate": spoken.audio_sample_rate or 24000,
+                },
             )
-            audio_wav_base64 = _audio_waveform_to_wav_base64(
-                spoken.audio_waveform,
-                spoken.audio_sample_rate or 24000,
-            )
-            await self._send_event(
-                BoardEvent(
-                    type="spoken_final",
-                    session_id=self.session_id,
-                    unit_index=unit_index,
-                    text=spoken.spoken_text,
-                    token_ids=list(spoken.spoken_token_ids),
-                    token_strs=list(spoken.spoken_token_strs),
-                    payload={
-                        "spoken_turn_eos": spoken.spoken_turn_eos,
-                        "audio_float32_base64": audio_float32_base64,
-                        "audio_wav_base64": audio_wav_base64,
-                        "audio_sample_rate": spoken.audio_sample_rate or 24000,
-                    },
-                )
-            )
+        )
 
         # 3) non-spoken slot: step loop, emit deltas, react to closed spans.
         #    Bails out early when next prefill arrives — but ONLY for speak
@@ -572,10 +585,14 @@ class AudioDuplexBoardSession:
         token_ids = list(step.token_ids or [])
         token_strs = list(step.token_strs or [])
 
-        # 如果当前没有 active block，但这一步产了 token，那是新 block 的开头
-        if token_ids and self._current_block_id is None:
-            kind = _guess_block_kind_from_tokens(token_strs)
-            await self._begin_block(kind, unit_index)
+        # 只有确实看到 <think> / <tool_call> opener 的 token 才开新 block。
+        # 否则（例如 <|non_spoken_no_action|> 单独一个 token 立刻 terminated=True，
+        # 或 spoken/non-spoken slot 边界的 marker token）不算 segment 开始，
+        # 那些开出来永远闭不上、UI 上全是空 UNKNOWN 卡片。
+        if self._current_block_id is None:
+            kind = _guess_block_kind_from_tokens(token_strs) if token_strs else None
+            if kind is not None:
+                await self._begin_block(kind, unit_index)
 
         if token_ids and self._current_block_id is not None:
             await self._send_event(
@@ -599,8 +616,9 @@ class AudioDuplexBoardSession:
     async def _begin_block(self, kind: str | None, unit_index: int) -> None:
         """Create a new non-spoken block and emit `non_spoken_block_started` (awaited)."""
 
-        self._block_seq_in_unit += 1
-        block_id = f"nsb-{unit_index}-{self._block_seq_in_unit}"
+        self._block_seq_global += 1
+        # block_id 使用全局递增序号；unit_index 只做展示用途，不用来标识块。
+        block_id = f"nsb-{self._block_seq_global}"
         self._current_block_id = block_id
         self._current_block_kind = kind
         await self._send_event(
