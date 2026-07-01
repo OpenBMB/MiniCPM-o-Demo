@@ -40,6 +40,7 @@ from enum import Enum
 # 相对导入（同目录）
 from .modeling_minicpmo import gen_logits
 from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
+from .modeling_minicpmo import MiniCPMODuplex as BaseMiniCPMODuplex
 from .modeling_minicpmo import MiniCPMOPreTrainedModel
 from .modeling_minicpmo import MiniCPMTTS
 from .modeling_minicpmo import Resampler
@@ -47,14 +48,12 @@ from .processing_minicpmo import MiniCPMOProcessor
 from .utils import as_dynamic_cache
 from .utils import ChunkPrefillChunkGenerate
 from .utils import drop_tokens_from_cache
-from .utils import DuplexWindowConfig
 from .utils import get_kv_cache_length
 from .utils import realign_rotary_suffix
 from .utils import streaming_token_decoder
 from .utils import torch_clone_recursive
 from .utils import TTSSamplingParams
 from .utils import TTSStreamingGenerator
-from .utils import StreamDecoder
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +185,8 @@ class MiniCPMO(BaseMiniCPMO):
         # Preload TTS vocoder
         self.init_token2wav(streaming=True)
 
-        # Create DuplexCapability instance (composition pattern)
-        self.duplex = DuplexCapability(
+        # Create DuplexCapability instance from the vendored duplex initializer.
+        self.duplex = DuplexCapability.from_existing_model(
             model=self,
             device=device,
             **self._duplex_config,
@@ -2464,10 +2463,10 @@ class MiniCPMO(BaseMiniCPMO):
             }
 
 
-class DuplexCapability:
+class DuplexCapability(BaseMiniCPMODuplex):
     """双工能力组件 - 封装双工对话的全部逻辑
     
-    采用组合模式，接受外部传入的 MiniCPMO 实例，不自己加载模型。
+    继承 vendored MiniCPMODuplex，只保留 demo runtime 的增量逻辑。
     
     使用方式（推荐，使用透传方法）：
         model = MiniCPMO.from_pretrained(...)
@@ -2483,222 +2482,37 @@ class DuplexCapability:
         model.duplex.streaming_prefill(...)
         result = model.duplex.streaming_generate(...)
     """
-    
-    def __init__(
-        self,
+
+    _default_duplex_params = dict(BaseMiniCPMODuplex._default_duplex_params)
+    _default_duplex_params.update(
+        {
+            "top_k": 20,
+            "n_timesteps": 5,
+            "basic_window_high_tokens": 4000,
+            "basic_window_low_tokens": 3500,
+        }
+    )
+
+    @classmethod
+    def from_existing_model(
+        cls,
         model: "MiniCPMO",
-        generate_audio: bool = True,
-        ls_mode: str = "explicit",
-        device: str = "cuda",
+        device: Optional[str] = None,
         **kwargs,
-    ):
-        """初始化双工能力组件
-        
-        Args:
-            model: 外部传入的 MiniCPMO 实例（已加载好的模型）
-            generate_audio: 是否生成音频输出
-            ls_mode: Listen/Speak 模式
-            device: 设备
-            **kwargs: 其他配置参数
-        """
-        # 使用外部传入的模型（不自己加载！）
-        self.model = model
-        self.device = device
-        
-        self.session_logs = []
-        self.session_start_time = None
-        self.log_file_path = None
-        
-        self.generate_audio = generate_audio
-        self.ls_mode = ls_mode
-        
-        # 使用 model 的 processor 和 tokenizer
-        if not hasattr(self.model, "processor") or self.model.processor is None:
-            self.model.processor = MiniCPMOProcessor.from_pretrained(
-                self.model.config._name_or_path, trust_remote_code=True
-            )
-        self.processor = self.model.processor
-        self.tokenizer = self.processor.tokenizer
-        
-        self.break_event = threading.Event()
-        self.session_stop_event = threading.Event()
-        
-        # llm generation_config
-        self.max_new_speak_tokens_per_chunk = kwargs.get("max_new_speak_tokens_per_chunk", 20)
-        self.text_repetition_penalty = kwargs.get("text_repetition_penalty", 1.05)
-        self.temperature = kwargs.get("temperature", 0.7)
-        self.top_k = kwargs.get("top_k", 20)
-        self.top_p = kwargs.get("top_p", 0.8)
-        self.text_repetition_window_size = kwargs.get("text_repetition_window_size", 512)
-        self.listen_prob_scale = kwargs.get("listen_prob_scale", 1.0)
-        self.force_listen_count = kwargs.get("force_listen_count", 0)
-        
-        # tts generation_config
-        tts_temp_value = kwargs.get("tts_temperature", 0.8)
-        self.tts_temperature = torch.tensor([tts_temp_value], dtype=torch.float, device=self.device)
-        self.tts_repetition_penalty = kwargs.get("tts_repetition_penalty", 1.05)
-        
-        # stream config
-        self.CHUNK_MS = kwargs.get("chunk_ms", 1000)
-        self.FIRST_CHUNK_MS = kwargs.get("first_chunk_ms", 1035)
-        self.CNN_REDUNDANCY_MS = kwargs.get("cnn_redundancy_ms", 20)
-        self.SAMPLE_RATE = kwargs.get("sample_rate", 16000)
-        
-        self.model.CHUNK_MS = self.CHUNK_MS
-        self.model.FIRST_CHUNK_MS = self.FIRST_CHUNK_MS
-        self.model.CNN_REDUNDANCY_MS = self.CNN_REDUNDANCY_MS
-        self.model.SAMPLE_RATE = self.SAMPLE_RATE
-        
-        # special tokens
-        self.unit_token_id = self.tokenizer.convert_tokens_to_ids("<unit>")
-        self.image_start_token_id = self.tokenizer.convert_tokens_to_ids("<image>")
-        self.image_end_token_id = self.tokenizer.convert_tokens_to_ids("</image>")
-        self.slice_start_token_id = self.tokenizer.convert_tokens_to_ids("<slice>")
-        self.slice_end_token_id = self.tokenizer.convert_tokens_to_ids("</slice>")
-        
-        self.listen_token_id = self.tokenizer.convert_tokens_to_ids("<|listen|>")
-        self.speak_token_id = self.tokenizer.convert_tokens_to_ids("<|speak|>")
-        self.tts_bos_token_id = self.tokenizer.convert_tokens_to_ids("<|tts_bos|>")
-        self.tts_eos_token_id = self.tokenizer.convert_tokens_to_ids("<|tts_eos|>")
-        
-        self.chunk_eos_token_id = self.tokenizer.convert_tokens_to_ids("<|chunk_eos|>")
-        self.chunk_tts_eos_token_id = self.tokenizer.convert_tokens_to_ids("<|chunk_tts_eos|>")
-        self.turn_eos_token_id = self.tokenizer.convert_tokens_to_ids("<|turn_eos|>")
-        
-        self.chunk_terminator_token_ids = [self.listen_token_id, self.chunk_eos_token_id, self.chunk_tts_eos_token_id]
-        self.turn_terminator_token_ids = [self.turn_eos_token_id]
-        self.chunk_speak_token_ids = [self.speak_token_id]
-        
-        self.tts_pad_id = self.tokenizer.convert_tokens_to_ids("<|tts_pad|>")
-        bad_token_ids = getattr(self.tokenizer, "bad_token_ids", [])
-        self.forbidden_token_ids = [self.tts_pad_id] + list(bad_token_ids)
-        # self.forbidden_token_ids = [] + list(bad_token_ids)
-        
-        self.decoder = StreamDecoder(
-            llm=self.model.llm, tokenizer=self.tokenizer, forbidden_token_ids=self.forbidden_token_ids
+    ) -> "DuplexCapability":
+        instance = BaseMiniCPMODuplex.from_existing_model.__func__(
+            cls,
+            model,
+            device=device,
+            **kwargs,
         )
-        
-        # 滑窗模式: "off" / "basic" / "context"
-        sliding_window_mode = kwargs.get("sliding_window_mode", "off")
-        
-        # 不带 Context 的滑窗参数
-        basic_window_high_tokens = kwargs.get("basic_window_high_tokens", 4000)
-        basic_window_low_tokens = kwargs.get("basic_window_low_tokens", 3500)
-        
-        # 带 Context 的滑窗参数
-        context_previous_max_tokens = kwargs.get("context_previous_max_tokens", 500)
-        context_max_units = kwargs.get("context_max_units", 24)
-        
-        self.decoder.set_window_config(
-            DuplexWindowConfig(
-                sliding_window_mode=sliding_window_mode,
-                basic_window_high_tokens=basic_window_high_tokens,
-                basic_window_low_tokens=basic_window_low_tokens,
-                context_previous_max_tokens=context_previous_max_tokens,
-                context_max_units=context_max_units,
-            )
-        )
-        # 根据 mode 设置滑窗开关
-        window_enabled = sliding_window_mode != "off"
-        self.decoder.set_window_enabled(window_enabled)
-        logger.info(
-            "[DuplexCapability] Sliding window: mode=%s, high=%d, low=%d, prev_max=%d, max_units=%d",
-            sliding_window_mode,
-            basic_window_high_tokens,
-            basic_window_low_tokens,
-            context_previous_max_tokens,
-            context_max_units,
-        )
-        
-        self.tts_logits_processors = None
-        self.tts_eos_token = None
-        if self.generate_audio:
-            self.tts_logits_processors = gen_logits(
-                num_code=self.model.tts.config.num_audio_tokens,
-                repetition_penalty=self.tts_repetition_penalty,
-            )
-            self.tts_eos_token = torch.tensor(
-                [self.model.tts.config.num_audio_tokens - 1],
-                dtype=torch.long,
-                device=self.device,
-            )
-        
-        self._reset_streaming_state()
-        
         logger.info("[DuplexCapability] 初始化完成")
-
-    def set_break_event(self):
-        self.break_event.set()
-
-    def clear_break_event(self):
-        self.break_event.clear()
-
-    def set_session_stop(self):
-        self.session_stop_event.set()
-        self.break_event.set()
-
-    def clear_session_stop(self):
-        self.session_stop_event.clear()
-
-    def is_break_set(self) -> bool:
-        return self.break_event.is_set()
-
-    def is_session_stop_set(self) -> bool:
-        return self.session_stop_event.is_set()
-
-    def _init_token2wav_cache(self, prompt_wav_path: str):
-        self.model.tts.audio_tokenizer.cache = None
-        flow_cache, hift_cache = self.model.tts.audio_tokenizer.set_stream_cache(prompt_wav_path)
-        self.flow_cache_base = torch_clone_recursive(flow_cache)
-        self.hift_cache_base = torch_clone_recursive(hift_cache)
-        self.pre_lookahead = int(self.model.tts.audio_tokenizer.flow.pre_lookahead_len)
-        self.token2wav_initialized = True
-
-    def _reset_token2wav_for_new_turn(self):
-        if self.token2wav_initialized:
-            self.model.tts.audio_tokenizer.stream_cache = torch_clone_recursive(self.flow_cache_base)
-            self.model.tts.audio_tokenizer.hift_cache_dict = torch_clone_recursive(self.hift_cache_base)
-            self.token2wav_buffer = [4218] * 3  # silence token prefix
+        return instance
 
     def _reset_streaming_state(self):
-        self.audio_chunk_idx = 0
-        self.current_turn_ended = True
-        self.speak_count = 0
-        self.res_ids = []
-        self.total_ids = []
-        self.total_hidden = []
-
-        # TTS state
-        self.tts_text_start_pos = 0
-        self.tts_past_key_values = None
-        self.tts_current_turn_start_time = None
-
-        # token2wav state
-        self.token2wav_initialized = False
-        self.token2wav_buffer = []
-        self.flow_cache_base = None
-        self.hift_cache_base = None
-
-        # Audio prefill state
-        self.audio_buffer = np.array([], dtype=np.float32)
-        self.pending_logits: Optional[torch.Tensor] = None
-        self.current_mode: Optional[str] = None
-
-        # Force listen state
-        self._streaming_generate_count = 0
-
-        # Deferred finalize state（必须清理，否则上一个 session 异常退出后
-        # _pending_finalize 残留，导致新 session 的第一个 prefill 报错）
+        super()._reset_streaming_state()
         self._pending_finalize = None
-
-        # 禁止连续 chunk 解码 <|tts_pad|>
         self._last_chunk_had_tts_pad = False
-
-        # Schema tracking: 记录完整的 prefill + generate token 序列
-        # prefill_schema_tokens: 每个元素是一个 unit 的 prefill token 列表
-        # 格式: [[unit0_prefill_tokens], [unit1_prefill_tokens], ...]
-        self.prefill_schema_tokens = []
-        self._current_unit_prefill_tokens = []
 
     def prepare(
         self,
@@ -2710,8 +2524,6 @@ class DuplexCapability:
     ):
         self.clear_break_event()
         self.clear_session_stop()
-
-        self.session_start_time = time.time()
 
         self._reset_streaming_state()
         self.decoder.reset()
@@ -3557,266 +3369,3 @@ class DuplexCapability:
             f"[Duplex] finalize_unit: {state['input_type']} is_listen={state['is_listen']} "
             f"finalize={finalize_ms:.0f}ms"
         )
-
-    def get_session_schema(self, include_embeddings: bool = True) -> str:
-        """获取当前 session 的完整 schema（包含 prefill 和 generate 阶段）
-
-        Args:
-            include_embeddings: 是否包含 embedding 占位符 (如 [img_embed_64], [audio_embed_50])
-
-        Returns:
-            完整的 schema 字符串，每个 unit 的格式为:
-            <unit><image>[img_embed_64]</image>[audio_embed_50]<|listen|或|speak|>生成内容</unit>
-        """
-        if not hasattr(self, "prefill_schema_tokens") or not hasattr(self, "total_ids"):
-            return ""
-
-        # 获取 </unit> token id 用于分割 generate tokens
-        unit_end_token_id = self.tokenizer.convert_tokens_to_ids("</unit>")
-
-        # 分割 generate tokens 为每个 unit
-        generate_units = []
-        current_unit = []
-        for tid in self.total_ids:
-            current_unit.append(tid)
-            if tid == unit_end_token_id:
-                generate_units.append(current_unit)
-                current_unit = []
-
-        # 构建完整 schema
-        full_schema_parts = []
-        num_units = max(len(self.prefill_schema_tokens), len(generate_units))
-
-        for unit_idx in range(num_units):
-            unit_schema = ""
-
-            # Prefill 部分
-            if unit_idx < len(self.prefill_schema_tokens):
-                prefill_tokens = self.prefill_schema_tokens[unit_idx]
-                for item in prefill_tokens:
-                    if isinstance(item, tuple):
-                        # 元组表示 embedding: ("img", dim) 或 ("audio", dim)
-                        embed_type, embed_dim = item
-                        if include_embeddings:
-                            unit_schema += f"[{embed_type}_embed_{embed_dim}]"
-                    else:
-                        # 正常 token ID
-                        unit_schema += self.tokenizer.decode([item], skip_special_tokens=False)
-
-            # Generate 部分
-            if unit_idx < len(generate_units):
-                unit_schema += self.tokenizer.decode(generate_units[unit_idx], skip_special_tokens=False)
-
-            full_schema_parts.append(unit_schema)
-
-        return "".join(full_schema_parts)
-
-    def get_unit_schemas(self, include_embeddings: bool = True) -> list:
-        """获取每个 unit 的 schema 列表
-
-        Returns:
-            每个 unit 的 schema 字符串列表
-        """
-        if not hasattr(self, "prefill_schema_tokens") or not hasattr(self, "total_ids"):
-            return []
-
-        unit_end_token_id = self.tokenizer.convert_tokens_to_ids("</unit>")
-
-        # 分割 generate tokens 为每个 unit
-        generate_units = []
-        current_unit = []
-        for tid in self.total_ids:
-            current_unit.append(tid)
-            if tid == unit_end_token_id:
-                generate_units.append(current_unit)
-                current_unit = []
-
-        # 构建每个 unit 的 schema
-        unit_schemas = []
-        num_units = max(len(self.prefill_schema_tokens), len(generate_units))
-
-        for unit_idx in range(num_units):
-            unit_schema = ""
-
-            # Prefill 部分
-            if unit_idx < len(self.prefill_schema_tokens):
-                prefill_tokens = self.prefill_schema_tokens[unit_idx]
-                for item in prefill_tokens:
-                    if isinstance(item, tuple):
-                        # 元组表示 embedding: ("img", dim) 或 ("audio", dim)
-                        embed_type, embed_dim = item
-                        if include_embeddings:
-                            unit_schema += f"[{embed_type}_embed_{embed_dim}]"
-                    else:
-                        # 正常 token ID
-                        unit_schema += self.tokenizer.decode([item], skip_special_tokens=False)
-
-            # Generate 部分
-            if unit_idx < len(generate_units):
-                unit_schema += self.tokenizer.decode(generate_units[unit_idx], skip_special_tokens=False)
-
-            unit_schemas.append(unit_schema)
-
-        return unit_schemas
-
-    def _convert_results_to_tts_input(self, results):
-        """convert LLM hidden states to TTS input"""
-        if len(results) == 0:
-            audio_bos = self.model.tts.emb_text(
-                torch.tensor(
-                    [self.model.tts.audio_bos_token_id],
-                    device=self.model.tts.emb_text.weight.device,
-                    dtype=torch.long,
-                )
-            )
-            return audio_bos.unsqueeze(0)
-
-        llm_tokens = []
-        llm_hidden = []
-        for hidden in results:
-            llm_tokens.append(hidden[0])
-            llm_hidden.append(hidden[1].squeeze(0))
-
-        llm_tokens_tensor = torch.Tensor(llm_tokens).to(self.device, dtype=torch.long)
-        llm_embeds = self.model.tts.emb_text(llm_tokens_tensor)
-
-        llm_hidden_tensor = torch.cat(llm_hidden, dim=0)
-        llm_hidden_tensor = self.model.tts.projector_semantic(llm_hidden_tensor)
-        llm_hidden_tensor = torch.nn.functional.normalize(llm_hidden_tensor, p=2, dim=-1)
-
-        tts_embeds = llm_embeds + llm_hidden_tensor
-
-        audio_bos = self.model.tts.emb_text(
-            torch.tensor(
-                [self.model.tts.audio_bos_token_id],
-                device=self.model.tts.emb_text.weight.device,
-                dtype=torch.long,
-            )
-        )
-
-        tts_embeds = torch.cat([tts_embeds, audio_bos], dim=0)
-        return tts_embeds.unsqueeze(0)
-
-    def _generate_waveform_from_tokens(
-        self,
-        new_tokens: torch.Tensor,
-        prompt_wav_path: Optional[str],
-        is_last_chunk: bool = False,
-        force_flush: bool = False,
-    ) -> Optional[np.ndarray]:
-        """从 audio tokens 生成波形"""
-        if not self.token2wav_initialized:
-            print("⚠️ token2wav 未初始化")
-            return None
-
-        CHUNK_SIZE = 25
-
-        # 将新 tokens 添加到 buffer
-        token_ids = torch.reshape(new_tokens, (-1,)).tolist()
-        self.token2wav_buffer += token_ids
-
-        # 检测是否有 chunk_eos token
-        has_chunk_eos = any(tid in self.chunk_terminator_token_ids for tid in token_ids)
-
-        self._log(
-            "AUDIO",
-            f"Token2Wav buffer size: {len(self.token2wav_buffer)}, new tokens: {len(token_ids)}, has_chunk_eos: {has_chunk_eos}",
-        )
-
-        pcm_bytes_list = []
-
-        # process enough tokens
-        # if there is chunk_eos, try to flush more content
-        if has_chunk_eos or force_flush:
-            # when there is chunk_eos, try to flush more content
-            while len(self.token2wav_buffer) >= self.pre_lookahead + 5:  # at least keep some lookahead
-                chunk_to_process = min(CHUNK_SIZE + self.pre_lookahead, len(self.token2wav_buffer))
-                pcm_bytes = self.model.tts.audio_tokenizer.stream(
-                    self.token2wav_buffer[:chunk_to_process],
-                    prompt_wav=prompt_wav_path,
-                )
-                pcm_bytes_list.append(pcm_bytes)
-                self.token2wav_buffer = self.token2wav_buffer[min(CHUNK_SIZE, chunk_to_process - self.pre_lookahead) :]
-        else:
-            while len(self.token2wav_buffer) >= CHUNK_SIZE + self.pre_lookahead:
-                pcm_bytes = self.model.tts.audio_tokenizer.stream(
-                    self.token2wav_buffer[: CHUNK_SIZE + self.pre_lookahead],
-                    prompt_wav=prompt_wav_path,
-                )
-                pcm_bytes_list.append(pcm_bytes)
-                self.token2wav_buffer = self.token2wav_buffer[CHUNK_SIZE:]
-
-        # if is the last chunk, flush remaining tokens
-        if is_last_chunk and len(self.token2wav_buffer) > 0:
-            self._log("AUDIO", f"Flushing final {len(self.token2wav_buffer)} tokens")
-            pcm_bytes = self.model.tts.audio_tokenizer.stream(
-                self.token2wav_buffer,
-                prompt_wav=prompt_wav_path,
-                last_chunk=True,
-            )
-            pcm_bytes_list.append(pcm_bytes)
-            self.token2wav_buffer = []
-
-        if not pcm_bytes_list:
-            return None
-
-        # merge PCM and convert to numpy array (24kHz, int16 -> float32)
-        all_pcm = b"".join(pcm_bytes_list)
-        if len(all_pcm) == 0:
-            self._log("AUDIO", "No audio bytes generated")
-            return None
-
-        pcm_np = np.frombuffer(all_pcm, dtype="<i2")
-        audio_waveform = pcm_np.astype(np.float32) / 32768.0
-
-        # left pad with zeros if audio is less than 1 second (24kHz), skip for last chunk
-        min_samples = 24000  # 1 second at 24kHz
-        if not is_last_chunk and len(audio_waveform) < min_samples:
-            pad_length = min_samples - len(audio_waveform)
-            audio_waveform = np.pad(audio_waveform, (pad_length, 0), mode="constant", constant_values=0)
-            self._log("AUDIO", f"Left padded {pad_length} samples ({pad_length/24000:.3f}s) to reach 1s minimum")
-
-        # record generated audio information
-        duration_sec = len(audio_waveform) / 24000
-        self._log(
-            "AUDIO",
-            f"Generated audio: {duration_sec:.2f}s @ 24kHz, {len(pcm_bytes_list)} chunks, remaining buffer: {len(self.token2wav_buffer)} tokens",
-        )
-
-        return audio_waveform
-
-    @staticmethod
-    def _generate_silence_waveform(duration_sec: float = 1.0) -> np.ndarray:
-        """generate silence waveform (24kHz)"""
-        sample_rate = 24000
-        num_samples = int(duration_sec * sample_rate)
-        return np.zeros(num_samples, dtype=np.float32)
-
-    def get_generated_text(self) -> str:
-        return self.tokenizer.decode(self.res_ids)
-
-    def get_current_time(self) -> int:
-        return self.audio_chunk_idx
-
-    def _log(self, event_type: str, message: str, data: Optional[dict] = None):
-        if self.session_start_time is None:
-            self.session_start_time = time.time()
-
-        timestamp = time.time() - self.session_start_time
-        log_entry = {"timestamp": timestamp, "type": event_type, "message": message}
-        if data:
-            log_entry["data"] = data
-
-        self.session_logs.append(log_entry)
-
-        prefix = f"[{timestamp:6.3f}s]"
-        if event_type == "FEED":
-            print(f"{prefix} [FEED] {message}")
-        elif event_type == "DECODE":
-            print(f"{prefix} [DECODE] {message}")
-        elif event_type == "SYS":
-            print(f"{prefix} [SYS] {message}")
-        elif event_type == "AUDIO":
-            print(f"{prefix} [AUDIO] {message}")
-        else:
-            print(f"{prefix} [{event_type}] {message}")
