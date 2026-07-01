@@ -462,25 +462,62 @@ function appendTimeline(text) {
   el.timeline.appendChild(item);
 }
 
-function appendSpeech(text) {
+// AI Speech 用一个字符级别的 "打字机" 队列做 streaming 呈现：spoken_final
+// 每个 unit 一次性给一段文字（SDK 一个 spoken slot 是原子的，没有 sub-unit
+// 逐 token 事件），我们把它拆成字符压进 speechQueue，然后 speechDrainer
+// 每 speechStepMs 弹一个字符出来 append 到当前 speech row。这样视觉上和
+// think / tool_call 面板的 token 流一致，也和 AI 语音播放节奏对得上（
+// 每 unit ~1s 音频 ≈ 4-8 个汉字 → 每字 ~140ms 显示，够慢能看清、又足够
+// 快不会积压）。
+//
+// 不像 think / tool_call 需要"streaming 层 + full 层"两层（因为 BPE
+// merged 后有可能和逐 token 拼接不完全一致），AI spoken 的 spoken_text
+// 就是最终 BPE decode，字符流直接就是最终结果，只有 streaming 层。
+const speechQueue = [];
+let speechDrainer = null;
+const SPEECH_STEP_MS = 60;   // 每字符间隔；audio 一般 6-10 字/s
+
+function pumpSpeechQueue() {
+  if (speechDrainer) return;
+  const step = () => {
+    const item = speechQueue.shift();
+    if (!item) {
+      speechDrainer = null;
+      return;
+    }
+    appendSpeechChar(item);
+    // 队列越长踩越紧，避免比音频落后太多
+    const dyn = speechQueue.length > 30 ? 20
+              : speechQueue.length > 15 ? 35
+              : SPEECH_STEP_MS;
+    speechDrainer = setTimeout(step, dyn);
+  };
+  speechDrainer = setTimeout(step, 0);
+}
+
+function appendSpeechChar(ch) {
   const placeholder = el.aiSpeech.querySelector('.placeholder');
   if (placeholder) placeholder.remove();
-  // Append text to the last speech row if it's recent (< 1.5s ago), so the
-  // AI's per-unit fragments coalesce into readable sentences instead of one
-  // 1-3 char chip per unit.
+  // 同一 turn 内所有字符都续在一行；跨 turn（>=1.5s 无字符入队）换行。
   const last = el.aiSpeech.lastElementChild;
   const now = Date.now();
   if (last && last.classList.contains('speech-row') && (now - Number(last.dataset.ts || 0)) < 1500) {
-    last.textContent = (last.textContent || '') + text;
+    last.textContent = (last.textContent || '') + ch;
     last.dataset.ts = String(now);
   } else {
     const item = document.createElement('div');
     item.className = 'speech-row';
     item.dataset.ts = String(now);
-    item.textContent = text;
+    item.textContent = ch;
     el.aiSpeech.appendChild(item);
   }
   el.aiSpeech.scrollTop = el.aiSpeech.scrollHeight;
+}
+
+function enqueueSpeech(text) {
+  if (!text) return;
+  for (const ch of text) speechQueue.push(ch);
+  pumpSpeechQueue();
 }
 
 function clearViews() {
@@ -489,6 +526,9 @@ function clearViews() {
   el.timeline.innerHTML = '';
   el.board.innerHTML = '';
   renderBoard();
+  // 清空 AI Speech 队列，防止上一次会话的残余字符还在滴。
+  speechQueue.length = 0;
+  if (speechDrainer) { clearTimeout(speechDrainer); speechDrainer = null; }
   el.aiSpeech.innerHTML = '<div class="placeholder">AI 还没开口</div>';
   el.nsStream.innerHTML = '<div class="placeholder">还没有 think / tool_call 块</div>';
   el.aiAudioList.innerHTML = '';
@@ -525,7 +565,7 @@ function handleSpokenFinal(event) {
   const isListen = !!p.is_listen;
   const isSpeaking = !!p.is_speaking;
 
-  if (event.text) appendSpeech(event.text);
+  if (event.text) enqueueSpeech(event.text);
 
   if (audioPlayerReady) {
     if (isListen) {
