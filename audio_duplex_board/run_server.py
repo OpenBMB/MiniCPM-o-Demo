@@ -111,7 +111,18 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
     live_image_dir.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="Audio Duplex Board Prototype")
-    app.mount("/static", StaticFiles(directory=str(web_dir)), name="audio_duplex_board_static")
+
+    # 静态资源禁用缓存：之前遇到用户浏览器缓存了旧的 app.js（badge 一直停在
+    # "(loading)"），刷新也拿不到新版本。前端还在快速迭代，直接给 no-store 更
+    # 稳妥；等接口和 UI 稳定后再考虑加 hashed filename。
+    class NoCacheStaticFiles(StaticFiles):
+        async def get_response(self, path, scope):  # type: ignore[override]
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            return response
+
+    app.mount("/static", NoCacheStaticFiles(directory=str(web_dir)), name="audio_duplex_board_static")
     app.mount(
         "/live-image-downloads",
         StaticFiles(directory=str(live_image_dir)),
@@ -123,7 +134,13 @@ def create_app(config: AudioDuplexBoardConfig) -> FastAPI:
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(web_dir / "index.html")
+        return FileResponse(
+            web_dir / "index.html",
+            headers={
+                "Cache-Control": "no-store, must-revalidate",
+                "Pragma": "no-cache",
+            },
+        )
 
     @app.get("/api/defaults")
     def defaults() -> dict[str, object]:

@@ -230,6 +230,23 @@ class AudioDuplexBoardSession:
             tool_responses = list(self._pending_tool_responses)
             self._pending_tool_responses = []
 
+        # 用户反馈过"模型一直不响应"，很多时候是麦克风采到了静音（浏览器权限/
+        # noiseSuppression 太狠 / 用户没真说话）。在这里解一次 base64 算 RMS +
+        # duration，写到日志，出问题时能立刻区分是"音频没进来"还是"进来了但
+        # 模型不动"。开销 O(1s of audio) 无所谓。
+        audio_rms: float | None = None
+        audio_peak: float | None = None
+        audio_ms: float | None = None
+        try:
+            _raw = base64.b64decode(request.audio_base64)
+            _samples = np.frombuffer(_raw, dtype=np.float32)
+            if _samples.size > 0:
+                audio_rms = float(np.sqrt(np.mean(_samples * _samples)))
+                audio_peak = float(np.max(np.abs(_samples)))
+                audio_ms = 1000.0 * _samples.size / max(1, request.sample_rate)
+        except Exception:  # noqa: BLE001 - RMS 是诊断日志，出错不能影响主流程
+            pass
+
         prefill = await self._call_fc(
             self.fc.streaming_prefill,
             FcDuplexPrefillRequest(
@@ -336,6 +353,15 @@ class AudioDuplexBoardSession:
         speak_text = (spoken.spoken_text or "")[:40].replace("\n", "\\n")
         inter_str = f"{inter_prefill_ms:.0f}" if inter_prefill_ms is not None else "—"
         rt_marker = "RT" if total_ms < 1000.0 else "SLOW"
+        # RMS < 0.005 基本就是静音；正常说话 RMS 一般在 0.02 ~ 0.2 之间。
+        if audio_rms is None:
+            audio_tag = "audio=?"
+        else:
+            silent_tag = "SILENT" if audio_rms < 0.005 else "OK"
+            audio_tag = (
+                f"audio=[rms={audio_rms:.4f} peak={audio_peak:.3f} "
+                f"ms={audio_ms:.0f} sr={request.sample_rate} {silent_tag}]"
+            )
         print(
             f"[session {self.session_id} unit={unit.unit}] "
             f"listen={unit.is_listen} speak={unit.is_speaking} "
@@ -343,6 +369,7 @@ class AudioDuplexBoardSession:
             f"non_spoken_term={unit.non_spoken_terminator} "
             f"closed_spans={n_non_spoken} "
             f"ns_steps={non_spoken_steps} short_circuit={short_circuited} "
+            f"{audio_tag} "
             f"timing_ms=[total={total_ms:.0f} prefill={prefill_ms:.0f} "
             f"spoken={spoken_ms:.0f} non_spoken={non_spoken_ms:.0f} "
             f"finalize={finalize_ms:.0f}] inter_prefill_ms={inter_str} [{rt_marker}]",

@@ -1,5 +1,7 @@
 export async function fetchDefaults() {
-  const res = await fetch('/api/defaults');
+  // no-store: 防止浏览器缓存把 /api/defaults 卡在旧值上，
+  // 也避免 self-signed cert / service worker 层的诡异缓存导致 badge 一直显示 (loading)。
+  const res = await fetch('/api/defaults', { cache: 'no-store' });
   if (!res.ok) throw new Error(`defaults failed: ${res.status}`);
   return res.json();
 }

@@ -22,12 +22,16 @@ export class LiveMicProvider {
       throw new Error('getUserMedia is not available on this origin');
     }
     this.onState?.('requesting mic');
+    // 有用户反馈"模型完全不响应"，日志显示所有 unit 都是 spoken_text=''、
+    // non_spoken_term=no_action —— 一个很常见的原因是浏览器 noiseSuppression
+    // /autoGainControl 把中文人声当噪音压掉了（尤其是 Chrome mac）。这里
+    // 显式关掉，让模型看到真实波形；echoCancellation 保留，避免 AI 播报回流。
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
         echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        noiseSuppression: false,
+        autoGainControl: false,
       },
       video: false,
     });

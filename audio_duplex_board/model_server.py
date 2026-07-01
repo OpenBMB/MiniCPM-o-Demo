@@ -98,14 +98,19 @@ def _encode_np(arr: Any) -> Any:
 
 
 def _spoken_result_to_payload(result: FcSpokenGenerateResult) -> dict[str, Any]:
-    payload = result.model_dump(mode="json")
-    # `audio_waveform` was excluded from model_dump for numpy reasons; re-inject.
+    # audio_waveform 是 numpy array，pydantic mode="json" 不知道怎么序列化它，
+    # 之前的注释写 "was excluded from model_dump" 是骗人的 —— schema 里没有
+    # exclude，一旦 audio_waveform 非空 model_dump 会直接抛
+    # PydanticSerializationError: Unable to serialize unknown。这就是"模型
+    # 一开始张嘴就整个 session 崩掉"的根因。这里 exclude 掉再手动 encode。
+    payload = result.model_dump(mode="json", exclude={"audio_waveform"})
     payload["audio_waveform"] = _encode_np(result.audio_waveform)
     return payload
 
 
 def _non_spoken_result_to_payload(result: FcNonSpokenGenerateResult) -> dict[str, Any]:
-    payload = result.model_dump(mode="json")
+    # 同上，non-spoken 结果里也可能挂着 numpy audio_waveform。
+    payload = result.model_dump(mode="json", exclude={"audio_waveform"})
     payload["audio_waveform"] = _encode_np(result.audio_waveform)
     return payload
 
@@ -570,6 +575,11 @@ def main() -> None:
     if args.ssl_keyfile and args.ssl_certfile:
         kwargs["ssl_keyfile"] = args.ssl_keyfile
         kwargs["ssl_certfile"] = args.ssl_certfile
+    # 关掉 uvicorn 的 ws keepalive：第一次 token2wav / torch.compile kernel
+    # launch 会把事件循环阻塞 20s+，默认 20s ping_timeout 会误杀 ws。业务与
+    # 模型都在内网，RPC 本身就是心跳。
+    kwargs["ws_ping_interval"] = None
+    kwargs["ws_ping_timeout"] = None
     uvicorn.run(app, **kwargs)
 
 

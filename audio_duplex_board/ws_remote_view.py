@@ -225,8 +225,14 @@ class WsRemoteFcDuplexView:
                 self._ws_url,
                 ssl=ssl_ctx,
                 max_size=64 * 1024 * 1024,  # 64MB safety for audio_waveform payloads
-                ping_interval=20,
-                ping_timeout=20,
+                # 之前 ping_interval/timeout=20s，但模型服务器第一次跑 TTS
+                # token2wav 时 GPU 前端会阻塞 asyncio 事件循环 20s 以上（
+                # torch.compile 的 kernel launch + token2wav mel/vocoder），
+                # 结果客户端把 ws 判死了。业务与模型都在内网跑，健康监控靠
+                # RPC 本身即可，这里干脆关掉 keepalive。
+                ping_interval=None,
+                ping_timeout=None,
+                close_timeout=5,
             )
             self._recv_task = asyncio.create_task(self._recv_loop())
 

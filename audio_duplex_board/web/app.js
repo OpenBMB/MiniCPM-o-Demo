@@ -69,18 +69,29 @@ el.loadDefaults.addEventListener('click', async () => {
   setStatus('Idle');
 });
 
-// Populate header mode badge + session settings panel from /api/defaults
-(async () => {
+// Populate header mode badge + session settings panel from /api/defaults.
+// 之前有用户反馈 badge 一直停在 "(loading)"，通常有两种原因：
+//   (1) /api/defaults 拉取失败但没有可见反馈；
+//   (2) 浏览器缓存了旧的 app.js，根本没跑 IIFE。
+// 因此这里加入：超时（5s）、可见错误 + 点击重试、每次调用都写状态到 badge。
+async function loadDefaultsIntoUi({ isRetry = false } = {}) {
   if (!el.modeBadge) return;
+  el.modeBadge.textContent = isRetry ? 'retrying…' : 'loading…';
+  el.modeBadge.className = 'mode-tag mode-loading';
+  el.modeBadge.title = '';
   try {
-    cachedDefaults = await fetchDefaults();
+    const fetchP = fetchDefaults();
+    const timeoutP = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error('timeout after 5s')), 5000),
+    );
+    cachedDefaults = await Promise.race([fetchP, timeoutP]);
     const defaults = cachedDefaults;
     if (defaults.use_mock_view) {
       el.modeBadge.textContent = 'MOCK';
-      el.modeBadge.classList.add('mode-mock');
+      el.modeBadge.className = 'mode-tag mode-mock';
     } else {
       el.modeBadge.textContent = 'REAL MODEL';
-      el.modeBadge.classList.add('mode-real');
+      el.modeBadge.className = 'mode-tag mode-real';
     }
     if (el.kvMode) {
       el.kvMode.textContent = defaults.use_mock_view ? 'mock' : 'real';
@@ -95,7 +106,6 @@ el.loadDefaults.addEventListener('click', async () => {
         ? tools.map((t) => t?.function?.name || '?').join(', ')
         : '(none)';
     }
-    // Settings panel editable defaults
     if (el.systemPrompt) {
       el.systemPrompt.value = defaults.default_system_prompt || '';
     }
@@ -103,11 +113,15 @@ el.loadDefaults.addEventListener('click', async () => {
       el.refAudioPath.value = defaults.default_ref_audio_path || '';
     }
   } catch (err) {
-    el.modeBadge.textContent = `error`;
-    el.modeBadge.classList.add('mode-error');
-    el.modeBadge.title = err.message;
+    el.modeBadge.textContent = `error · click to retry`;
+    el.modeBadge.className = 'mode-tag mode-error';
+    el.modeBadge.title = String(err && err.message ? err.message : err);
+    console.error('[modeBadge] fetchDefaults failed:', err);
   }
-})();
+}
+// 点 badge 触发重试，方便前端卡住时用户自己恢复。
+el.modeBadge?.addEventListener('click', () => loadDefaultsIntoUi({ isRetry: true }));
+loadDefaultsIntoUi();
 
 // Reset buttons restore the training-aligned defaults.
 el.resetSystemPrompt?.addEventListener('click', () => {
@@ -147,6 +161,7 @@ el.runReplay.addEventListener('click', async () => {
 
 el.startMicLive.addEventListener('click', async () => {
   clearViews();
+  resetMicPeak();
   // AudioPlayer needs a user gesture before AudioContext can resume —
   // Start mic click qualifies.
   try {
@@ -516,10 +531,20 @@ function appendAiAudio(unitIndex, wavBase64) {
   audio.play().catch(() => {});
 }
 
+let micPeakSinceStart = 0;
 function updateMicLevel(level) {
   const clamped = Math.max(0, Math.min(1, level / 0.08));
   if (el.micLevelBar) el.micLevelBar.style.width = `${Math.round(clamped * 100)}%`;
-  if (el.micLevelText) el.micLevelText.textContent = level.toFixed(2);
+  // 用户反馈过"模型不响应"往往是麦克风采到了静音（Chrome noiseSuppression
+  // 太狠 / 权限没给 / 硬件哑了）。多加一个 session peak 让用户一眼就能判断
+  // 自己的音频有没有真的进来：peak < 0.01 基本可以断定是静音。
+  if (level > micPeakSinceStart) micPeakSinceStart = level;
+  if (el.micLevelText) {
+    el.micLevelText.textContent = `${level.toFixed(2)}  (peak ${micPeakSinceStart.toFixed(2)})`;
+  }
+}
+function resetMicPeak() {
+  micPeakSinceStart = 0;
 }
 
 function updateStats() {

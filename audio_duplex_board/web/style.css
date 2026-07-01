@@ -46,7 +46,8 @@ body {
 }
 .header .mode-tag.mode-real { background: #ddf4e4; color: #1a7f37; }
 .header .mode-tag.mode-mock { background: #fff3cd; color: #664d03; }
-.header .mode-tag.mode-error { background: #fff0f0; color: #cf222e; }
+.header .mode-tag.mode-error { background: #fff0f0; color: #cf222e; cursor: pointer; }
+.header .mode-tag.mode-loading { background: #eef2ff; color: #3949ab; }
 
 .header-right { display: flex; align-items: center; gap: 10px; }
 .header .ws-state {
