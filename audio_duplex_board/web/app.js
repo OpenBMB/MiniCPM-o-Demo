@@ -529,19 +529,33 @@ function handleSpokenFinal(event) {
 
   if (audioPlayerReady) {
     if (isListen) {
-      if (audioPlayer.turnActive) audioPlayer.endTurn();
+      if (audioPlayer.turnActive) {
+        console.log(`[Turn] unit=${event.unit_index} listen → endTurn (turnIdx=${audioPlayer.turnIdx})`);
+        audioPlayer.endTurn();
+      }
     } else if (isSpeaking && p.audio_float32_base64) {
-      if (!audioPlayer.turnActive) audioPlayer.beginTurn();
+      const beganTurn = !audioPlayer.turnActive;
+      if (beganTurn) {
+        audioPlayer.beginTurn();
+        console.log(`[Turn] unit=${event.unit_index} speak → beginTurn (turnIdx=${audioPlayer.turnIdx})`);
+      }
+      const b64Len = p.audio_float32_base64.length;
+      const durMs = ((b64Len * 3 / 4) / 4) / (p.audio_sample_rate || 24000) * 1000;
+      console.log(`[Turn] unit=${event.unit_index} playChunk dur=${durMs.toFixed(0)}ms turnIdx=${audioPlayer.turnIdx} ahead=${audioPlayer.lastAheadMs.toFixed(0)}ms`);
       audioPlayer.playChunk(p.audio_float32_base64, performance.now());
     }
     // 保险：显式 EOS 也 endTurn（个别 ckpt 会在最后一 speak unit 直接吐
     // eos 同时不切回 listen，也应该收尾）。
-    if (p.spoken_turn_eos && audioPlayer.turnActive) audioPlayer.endTurn();
+    if (p.spoken_turn_eos && audioPlayer.turnActive) {
+      console.log(`[Turn] unit=${event.unit_index} spoken_turn_eos → endTurn`);
+      audioPlayer.endTurn();
+    }
   }
 
-  if (p.audio_wav_base64) {
-    appendAiAudio(event.unit_index, p.audio_wav_base64);
-  }
+  // 不再把 audio_wav_base64 加到调试面板：AudioPlayer 已经在播了，浏览器
+  // 里再挂一串 <audio> 只会占空间、混淆听感，如果用户误点或浏览器 autoplay
+  // 甚至可能造成"重复播放"的观感。真需要看单 unit 波形可以打开 debug
+  // drawer 里的 event timeline 找。
 }
 
 function appendAiAudio(unitIndex, wavBase64) {
