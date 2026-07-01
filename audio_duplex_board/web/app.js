@@ -377,9 +377,21 @@ function beginNonSpokenBlock(event) {
     </section>
   `;
   el.nsStream.appendChild(wrap);
-  // keep newest at bottom and auto-scroll
-  el.nsStream.scrollTop = el.nsStream.scrollHeight;
   nonSpokenBlocks.set(blockId, { kind, streamingPieces: [], fullText: null, closed: false, node: wrap });
+  scrollNsToBottom();
+}
+
+// 真正滚动的容器是 `.scroll-body`（`#nonSpokenStream` 的父元素）——
+// index.html 里可滚动区域套在外层，nonSpokenStream 只是内容器（overflow: hidden）。
+// 之前 el.nsStream.scrollTop = ... 是 no-op（自身没有 overflow）。这里统一
+// 用 parentElement 才是真正的 scroller；rAF 里执行确保 layout 已算好新高度，
+// 否则新 block/delta 还没提交到 DOM 时 scrollHeight 还是旧值。
+function scrollNsToBottom() {
+  const scroller = el.nsStream && el.nsStream.parentElement;
+  if (!scroller) return;
+  requestAnimationFrame(() => {
+    scroller.scrollTop = scroller.scrollHeight;
+  });
 }
 
 function appendNonSpokenDelta(event) {
@@ -410,7 +422,7 @@ function appendNonSpokenDelta(event) {
   }
   // 用户强调："必须保证 Non-spoken 通道一直处于最下方，这样总能看见最新
   // block 的 streaming 结果"。每次 delta 都强制 scroll 到底。
-  el.nsStream.scrollTop = el.nsStream.scrollHeight;
+  scrollNsToBottom();
 }
 
 function closeNonSpokenBlock(event) {
@@ -453,7 +465,7 @@ function closeNonSpokenBlock(event) {
     }
   }
   // 收尾也 scroll 到底，防止 close 事件比最后一 delta 晚到时被卡在上面
-  el.nsStream.scrollTop = el.nsStream.scrollHeight;
+  scrollNsToBottom();
 }
 
 function sleep(ms) {
@@ -535,7 +547,14 @@ function appendSpeechChar(ch) {
     item.textContent = ch;
     el.aiSpeech.appendChild(item);
   }
-  el.aiSpeech.scrollTop = el.aiSpeech.scrollHeight;
+  // 同 scrollNsToBottom 的问题：真正的 scroller 是 aiSpeech 的父元素
+  // `.scroll-body`。给 aiSpeech 本体设 scrollTop 是 no-op。
+  const speechScroller = el.aiSpeech.parentElement;
+  if (speechScroller) {
+    requestAnimationFrame(() => {
+      speechScroller.scrollTop = speechScroller.scrollHeight;
+    });
+  }
 }
 
 // text: 这一 unit 的 spoken 文本
