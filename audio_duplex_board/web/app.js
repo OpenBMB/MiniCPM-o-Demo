@@ -193,7 +193,7 @@ el.startMicLive.addEventListener('click', async () => {
     });
     await micProvider.start();
     setMicState('live');
-    setStatus('Listening · 自然说话，提到具体物体会出现在画板');
+    setStatus('Listening · 先说指令（等下我讲 XX，提到的你放画板上），等 AI 回一句后再自由说');
   } catch (err) {
     setStatus(`Mic live error: ${err.message}`);
     stopMicLive();
@@ -475,7 +475,13 @@ function sleep(ms) {
 function renderBoard() {
   if (!state.cards.length) {
     el.board.classList.add('empty-board');
-    el.board.innerHTML = '<div class="empty-state">说出具体物体，例如「你看这只猫」「桌上有个苹果」</div>';
+    el.board.innerHTML = `<div class="empty-state">
+      <strong>先说一句指令</strong>（约 6-8 秒），比如：<br />
+      <em>「我等下讲讲农场里的动物，提到的你就帮我放到画板上。」</em><br />
+      <em>「等下我讲桌上的东西，提到的你就帮我展示出来。」</em><br />
+      等 AI 应一声（"好，你说到就放到画板上"）之后，再自由描述具体物体。<br />
+      <span style="color:#999;font-size:11px">句式仿训练数据：\`等下我/我等下…提到 XX 你就 放到画板上\`</span>
+    </div>`;
     return;
   }
   el.board.classList.remove('empty-board');
@@ -672,20 +678,44 @@ function appendAiAudio(unitIndex, wavBase64) {
   audio.play().catch(() => {});
 }
 
-let micPeakSinceStart = 0;
+// Mic level display uses a LUFS-like unit (dBFS) instead of raw RMS.
+//
+// 换算依据（`scripts/diagnostics/lufs_survey.py` 采样训练数据）：
+//   training set: RMS mean = 0.069  ↔  LUFS mean = -23.0
+//   公式 20·log10(RMS) 在这个 RMS 上算得 -23.2 —— 跟真 LUFS 只差 0.2 dB
+// 结论：对语音信号，`20·log10(rms)` 就够当 LUFS 近似值显示了（K-weighting
+// 对语音频谱几乎无影响，真 LUFS 需要 400ms 窗 + 门控，UI 场景不必如此严格）。
+//
+// bar 映射范围：-50 dB → -10 dB（覆盖训练分布 -23 附近 ±15 dB）
+// target zone：-28 dB → -18 dB（训练集 5th → 95th percentile RMS 换算）
+const MIC_METER_MIN_DB = -50;    // 静音底
+const MIC_METER_MAX_DB = -10;    // 满格
+const MIC_TARGET_LO_DB = -28;    // 训练集 p5 附近
+const MIC_TARGET_HI_DB = -18;    // 训练集 p95 附近
+
+function rmsToDb(rms) {
+  if (!(rms > 0)) return MIC_METER_MIN_DB;
+  const db = 20 * Math.log10(rms);
+  return Math.max(MIC_METER_MIN_DB, db);   // 静音底
+}
+
+let micPeakDbSinceStart = MIC_METER_MIN_DB;
 function updateMicLevel(level) {
-  const clamped = Math.max(0, Math.min(1, level / 0.08));
+  // `level` 是 live-mic-provider 传来的原始 RMS ∈ [0, 1]
+  const db = rmsToDb(level);
+  const clamped = Math.max(0, Math.min(1, (db - MIC_METER_MIN_DB) / (MIC_METER_MAX_DB - MIC_METER_MIN_DB)));
   if (el.micLevelBar) el.micLevelBar.style.width = `${Math.round(clamped * 100)}%`;
   // 用户反馈过"模型不响应"往往是麦克风采到了静音（Chrome noiseSuppression
-  // 太狠 / 权限没给 / 硬件哑了）。多加一个 session peak 让用户一眼就能判断
-  // 自己的音频有没有真的进来：peak < 0.01 基本可以断定是静音。
-  if (level > micPeakSinceStart) micPeakSinceStart = level;
+  // 太狠 / 权限没给 / 硬件哑了）。session peak 让用户一眼就能判断音频真的
+  // 有没有进来：peak < -50 dB 基本可以断定是静音。
+  if (db > micPeakDbSinceStart) micPeakDbSinceStart = db;
   if (el.micLevelText) {
-    el.micLevelText.textContent = `${level.toFixed(2)}  (peak ${micPeakSinceStart.toFixed(2)})`;
+    const inTarget = (db >= MIC_TARGET_LO_DB && db <= MIC_TARGET_HI_DB) ? '✓' : ' ';
+    el.micLevelText.textContent = `${db.toFixed(1)} dB ${inTarget}  (peak ${micPeakDbSinceStart.toFixed(1)}, target ${MIC_TARGET_LO_DB}~${MIC_TARGET_HI_DB} ≈ -23 LUFS)`;
   }
 }
 function resetMicPeak() {
-  micPeakSinceStart = 0;
+  micPeakDbSinceStart = MIC_METER_MIN_DB;
 }
 
 function updateStats() {

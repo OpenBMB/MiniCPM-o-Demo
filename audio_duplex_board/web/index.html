@@ -87,7 +87,13 @@
           <span class="hint">2 × 3 cards · FIFO</span>
         </div>
         <div id="board" class="board empty-board">
-          <div class="empty-state">说出具体物体，例如「你看这只猫」「桌上有个苹果」</div>
+          <div class="empty-state">
+            <strong>先说一句指令</strong>（约 6-8 秒），比如：<br />
+            <em>「我等下讲讲农场里的动物，提到的你就帮我放到画板上。」</em><br />
+            <em>「等下我讲桌上的东西，提到的你就帮我展示出来。」</em><br />
+            等 AI 应一声（"好，你说到就放到画板上"）之后，再自由描述具体物体。<br />
+            <span style="color:#999;font-size:11px">句式仿训练数据：`等下我/我等下…提到 XX 你就 放到画板上`</span>
+          </div>
         </div>
       </section>
 

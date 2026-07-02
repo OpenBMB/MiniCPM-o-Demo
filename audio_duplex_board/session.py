@@ -260,6 +260,7 @@ class AudioDuplexBoardSession:
         audio_rms: float | None = None
         audio_peak: float | None = None
         audio_ms: float | None = None
+        _samples: np.ndarray | None = None
         try:
             _raw = base64.b64decode(request.audio_base64)
             _samples = np.frombuffer(_raw, dtype=np.float32)
@@ -280,6 +281,16 @@ class AudioDuplexBoardSession:
         )
         prefill_done_ts = time.perf_counter()
         unit_index = prefill.unit_index
+
+        # 用户输入音频也落一份 wav（unit_NNNN_user.wav），跟 AI TTS 输出的
+        # unit_NNNN_speak.wav 放同一个 session 目录、同一个 manifest。用户反
+        # 馈"一半 case 模型不回答"时，只有听到当时用户到底说了什么，才能
+        # 判定是模型 OOD 还是 pipeline 有问题。
+        self._maybe_dump_user_wav(
+            unit_index=unit_index,
+            samples=_samples,
+            sample_rate=request.sample_rate,
+        )
         # 不重置 `_current_block_id/_current_block_kind`：一个 <think> 或
         # <tool_call> segment 可能跨多个 unit，只有 span 闭合才 reset（见
         # `_emit_close_for_span`）。这里如果 reset 会让下一个 unit 的非空
@@ -508,6 +519,7 @@ class AudioDuplexBoardSession:
             return
         manifest_line = {
             "unit": unit_index,
+            "role": "speak",
             "text": getattr(spoken, "spoken_text", "") or "",
             "sample_rate": sr,
             "n_samples": int(array.size),
@@ -516,10 +528,60 @@ class AudioDuplexBoardSession:
             "wav": wav_path.name,
             "ts": time.time(),
         }
+        self._append_manifest(manifest_line)
+
+    def _maybe_dump_user_wav(
+        self, *, unit_index: int, samples: np.ndarray | None, sample_rate: int
+    ) -> None:
+        """把这一 unit 的用户输入音频落成 unit_NNNN_user.wav。
+
+        同一个 manifest.jsonl 用 `role` 字段区分 user vs speak。RMS 也一起
+        记录，事后 `jq 'select(.role=="user") | .rms > 0.03'` 就能过滤出用户
+        真说话的 unit，跟 speak 事件对齐看模型响应时机。
+
+        用户不说话（rms<0.001 / n_samples=0）就跳过，避免落一堆空静音 wav。
+        """
+
+        if self._audio_dump_session_dir is None:
+            return
+        if samples is None or samples.size == 0:
+            return
+        rms = float(np.sqrt(np.mean(samples * samples)))
+        peak = float(np.max(np.abs(samples)))
+        # 只落有内容的 unit（rms>0.001 排除完全静音，允许收进背景噪声）；
+        # 完全静音的 unit 太多会污染目录，靠 manifest 里的 unit 序号就能
+        # 推断哪些是没落的静默段。
+        if rms < 0.001:
+            return
+        wav_path = self._audio_dump_session_dir / f"unit_{unit_index:04d}_user.wav"
         try:
-            assert self._audio_dump_manifest_path is not None
+            sf.write(str(wav_path), samples, int(sample_rate), format="WAV")
+        except Exception as exc:  # noqa: BLE001 - 诊断路径，出错不能挂主流程
+            print(
+                f"[session {self.session_id} audio_dump] user wav write failed unit={unit_index}: {exc}",
+                flush=True,
+            )
+            return
+        self._append_manifest({
+            "unit": unit_index,
+            "role": "user",
+            "sample_rate": int(sample_rate),
+            "n_samples": int(samples.size),
+            "duration_ms": round(1000.0 * samples.size / sample_rate, 1),
+            "rms": round(rms, 5),
+            "peak": round(peak, 4),
+            "wav": wav_path.name,
+            "ts": time.time(),
+        })
+
+    def _append_manifest(self, line: dict[str, Any]) -> None:
+        """向 session dump manifest 追加一行 JSON。写盘失败仅打印不抛。"""
+
+        if self._audio_dump_manifest_path is None:
+            return
+        try:
             with self._audio_dump_manifest_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(manifest_line, ensure_ascii=False) + "\n")
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
         except Exception as exc:  # noqa: BLE001
             print(
                 f"[session {self.session_id} audio_dump] manifest append failed: {exc}",
