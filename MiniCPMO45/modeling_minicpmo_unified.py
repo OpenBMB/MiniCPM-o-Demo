@@ -1912,17 +1912,6 @@ class MiniCPMO(BaseMiniCPMO):
             bos_input_ids = tokenizer.encode(bos_input)
             bos_input_ids = torch.tensor(bos_input_ids, dtype=torch.long, device=self.device).unsqueeze(0)
 
-            # DEBUG: 打印生成开始时的状态
-            _cache_len = self._get_kv_cache_length()
-            _cache_sum = self.llm_past_key_values.key_cache[0].sum().item() if self.llm_past_key_values else 0
-            # 检查 KV Cache 最后几个位置的值
-            _k_last = (
-                self.llm_past_key_values.key_cache[0][0, 0, -5:, :3].flatten().tolist()
-                if self.llm_past_key_values
-                else []
-            )
-            print(f"[DEBUG streaming_generate] cache_len={_cache_len}, cache_sum={_cache_sum:.6f}, k_last={_k_last}")
-
             bos_input_embeds = self.llm.get_input_embeddings()(bos_input_ids)
 
             generation_inputs_embeds = bos_input_embeds
@@ -1983,10 +1972,6 @@ class MiniCPMO(BaseMiniCPMO):
 
                 if output.chunk_token_ids is None:
                     break
-
-                # DEBUG: 打印第一个 chunk 生成的 token
-                if chunk_idx == 0:
-                    print(f"[DEBUG streaming_generate] first_chunk_tokens={output.chunk_token_ids.tolist()}")
 
                 if is_first_generate_chunk:
                     if generate_audio:
