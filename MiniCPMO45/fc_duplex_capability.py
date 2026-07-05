@@ -312,9 +312,33 @@ class FcDuplexCapability:
         out = self.decoder.feed(self.decoder.embed_tokens(ids), return_logits=want_logits)
         return out[0] if want_logits else None
 
-    def _feed_audio(self, audio_waveform, sample_rate: int = 16000) -> int:
+    def _feed_mixed_embeddings(self, chunks: list, want_logits: bool = False):
+        embeds = []
+        for kind, value in chunks:
+            if kind == "ids":
+                ids = list(value or [])
+                if not ids:
+                    continue
+                self.output_ids.extend(ids)
+                embeds.append(self.decoder.embed_tokens(ids))
+            elif kind == "ids_no_record":
+                ids = list(value or [])
+                if ids:
+                    embeds.append(self.decoder.embed_tokens(ids))
+            elif kind == "embeds":
+                if value is not None and int(value.shape[0]) > 0:
+                    embeds.append(value)
+            else:
+                raise ValueError(f"unsupported feed chunk kind: {kind}")
+        if not embeds:
+            return None
+        out = self.decoder.feed(torch.cat(embeds, dim=0), return_logits=want_logits)
+        return out[0] if want_logits else None
+
+    def _audio_embeds(self, audio_waveform, sample_rate: int = 16000):
+        del sample_rate
         if audio_waveform is None or len(audio_waveform) == 0:
-            return 0
+            return None, 0
         audio = np.asarray(audio_waveform, dtype=np.float32)
         data = self.processor.process_audio([audio])
         embeds_nested = self.model.get_audio_embedding(
@@ -322,9 +346,14 @@ class FcDuplexCapability:
             chunk_length=self.model.config.audio_chunk_length,
         )
         if not embeds_nested:
-            return 0
+            return None, 0
         audio_embeds = torch.cat([t for group in embeds_nested for t in group], dim=0)
-        n_audio = int(audio_embeds.shape[0])
+        return audio_embeds, int(audio_embeds.shape[0])
+
+    def _feed_audio(self, audio_waveform, sample_rate: int = 16000) -> int:
+        audio_embeds, n_audio = self._audio_embeds(audio_waveform, sample_rate=sample_rate)
+        if n_audio <= 0:
+            return 0
         self.output_ids.extend([self.sid(self.K.AUDIO_PLACEHOLDER)] * n_audio)
         self.decoder.feed(audio_embeds)
         return n_audio
@@ -375,6 +404,8 @@ class FcDuplexCapability:
         self._current_unit_info = None
         self._spoken_slot_open = False
         self._non_spoken_slot_open = False
+        self._pending_prefill_close_ids = []
+        self._pending_prefill_unit_info = None
         self._spoken_logits = None
         self._non_spoken_logits = None
         self._non_spoken_mode = None
@@ -705,11 +736,33 @@ class FcDuplexCapability:
 
     def _ensure_previous_unit_closed(self) -> None:
         if self._non_spoken_slot_open:
-            self.streaming_non_spoken_generate(close_reason="budget_reached")
+            self.streaming_non_spoken_generate(close_reason="budget_reached", defer_feed=True)
         if self._spoken_slot_open:
             self._close_spoken_slot()
         if self._current_unit_open:
             self.finalize_unit()
+
+    def _mark_unit_finalized(self, info: dict) -> None:
+        self.units_info.append(info)
+        self._current_unit_idx += 1
+        self._current_unit_info = None
+        self._current_unit_open = False
+        self._record_trace("finalize_unit", unit_info=info)
+
+    def _flush_pending_prefill_close(self) -> None:
+        pending_close_ids = list(self._pending_prefill_close_ids or [])
+        if not pending_close_ids:
+            return
+        self._pending_prefill_close_ids = []
+        self._pending_prefill_unit_info = None
+        # output_ids were already updated when the close was deferred; only the
+        # decoder/KV state still needs to catch up.
+        self.decoder.feed(self.decoder.embed_tokens(pending_close_ids))
+        self._record_trace(
+            "flush_pending_prefill_close",
+            token_ids=pending_close_ids,
+            token_strs=self._token_pieces(pending_close_ids),
+        )
 
     def _close_spoken_slot(self, *, append_spoken_slot_eos: bool = False) -> None:
         close_ids = []
@@ -741,22 +794,31 @@ class FcDuplexCapability:
             "non_spoken_terminator": None,
             "closed_spans": [],
         }
-        self._feed_ids([self.sid(self.K.UNIT_START)])
+        chunks = []
+        pending_close_ids = list(self._pending_prefill_close_ids or [])
+        if pending_close_ids:
+            chunks.append(("ids_no_record", pending_close_ids))
+            self._pending_prefill_close_ids = []
+        chunks.append(("ids", [self.sid(self.K.UNIT_START)]))
         self._current_unit_open = True
 
         # TODO: convert frame_list to image embeddings if FC video support is needed.
         del frame_list, max_slice_nums
 
         if audio_waveform is not None and len(audio_waveform) > 0:
-            self._feed_ids([self.sid(self.K.USER_AUDIO_SLOT_START)])
-            n_audio = self._feed_audio(audio_waveform, sample_rate=sample_rate)
+            chunks.append(("ids", [self.sid(self.K.USER_AUDIO_SLOT_START)]))
+            audio_embeds, n_audio = self._audio_embeds(audio_waveform, sample_rate=sample_rate)
             self._current_unit_info["n_audio"] = n_audio
-            self._feed_ids([self.sid(self.K.USER_AUDIO_SLOT_END)])
+            if n_audio > 0:
+                self.output_ids.extend([self.sid(self.K.AUDIO_PLACEHOLDER)] * n_audio)
+                chunks.append(("embeds", audio_embeds))
+            chunks.append(("ids", [self.sid(self.K.USER_AUDIO_SLOT_END)]))
 
         if tool_responses:
-            self._feed_ids(self._input_event_slot_ids(tool_responses))
+            chunks.append(("ids", self._input_event_slot_ids(tool_responses)))
 
-        self._spoken_logits = self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_START)], want_logits=True)
+        chunks.append(("ids", [self.sid(self.K.AI_SPOKEN_SLOT_START)]))
+        self._spoken_logits = self._feed_mixed_embeddings(chunks, want_logits=True)
         self._spoken_slot_open = True
         self._record_trace(
             "streaming_prefill",
@@ -856,7 +918,7 @@ class FcDuplexCapability:
         self._non_spoken_logits = self._feed_ids([self.sid(self.K.AI_NON_SPOKEN_SLOT_START)], want_logits=True)
         self._non_spoken_slot_open = True
 
-    def _close_non_spoken_slot(self, reason: str) -> dict:
+    def _close_non_spoken_slot(self, reason: str, *, defer_feed: bool = False) -> dict:
         self._ensure_protocol()
         self._open_non_spoken_slot()
         term_key = {
@@ -869,9 +931,12 @@ class FcDuplexCapability:
         if term_key is None:
             raise ValueError(f"unsupported non-spoken close reason: {reason}")
         tid = self.sid(term_key)
-        self.output_ids.append(tid)
-        self.decoder.feed(self.decoder.embed_token(tid))
-        self._feed_ids([self.sid(self.K.AI_NON_SPOKEN_SLOT_END)])
+        close_ids = [tid, self.sid(self.K.AI_NON_SPOKEN_SLOT_END)]
+        if defer_feed:
+            self.output_ids.extend(close_ids)
+            self._pending_prefill_close_ids.extend(close_ids)
+        else:
+            self._feed_ids(close_ids)
         self._non_spoken_slot_open = False
         if self._current_unit_info is not None:
             self._current_unit_info["non_spoken_ids"].append(tid)
@@ -884,6 +949,7 @@ class FcDuplexCapability:
             close_reason=reason,
             closed_spans=[],
             text="",
+            deferred_feed=defer_feed,
         )
         return {"token_ids": [tid], "terminated": True, "close_reason": reason, "closed_spans": [], "text": ""}
 
@@ -924,10 +990,11 @@ class FcDuplexCapability:
         decode_mode: str = "greedy",
         max_tokens: int = 1,
         close_reason: Optional[str] = None,
+        defer_feed: bool = False,
     ) -> dict:
         self._ensure_protocol()
         if close_reason is not None:
-            return self._close_non_spoken_slot(close_reason)
+            return self._close_non_spoken_slot(close_reason, defer_feed=defer_feed)
 
         self._open_non_spoken_slot()
         K = self.K
@@ -995,16 +1062,18 @@ class FcDuplexCapability:
         if not self._current_unit_open:
             return {}
         if self._non_spoken_slot_open:
-            self.streaming_non_spoken_generate(close_reason="budget_reached")
+            self.streaming_non_spoken_generate(close_reason="budget_reached", defer_feed=True)
         if self._spoken_slot_open:
             self._close_spoken_slot()
-        self._feed_ids([self.sid(self.K.UNIT_END)])
         info = dict(self._current_unit_info or {"unit": self._current_unit_idx})
-        self.units_info.append(info)
-        self._current_unit_idx += 1
-        self._current_unit_info = None
-        self._current_unit_open = False
-        self._record_trace("finalize_unit", unit_info=info)
+        if self._pending_prefill_close_ids:
+            self.output_ids.append(self.sid(self.K.UNIT_END))
+            self._pending_prefill_close_ids.append(self.sid(self.K.UNIT_END))
+            self._pending_prefill_unit_info = info
+            self._mark_unit_finalized(info)
+            return info
+        self._feed_ids([self.sid(self.K.UNIT_END)])
+        self._mark_unit_finalized(info)
         return info
 
     def decode_output_ids(self, output_ids=None, tools=None) -> dict:
@@ -1130,4 +1199,5 @@ class FcDuplexCapability:
         }
 
     def cleanup(self) -> None:
+        self._flush_pending_prefill_close()
         self._reset_streaming_state()

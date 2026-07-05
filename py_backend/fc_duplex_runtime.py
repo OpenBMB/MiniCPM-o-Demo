@@ -17,6 +17,7 @@ import re
 import time
 import uuid
 from contextlib import suppress
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import numpy as np
@@ -27,6 +28,19 @@ from py_backend.media import decode_frame_base64_list
 
 SendEvent = Callable[[str], Awaitable[None]]
 logger = logging.getLogger(__name__)
+
+
+def _deferred_budget_reached_step() -> SimpleNamespace:
+    return SimpleNamespace(
+        token_ids=[],
+        token_strs=["non_spoken_budget_reached"],
+        terminated=True,
+        close_reason="budget_reached",
+        generation_flag="continue_non_spoken_generation",
+        closed_spans=[],
+        text="",
+        metadata={"deferred_model_feed": True},
+    )
 
 
 DEFAULT_DISPLAY_OBJECT_TOOL: Dict[str, Any] = {
@@ -249,12 +263,7 @@ class FcDuplexSessionRuntime:
         step_durations_ms: List[float] = []
         for _ in range(max(0, self._non_spoken_budget_per_unit)):
             if self._non_spoken_scheduling == "latency" and self._next_input_event.is_set():
-                step = await asyncio.to_thread(
-                    self.backend.fc_duplex_non_spoken_generate,
-                    max_tokens=0,
-                    decode_mode=self._decode_mode,
-                    close_reason="budget_reached",
-                )
+                step = _deferred_budget_reached_step()
                 await self._emit_step_events(step, input_id=input_id)
                 await self._emit_budget_debug(
                     input_id=input_id,
@@ -286,12 +295,7 @@ class FcDuplexSessionRuntime:
                     pre_non_spoken_elapsed_ms=pre_non_spoken_elapsed_ms,
                 )
                 return
-        step = await asyncio.to_thread(
-            self.backend.fc_duplex_non_spoken_generate,
-            max_tokens=0,
-            decode_mode=self._decode_mode,
-            close_reason="budget_reached",
-        )
+        step = _deferred_budget_reached_step()
         await self._emit_step_events(step, input_id=input_id)
         await self._emit_budget_debug(
             input_id=input_id,
