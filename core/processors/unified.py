@@ -104,7 +104,10 @@ for audio_chunk in audio_stream:
 ```
 """
 
-from typing import Optional, Generator, List, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, Optional, Generator, List, TYPE_CHECKING
+from pathlib import Path
+import json
 import os
 import time
 import logging
@@ -121,9 +124,37 @@ from core.schemas import (
     # Streaming
     StreamingRequest, StreamingChunk, StreamingResponse, RollbackResult,
     # Duplex
-    DuplexConfig, DuplexGenerateResult,
+    DuplexConfig, DuplexGenerateResult, DuplexOfflineInput, DuplexOfflineOutput,
     # Common
     Message, Role,
+)
+from core.schemas.fc_duplex import (
+    FcClosedSpan,
+    FcDecodedToolCall,
+    FcDecodedUnit,
+    FcDecodeOutputRequest,
+    FcDecodeOutputResult,
+    FcDuplexConfig,
+    FcDuplexAudioArtifact,
+    FcDuplexComparisonResult,
+    FcDuplexOfflineInput,
+    FcDuplexOfflineOutput,
+    FcDuplexPrepareRequest,
+    FcDuplexPrepareResult,
+    FcDuplexPrefillRequest,
+    FcDuplexPrefillResult,
+    FcDuplexStepResult,
+    FcDuplexTrainDataRequest,
+    FcDuplexTrainDataResult,
+    FcDuplexUnitInfo,
+    FcFinalizeUnitRequest,
+    FcNonSpokenGenerateRequest,
+    FcNonSpokenGenerateResult,
+    FcSpokenGenerateRequest,
+    FcSpokenGenerateResult,
+    FcTokenStreamDiff,
+    FcToolResponse,
+    NonSpokenStepGenerationFlag,
 )
 
 if TYPE_CHECKING:
@@ -1165,6 +1196,919 @@ class DuplexView:
             )
 
 
+class ToolCallIdGenerator:
+    """Simple unique tool call id generator."""
+
+    def __init__(self, prefix: str = "fc_call"):
+        self.prefix = prefix
+        self._next = 1
+
+    def next_id(self) -> str:
+        value = f"{self.prefix}_{self._next:06d}"
+        self._next += 1
+        return value
+
+
+class FixedToolCallIdGenerator:
+    """Deterministic generator for offline train/infer consistency tests."""
+
+    def __init__(self, ids: Iterable[str]):
+        self._ids = list(ids)
+        self._index = 0
+
+    def next_id(self) -> str:
+        if self._index >= len(self._ids):
+            raise ValueError("fixed tool_call_id generator exhausted")
+        value = self._ids[self._index]
+        self._index += 1
+        return value
+
+
+@dataclass
+class ToolCallState:
+    id: str
+    tool_call: Optional[Dict[str, Any]] = None
+    parse_error: Optional[str] = None
+    wire: Optional[str] = None
+    started_sent: bool = False
+    response_received: bool = False
+
+
+class ToolCallStateManager:
+    """View-level tool call id and response state manager."""
+
+    def __init__(self, id_generator: Optional[Any] = None):
+        self.id_generator = id_generator or ToolCallIdGenerator()
+        self._states: Dict[str, ToolCallState] = {}
+        self._pending_started: List[str] = []
+        self._pending_error_responses: List[Dict[str, Any]] = []
+
+    @property
+    def tool_calls(self) -> List[Dict[str, Any]]:
+        calls = []
+        for state in self._states.values():
+            if state.tool_call is not None and not state.parse_error:
+                calls.append({
+                    "tool_call_id": state.id,
+                    **state.tool_call,
+                })
+        return calls
+
+    def _next_unique_id(self) -> str:
+        call_id = self.id_generator.next_id()
+        if call_id in self._states:
+            raise ValueError(f"duplicate generated tool_call_id: {call_id}")
+        return call_id
+
+    def register_tool_call(self, tool_call: Dict[str, Any], wire: Optional[str] = None) -> str:
+        call_id = self._next_unique_id()
+        self._states[call_id] = ToolCallState(id=call_id, tool_call=tool_call, wire=wire)
+        self._pending_started.append(call_id)
+        return call_id
+
+    def register_parse_error(self, error: str, wire: Optional[str] = None) -> str:
+        call_id = self._next_unique_id()
+        self._states[call_id] = ToolCallState(id=call_id, parse_error=error, wire=wire)
+        self._pending_started.append(call_id)
+        self._pending_error_responses.append({
+            "type": "tool_response",
+            "call_id": call_id,
+            "content": f"工具调用解析失败，无法执行该工具调用。错误信息：{error}",
+        })
+        return call_id
+
+    def consume_pending_started_events(self) -> List[Dict[str, Any]]:
+        events = []
+        while self._pending_started:
+            call_id = self._pending_started.pop(0)
+            state = self._states[call_id]
+            state.started_sent = True
+            events.append({"type": "tool_started", "call_id": call_id})
+        return events
+
+    def consume_pending_error_responses(self) -> List[Dict[str, Any]]:
+        events = list(self._pending_error_responses)
+        self._pending_error_responses.clear()
+        return events
+
+    def validate_and_mark_responses(self, tool_responses) -> List[Dict[str, Any]]:
+        if not tool_responses:
+            return []
+        converted = []
+        for response in tool_responses:
+            if hasattr(response, "model_dump"):
+                item = response.model_dump()
+            elif isinstance(response, dict):
+                item = dict(response)
+            else:
+                call_id, content = response
+                item = {"call_id": call_id, "content": content}
+            call_id = item.get("call_id") or item.get("tool_call_id") or item.get("id")
+            if call_id not in self._states:
+                raise ValueError(f"unknown tool_call_id: {call_id}")
+            state = self._states[call_id]
+            if state.response_received:
+                raise ValueError(f"duplicate tool_response for tool_call_id: {call_id}")
+            state.response_received = True
+            item["call_id"] = call_id
+            item.setdefault("type", "tool_response")
+            converted.append(item)
+        return converted
+
+
+class FcDuplexView:
+    """FC slot Duplex 模式视图。"""
+
+    def __init__(self, model: "MiniCPMO", config: Optional[FcDuplexConfig] = None):
+        self._model = model
+        self.config = config or FcDuplexConfig()
+        self.tool_call_manager = ToolCallStateManager()
+        self._ref_audio_cache: Dict[str, np.ndarray] = {}
+
+    @staticmethod
+    def _audio_from_base64(audio_data: Optional[str]) -> Optional[np.ndarray]:
+        if not audio_data:
+            return None
+        audio_bytes = base64.b64decode(audio_data)
+        return np.frombuffer(audio_bytes, dtype=np.float32)
+
+    @staticmethod
+    def _non_spoken_generation_flag(data: dict) -> NonSpokenStepGenerationFlag:
+        if not data.get("terminated", False):
+            return NonSpokenStepGenerationFlag.continue_non_spoken_generation
+        if data.get("close_reason") == "no_action":
+            return NonSpokenStepGenerationFlag.no_action
+        return NonSpokenStepGenerationFlag.non_spoken_slot_eos
+
+    def _token_strs(self, token_ids: List[int]) -> List[str]:
+        """Map token ids to raw vocab pieces or FC special-token display names.
+
+        This is NOT BPE merged decode. For FC protocol special tokens it returns
+        the SDK registry display name, because the HF tokenizer may not know rows
+        added for the trained checkpoint and can return ``None``. For ordinary
+        tokens it returns the per-token pieces stored in the tokenizer vocab.
+
+        Returns:
+            A list with the same length as `token_ids`. Falls back to an empty
+            list if the tokenizer is missing for any reason; callers should
+            treat empty lists as "tokenizer unavailable".
+        """
+
+        if not token_ids:
+            return []
+        fc_duplex = getattr(self._model, "fc_duplex", None)
+        id2name = getattr(fc_duplex, "id2name", {}) or {}
+        tokenizer = getattr(self._model, "tokenizer", None)
+        try:
+            ordinary = []
+            ordinary_positions = []
+            result: List[Optional[str]] = []
+            for token_id in token_ids:
+                tid = int(token_id)
+                if tid in id2name:
+                    result.append(str(id2name[tid]))
+                else:
+                    result.append(None)
+                    ordinary.append(tid)
+                    ordinary_positions.append(len(result) - 1)
+            if ordinary and tokenizer is not None and hasattr(tokenizer, "convert_ids_to_tokens"):
+                converted = list(tokenizer.convert_ids_to_tokens(ordinary))
+                for index, pos in enumerate(ordinary_positions):
+                    piece = converted[index] if index < len(converted) else None
+                    result[pos] = str(piece) if piece is not None else f"<id:{ordinary[index]}>"
+            for index, pos in enumerate(ordinary_positions):
+                if result[pos] is None:
+                    result[pos] = f"<id:{ordinary[index]}>"
+            return [str(item) for item in result]
+        except Exception:
+            return []
+
+    def _step_result(self, data: dict) -> FcNonSpokenGenerateResult:
+        spans = [FcClosedSpan(**span) for span in data.get("closed_spans", []) or []]
+        token_ids = data.get("token_ids", [])
+        return FcNonSpokenGenerateResult(
+            token_ids=token_ids,
+            token_strs=self._token_strs(token_ids),
+            terminated=data.get("terminated", False),
+            close_reason=data.get("close_reason"),
+            closed_spans=spans,
+            text=data.get("text", ""),
+            audio_waveform=data.get("audio_waveform"),
+            audio_sample_rate=data.get("audio_sample_rate"),
+            n_tts_tokens=data.get("n_tts_tokens", 0),
+            generation_flag=FcDuplexView._non_spoken_generation_flag(data),
+            metadata={
+                k: v
+                for k, v in data.items()
+                if k not in {
+                    "token_ids",
+                    "terminated",
+                    "close_reason",
+                    "closed_spans",
+                    "text",
+                    "audio_waveform",
+                    "audio_sample_rate",
+                    "n_tts_tokens",
+                    "generation_flag",
+                }
+            },
+        )
+
+    @staticmethod
+    def _prepare_result(data: dict) -> FcDuplexPrepareResult:
+        resize_info = data.get("resize_info") or {}
+        return FcDuplexPrepareResult(
+            prefill_ids=data.get("prefill_ids", []),
+            output_render=data.get("output_render", ""),
+            resized=bool(resize_info.get("resized", False)),
+            old_vocab_size=resize_info.get("old_vocab"),
+            new_vocab_size=resize_info.get("new_vocab"),
+            required_vocab_size=resize_info.get("need"),
+            generate_audio=bool(data.get("generate_audio", False)),
+            has_ref_audio=bool(data.get("has_ref_audio", False)),
+            prompt_wav_path=data.get("prompt_wav_path"),
+        )
+
+    def _prefill_result(self, data: dict) -> FcDuplexPrefillResult:
+        inserted_ids = data.get("inserted_token_ids", [])
+        return FcDuplexPrefillResult(
+            unit_index=data.get("unit", 0),
+            n_audio_placeholders=data.get("n_audio", 0),
+            has_input_event=data.get("has_event", False),
+            is_listen=data.get("is_listen"),
+            is_speaking=data.get("is_speaking", False),
+            inserted_token_ids=inserted_ids,
+            inserted_token_strs=self._token_strs(inserted_ids),
+        )
+
+    def _spoken_result(self, data: dict) -> FcSpokenGenerateResult:
+        audio_waveform = data.get("audio_waveform")
+        spoken_ids = data.get("spoken_ids", [])
+        return FcSpokenGenerateResult(
+            is_listen=bool(data.get("is_listen", False)),
+            is_speaking=bool(data.get("is_speaking", False)),
+            spoken_token_ids=spoken_ids,
+            spoken_token_strs=self._token_strs(spoken_ids),
+            spoken_text=data.get("spoken_text", data.get("text", "")),
+            spoken_turn_eos=bool(data.get("spoken_turn_eos", False)),
+            audio_waveform=audio_waveform,
+            audio_sample_rate=data.get("audio_sample_rate"),
+            n_audio_samples=int(len(audio_waveform)) if audio_waveform is not None else 0,
+            n_tts_tokens=data.get("n_tts_tokens", 0),
+            cost_llm=data.get("cost_llm", 0.0),
+            cost_tts_prep=data.get("cost_tts_prep", 0.0),
+            cost_tts=data.get("cost_tts", 0.0),
+            cost_token2wav=data.get("cost_token2wav", 0.0),
+        )
+
+    @staticmethod
+    def _unit_info(data: dict) -> FcDuplexUnitInfo:
+        spans = [FcClosedSpan(**span) for span in data.get("closed_spans", []) or []]
+        return FcDuplexUnitInfo(
+            unit=data.get("unit", 0),
+            n_audio=data.get("n_audio", 0),
+            has_event=data.get("has_event", False),
+            is_listen=data.get("is_listen"),
+            is_speaking=data.get("is_speaking", False),
+            spoken_ids=data.get("spoken_ids", []),
+            non_spoken_ids=data.get("non_spoken_ids", []),
+            non_spoken_terminator=data.get("non_spoken_terminator"),
+            closed_spans=spans,
+            audio_sample_rate=data.get("audio_sample_rate"),
+            n_audio_samples=data.get("n_audio_samples", 0),
+        )
+
+    @staticmethod
+    def _decode_result(data: dict) -> FcDecodeOutputResult:
+        units = [
+            FcDecodedUnit(
+                unit_index=index,
+                is_listen=unit.get("is_listen"),
+                spoken_text=unit.get("spoken_text", ""),
+                non_spoken_terminator=unit.get("non_spoken_terminator"),
+                raw_non_spoken=unit.get("raw_non_spoken", ""),
+            )
+            for index, unit in enumerate(data.get("units", []) or [])
+        ]
+        tool_calls = [FcDuplexView._decoded_tool_call(call) for call in data.get("tool_calls", []) or []]
+        return FcDecodeOutputResult(
+            units=units,
+            spoken_text=data.get("spoken_text", ""),
+            think_text=data.get("think_text", ""),
+            tool_calls=tool_calls,
+            output_ids=data.get("output_ids", []),
+            output_render=data.get("output_render", ""),
+        )
+
+    @staticmethod
+    def _decoded_tool_call(call: Dict[str, Any]) -> FcDecodedToolCall:
+        return FcDecodedToolCall(
+            tool_call_id=call.get("tool_call_id"),
+            name=call.get("name"),
+            arguments=call.get("arguments"),
+            error=call.get("error"),
+            wire=call.get("wire"),
+        )
+
+    @staticmethod
+    def _tool_calls_semantic(tool_calls: List[FcDecodedToolCall]) -> List[Dict[str, Any]]:
+        return [
+            {"name": call.name, "arguments": call.arguments, "error": call.error}
+            for call in (tool_calls or [])
+        ]
+
+    @staticmethod
+    def _first_diff(gt: str, pred: str) -> Optional[FcTokenStreamDiff]:
+        if gt == pred:
+            return None
+        n_chars = min(len(gt), len(pred))
+        index = next((i for i in range(n_chars) if gt[i] != pred[i]), n_chars)
+        return FcTokenStreamDiff(
+            index=index,
+            gt_context=gt[max(0, index - 80): index + 160],
+            pred_context=pred[max(0, index - 80): index + 160],
+        )
+
+    @staticmethod
+    def _write_json(path: Path, data: Any) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if hasattr(data, "model_dump"):
+            data = data.model_dump()
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _write_text(path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def _save_audio_artifact(output_dir: Path, waveforms: List[Any], sample_rate: int = 24000) -> FcDuplexAudioArtifact:
+        import soundfile as sf
+
+        audio_dir = output_dir / "pred_audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        unit_audio_paths = []
+        arrays = []
+        for index, waveform in enumerate(waveforms or []):
+            if waveform is None:
+                continue
+            array = np.asarray(waveform, dtype=np.float32).reshape(-1)
+            if array.size == 0:
+                continue
+            unit_path = audio_dir / f"pred_audio_unit_{index:03d}.wav"
+            sf.write(unit_path, array, sample_rate)
+            unit_audio_paths.append(str(unit_path))
+            arrays.append(array)
+
+        full_audio_path = None
+        if arrays:
+            full_audio_path = audio_dir / "pred_audio_full.wav"
+            sf.write(full_audio_path, np.concatenate(arrays), sample_rate)
+
+        return FcDuplexAudioArtifact(
+            sample_rate=sample_rate,
+            unit_audio_paths=unit_audio_paths,
+            full_audio_path=str(full_audio_path) if full_audio_path else None,
+            n_audio_units=len(unit_audio_paths),
+        )
+
+    def prepare(self, request: FcDuplexPrepareRequest, tool_call_id_generator: Optional[Any] = None) -> FcDuplexPrepareResult:
+        import librosa
+
+        self.tool_call_manager = ToolCallStateManager(tool_call_id_generator)
+        ref_audio = None
+        if request.ref_audio_path:
+            if request.ref_audio_path not in self._ref_audio_cache:
+                self._ref_audio_cache[request.ref_audio_path], _ = librosa.load(
+                    request.ref_audio_path,
+                    sr=16000,
+                    mono=True,
+                )
+            ref_audio = self._ref_audio_cache[request.ref_audio_path]
+        result = self._model.fc_duplex_prepare(
+            system_prompt=request.system_prompt,
+            tools=request.tools,
+            ref_audio=ref_audio,
+            prompt_wav_path=request.prompt_wav_path or request.ref_audio_path,
+            generate_audio=request.generate_audio,
+        )
+        return self._prepare_result(result)
+
+    def streaming_prefill(self, request: FcDuplexPrefillRequest) -> FcDuplexPrefillResult:
+        import librosa
+
+        audio_waveform = self._audio_from_base64(request.audio_data)
+        if request.audio_path and audio_waveform is None:
+            audio_waveform, _ = librosa.load(request.audio_path, sr=request.sample_rate, mono=True)
+        tool_events = []
+        tool_events.extend(self.tool_call_manager.consume_pending_started_events())
+        tool_events.extend(self.tool_call_manager.consume_pending_error_responses())
+        tool_events.extend(self.tool_call_manager.validate_and_mark_responses(request.tool_responses))
+        result = self._model.fc_duplex_streaming_prefill(
+            audio_waveform=audio_waveform,
+            frame_list=request.frame_list,
+            tool_responses=tool_events or None,
+            sample_rate=request.sample_rate,
+        )
+        return self._prefill_result(result)
+
+    def streaming_spoken_generate(self, request: FcSpokenGenerateRequest) -> FcSpokenGenerateResult:
+        result = self._model.fc_duplex_streaming_spoken_generate(
+            max_tokens=request.max_tokens,
+            decode_mode=request.decode_mode,
+        )
+        return self._spoken_result(result)
+
+    def streaming_non_spoken_generate(self, request: FcNonSpokenGenerateRequest) -> FcNonSpokenGenerateResult:
+        result = self._model.fc_duplex_streaming_non_spoken_generate(
+            decode_mode=request.decode_mode,
+            max_tokens=request.max_tokens,
+            close_reason=request.close_reason,
+        )
+        self._attach_tool_call_ids(result)
+        return self._step_result(result)
+
+    def _attach_tool_call_ids(self, result: dict) -> None:
+        for span in result.get("closed_spans", []) or []:
+            if span.get("type") != "tool_call":
+                continue
+            tool_call = span.get("tool_call")
+            wire = span.get("wire")
+            error = span.get("error")
+            if isinstance(tool_call, dict) and tool_call.get("error"):
+                error = tool_call.get("error")
+            if error or not isinstance(tool_call, dict) or not tool_call.get("name"):
+                call_id = self.tool_call_manager.register_parse_error(
+                    error or "tool call parse failed",
+                    wire=wire,
+                )
+                span["tool_call_id"] = call_id
+                span["error"] = error or "tool call parse failed"
+                continue
+            call_id = self.tool_call_manager.register_tool_call(tool_call, wire=wire)
+            span["tool_call_id"] = call_id
+            tool_call["tool_call_id"] = call_id
+
+    def finalize_unit(self, request: Optional[FcFinalizeUnitRequest] = None) -> FcDuplexUnitInfo:
+        del request
+        return self._unit_info(self._model.fc_duplex_finalize_unit())
+
+    def decode_output(
+        self,
+        request: Optional[FcDecodeOutputRequest] = None,
+        output_ids: Optional[List[int]] = None,
+        tools=None,
+    ) -> FcDecodeOutputResult:
+        if request is not None:
+            output_ids = request.output_ids
+            tools = request.tools
+        return self._decode_result(self._model.fc_duplex_decode_output_ids(output_ids=output_ids, tools=tools))
+
+    def trace_snapshot(self, *, session_id: Optional[str] = None, reason: Optional[str] = None) -> dict:
+        return self._model.fc_duplex_trace_snapshot(session_id=session_id, reason=reason)
+
+    def dump_trace(self, path: str, *, session_id: Optional[str] = None, reason: Optional[str] = None) -> dict:
+        return self._model.fc_duplex_dump_trace(path=path, session_id=session_id, reason=reason)
+
+    def cleanup(self) -> None:
+        self._model.fc_duplex_cleanup()
+
+    def offline_inference(
+        self,
+        task_input: FcDuplexOfflineInput,
+        non_spoken_budget_per_unit: Optional[int] = None,
+    ) -> FcDuplexOfflineOutput:
+        import librosa
+
+        start_time = time.time()
+        debug_budget_override = non_spoken_budget_per_unit
+        units_info = []
+
+        try:
+            id_generator = FixedToolCallIdGenerator(task_input.tool_call_ids) if task_input.tool_call_ids else None
+            self.prepare(
+                FcDuplexPrepareRequest(
+                    system_prompt=task_input.system_prompt,
+                    tools=task_input.tools,
+                    ref_audio_path=task_input.ref_audio_path,
+                    prompt_wav_path=task_input.prompt_wav_path,
+                    generate_audio=task_input.generate_audio,
+                ),
+                tool_call_id_generator=id_generator,
+            )
+
+            sample_rate = task_input.config.sample_rate
+            samples_per_unit = max(1, int(round(task_input.config.unit_sec * sample_rate)))
+            if task_input.unit_audio_chunks is not None:
+                chunks = [
+                    np.asarray(chunk, dtype=np.float32).reshape(-1)
+                    for chunk in task_input.unit_audio_chunks
+                ]
+            else:
+                audio = self._audio_from_base64(task_input.audio_data)
+                if task_input.user_audio_path and audio is None:
+                    audio, _ = librosa.load(task_input.user_audio_path, sr=sample_rate, mono=True)
+                if audio is None:
+                    audio = np.zeros(samples_per_unit, dtype=np.float32)
+                chunks = [
+                    audio[i:i + samples_per_unit]
+                    for i in range(0, len(audio), samples_per_unit)
+                ] or [np.zeros(samples_per_unit, dtype=np.float32)]
+            n_audio_units = len(chunks)
+            total_units = max(1, n_audio_units + task_input.config.extra_response_units)
+            silence = np.zeros(samples_per_unit, dtype=np.float32)
+            scheduled_tool_responses: Dict[int, List[FcToolResponse]] = {}
+            audio_waveforms = []
+
+            for unit_idx in range(total_units):
+                chunk = chunks[unit_idx] if unit_idx < n_audio_units else silence
+                if len(chunk) < samples_per_unit:
+                    chunk = np.pad(chunk, (0, samples_per_unit - len(chunk)))
+
+                responses = list(scheduled_tool_responses.pop(unit_idx, []))
+                responses.extend(task_input.tool_responses_by_unit.get(unit_idx) or [])
+                self.streaming_prefill(FcDuplexPrefillRequest(
+                    audio_data=base64.b64encode(chunk.astype(np.float32).tobytes()).decode("utf-8"),
+                    tool_responses=responses or None,
+                    sample_rate=sample_rate,
+                ))
+                spoken_step = self.streaming_spoken_generate(FcSpokenGenerateRequest(
+                    max_tokens=task_input.config.max_spoken_tokens,
+                    decode_mode=task_input.config.decode_mode,
+                ))
+                if spoken_step.audio_waveform is not None:
+                    audio_waveforms.append(spoken_step.audio_waveform)
+
+                if debug_budget_override is not None:
+                    unit_budget = debug_budget_override
+                elif spoken_step.is_speaking and task_input.non_spoken_budgets_while_speaking:
+                    unit_budget = task_input.non_spoken_budgets_while_speaking[min(
+                        unit_idx,
+                        len(task_input.non_spoken_budgets_while_speaking) - 1,
+                    )]
+                elif (not spoken_step.is_speaking) and task_input.non_spoken_budgets_while_listening:
+                    unit_budget = task_input.non_spoken_budgets_while_listening[min(
+                        unit_idx,
+                        len(task_input.non_spoken_budgets_while_listening) - 1,
+                    )]
+                else:
+                    unit_budget = task_input.config.non_spoken_budget_per_unit
+
+                terminated = False
+                steps = 0
+                while unit_budget is None or steps < unit_budget:
+                    steps += 1
+                    step = self.streaming_non_spoken_generate(FcNonSpokenGenerateRequest(
+                        max_tokens=1,
+                        decode_mode=task_input.config.decode_mode,
+                    ))
+                    for span in step.closed_spans:
+                        if span.type != "tool_call" or not span.tool_call_id:
+                            continue
+                        if span.tool_call_id in task_input.tool_responses_by_call_id:
+                            response_unit = unit_idx + 2
+                            scheduled_tool_responses.setdefault(response_unit, []).append(
+                                FcToolResponse(
+                                    call_id=span.tool_call_id,
+                                    content=task_input.tool_responses_by_call_id[span.tool_call_id],
+                                )
+                            )
+                    if step.terminated:
+                        terminated = True
+                        break
+                if not terminated:
+                    self.streaming_non_spoken_generate(FcNonSpokenGenerateRequest(
+                        max_tokens=0,
+                        decode_mode=task_input.config.decode_mode,
+                        close_reason="budget_reached",
+                    ))
+                units_info.append(self.finalize_unit())
+
+            decoded = self.decode_output(FcDecodeOutputRequest(tools=task_input.tools))
+            return FcDuplexOfflineOutput(
+                success=True,
+                output_ids=decoded.output_ids,
+                output_render=decoded.output_render,
+                spoken_text=decoded.spoken_text,
+                think_text=decoded.think_text,
+                tool_calls=self.tool_call_manager.tool_calls or decoded.tool_calls,
+                units_info=units_info,
+                audio_waveforms=audio_waveforms,
+                total_units=len(units_info),
+                n_audio_units=n_audio_units,
+                total_duration_ms=(time.time() - start_time) * 1000,
+            )
+        except Exception as exc:
+            logger.exception("FC duplex offline inference failed")
+            return FcDuplexOfflineOutput(
+                success=False,
+                error=str(exc),
+                total_duration_ms=(time.time() - start_time) * 1000,
+            )
+
+    def _load_train_data_structure(self, request: FcDuplexTrainDataRequest) -> tuple:
+        if request.train_data_path:
+            source_path = Path(request.train_data_path)
+            structure = json.loads(source_path.read_text(encoding="utf-8"))
+            sample_id = source_path.stem
+            data_root = Path(request.data_root) if request.data_root else source_path.parent
+            return structure, source_path, sample_id, data_root
+
+        if request.train_data is None:
+            raise ValueError("train_data_path or train_data must be provided")
+
+        source_path = None
+        train_data = request.train_data
+        if isinstance(train_data, dict):
+            structure = train_data
+        elif hasattr(train_data, "model_dump"):
+            structure = train_data.model_dump()
+        elif hasattr(train_data, "structure"):
+            structure = train_data.structure
+        else:
+            raise TypeError(f"unsupported train_data type: {type(train_data)!r}")
+
+        sample_id = str(structure.get("data_id") or "train_data").split(":")[0]
+        if request.data_root is None:
+            raise ValueError("data_root is required when train_data_path is not provided")
+        return structure, source_path, sample_id, Path(request.data_root)
+
+    @staticmethod
+    def _extract_train_tools(structure: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+        from minicpm_o5_sdk import OpenAIToolDefinition
+
+        raw_tools = structure.get("system", {}).get("tools") or []
+        return [OpenAIToolDefinition.model_validate(tool).model_dump() for tool in raw_tools] or None
+
+    @staticmethod
+    def _extract_train_system_prompt(structure: Dict[str, Any]) -> str:
+        return "\n".join(
+            segment["text"]
+            for segment in structure.get("system", {}).get("segments", [])
+            if segment.get("kind") == "text"
+        )
+
+    @staticmethod
+    def _extract_train_tool_call_ids(structure: Dict[str, Any]) -> List[str]:
+        tool_call_ids = []
+        segments = ((structure.get("tracks") or {}).get("ai_non_spoken") or {}).get("segments") or []
+        for segment in segments:
+            content = segment.get("content") or {}
+            if content.get("kind") == "tool_call" and content.get("tool_call_id"):
+                tool_call_ids.append(content["tool_call_id"])
+        return tool_call_ids
+
+    @staticmethod
+    def _extract_train_tool_responses(structure: Dict[str, Any]) -> Dict[str, Any]:
+        responses = {}
+        segments = ((structure.get("tracks") or {}).get("input_event") or {}).get("segments") or []
+        for segment in segments:
+            event = segment.get("event") or {}
+            if event.get("kind") != "tool_response":
+                continue
+            call_id = event.get("tool_call_id")
+            if not call_id:
+                continue
+            text_parts = [
+                item.get("text", "")
+                for item in event.get("contents", [])
+                if item.get("kind") == "text"
+            ]
+            responses[call_id] = "".join(text_parts)
+        return responses
+
+    @staticmethod
+    def _load_sdk_train_data(structure: Dict[str, Any], data_root: Path):
+        from minicpm_o5_sdk import O5DuplexTrainingData, O5TokenizerID
+
+        training_data = O5DuplexTrainingData.load_structure(
+            structure,
+            data_root=data_root,
+        )
+        tokenized_result = training_data.tokenize(tokenizer_id=O5TokenizerID.O45_FC)
+        return training_data, tokenized_result
+
+    @staticmethod
+    def _resolve_train_media_path(data_root: Path, file_path: Optional[str]) -> Optional[Path]:
+        if not file_path:
+            return None
+        path = Path(file_path)
+        if path.is_absolute():
+            return path
+        return data_root / path
+
+    @classmethod
+    def _extract_system_ref_audio_path(cls, structure: Dict[str, Any], data_root: Path) -> Optional[str]:
+        for segment in structure.get("system", {}).get("segments", []) or []:
+            if segment.get("kind") != "audio":
+                continue
+            audio = segment.get("audio") or {}
+            path = cls._resolve_train_media_path(data_root, audio.get("file_path"))
+            if path is not None and path.exists():
+                return str(path)
+        return None
+
+    @staticmethod
+    def _build_unit_audio_chunks_from_arrangement(training_data: Any, arrangement: Any, config: FcDuplexConfig) -> List[np.ndarray]:
+        from minicpm_o5_sdk.protocols.duplex.tokenization.span import compute_total_unit_count
+
+        sample_rate = config.sample_rate
+        unit_sec = float(getattr(arrangement.unit_policy, "unit_sec", config.unit_sec))
+        samples_per_unit = max(1, int(round(unit_sec * sample_rate)))
+        total_units = max(1, compute_total_unit_count(arrangement))
+        chunks = [
+            np.zeros(samples_per_unit, dtype=np.float32)
+            for _ in range(total_units)
+        ]
+
+        user_audio_track = getattr(getattr(arrangement, "tracks", None), "user_audio", None)
+        if user_audio_track is None:
+            return chunks
+
+        source_segments = getattr(getattr(training_data, "tracks", None), "user_audio", None)
+        source_segments = getattr(source_segments, "segments", []) if source_segments is not None else []
+        for index, arranged_segment in enumerate(user_audio_track.segments):
+            if index >= len(source_segments):
+                continue
+            waveform = source_segments[index].audio.get_tensor().detach().cpu().numpy().astype(np.float32)
+            timeline = arranged_segment.timeline
+            segment_start_sec = float(timeline.timeline_start_sec)
+            segment_end_sec = float(timeline.timeline_end_sec)
+            start_unit = max(0, int(timeline.start_unit_index))
+            end_unit = min(total_units, int(timeline.end_unit_index_exclusive))
+            for unit_index in range(start_unit, end_unit):
+                unit_start_sec = unit_index * unit_sec
+                unit_end_sec = (unit_index + 1) * unit_sec
+                overlap_start_sec = max(unit_start_sec, segment_start_sec)
+                overlap_end_sec = min(unit_end_sec, segment_end_sec)
+                if overlap_end_sec <= overlap_start_sec:
+                    continue
+
+                chunk_start = int(round((overlap_start_sec - unit_start_sec) * sample_rate))
+                chunk_end = int(round((overlap_end_sec - unit_start_sec) * sample_rate))
+                audio_start = int(round((overlap_start_sec - segment_start_sec) * sample_rate))
+                audio_end = audio_start + max(0, chunk_end - chunk_start)
+
+                chunk_start = max(0, min(samples_per_unit, chunk_start))
+                chunk_end = max(chunk_start, min(samples_per_unit, chunk_end))
+                audio_start = max(0, min(len(waveform), audio_start))
+                audio_end = max(audio_start, min(len(waveform), audio_end))
+                n = min(chunk_end - chunk_start, audio_end - audio_start)
+                if n > 0:
+                    chunks[unit_index][chunk_start:chunk_start + n] += waveform[audio_start:audio_start + n]
+        return chunks
+
+    @staticmethod
+    def _sdk_budget_to_int_or_none(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise TypeError("budget must be an integer or O5NoBudgetLimit, not bool")
+        if isinstance(value, int):
+            return int(value)
+        if value.__class__.__name__ == "O5NoBudgetLimit":
+            return None
+        if isinstance(value, dict) and value.get("__class__") == "O5NoBudgetLimit":
+            return None
+        raise TypeError(f"unsupported SDK budget type: {type(value).__name__}")
+
+    @classmethod
+    def _build_non_spoken_budget_lists_from_arrangement(cls, arrangement: Any) -> tuple[List[Optional[int]], List[Optional[int]]]:
+        from minicpm_o5_sdk.protocols.duplex.tokenization.span import compute_total_unit_count
+
+        total_units = max(1, compute_total_unit_count(arrangement))
+        listening = [
+            cls._sdk_budget_to_int_or_none(
+                arrangement.get_non_spoken_budget_while_listening(unit_index)
+            )
+            for unit_index in range(total_units)
+        ]
+        speaking = [
+            cls._sdk_budget_to_int_or_none(
+                arrangement.get_non_spoken_budget_while_speaking(unit_index)
+            )
+            for unit_index in range(total_units)
+        ]
+        return listening, speaking
+
+    def offline_inference_from_train_data(self, request: FcDuplexTrainDataRequest) -> FcDuplexTrainDataResult:
+        start_time = time.time()
+        try:
+            structure, source_path, sample_id, data_root = self._load_train_data_structure(request)
+            training_data, tokenized_result = self._load_sdk_train_data(structure, data_root)
+            arrangement = tokenized_result.arrangement
+            tokenized_data = tokenized_result.tokenized_data
+            unit_audio_chunks = self._build_unit_audio_chunks_from_arrangement(
+                training_data,
+                arrangement,
+                request.config,
+            )
+            budget_listening, budget_speaking = self._build_non_spoken_budget_lists_from_arrangement(arrangement)
+
+            user_audio_path = None
+            user_audio_track = (structure.get("tracks") or {}).get("user_audio") or {}
+            user_audio_segments = user_audio_track.get("segments") or []
+            if user_audio_segments:
+                user_audio_path = self._resolve_train_media_path(
+                    data_root,
+                    ((user_audio_segments[0].get("audio") or {}).get("file_path")),
+                )
+
+            tools = self._extract_train_tools(structure)
+            system_prompt = self._extract_train_system_prompt(structure)
+            tool_call_ids = self._extract_train_tool_call_ids(structure) if request.use_train_tool_call_ids else []
+            tool_responses_by_call_id = (
+                self._extract_train_tool_responses(structure)
+                if request.inject_train_tool_responses
+                else {}
+            )
+
+            gt_output_ids = list(tokenized_data.input_ids)
+            gt_decoded = self.decode_output(FcDecodeOutputRequest(output_ids=gt_output_ids, tools=tools))
+
+            system_ref_audio_path = self._extract_system_ref_audio_path(structure, data_root)
+            ref_audio_path = request.ref_audio_path or system_ref_audio_path or (str(user_audio_path) if user_audio_path else None)
+            prompt_wav_path = request.prompt_wav_path or ref_audio_path
+            pred = self.offline_inference(
+                FcDuplexOfflineInput(
+                    system_prompt=system_prompt,
+                    tools=tools,
+                    user_audio_path=str(user_audio_path) if user_audio_path else None,
+                    unit_audio_chunks=unit_audio_chunks,
+                    ref_audio_path=ref_audio_path,
+                    prompt_wav_path=prompt_wav_path if request.generate_audio else None,
+                    generate_audio=request.generate_audio,
+                    tool_call_ids=tool_call_ids or None,
+                    tool_responses_by_call_id=tool_responses_by_call_id,
+                    non_spoken_budgets_while_listening=budget_listening,
+                    non_spoken_budgets_while_speaking=budget_speaking,
+                    config=request.config,
+                ),
+                non_spoken_budget_per_unit=request.non_spoken_budget_per_unit,
+            )
+
+            pred_tool_calls = [
+                call if isinstance(call, FcDecodedToolCall) else self._decoded_tool_call(call)
+                for call in pred.tool_calls
+            ]
+            comparison = FcDuplexComparisonResult(
+                token_ids_exact=gt_output_ids == pred.output_ids,
+                rendered_token_stream_exact=gt_decoded.output_render == pred.output_render,
+                spoken_text_exact=gt_decoded.spoken_text == pred.spoken_text,
+                think_text_exact=gt_decoded.think_text == pred.think_text,
+                tool_calls_semantic_exact=self._tool_calls_semantic(gt_decoded.tool_calls) == self._tool_calls_semantic(pred_tool_calls),
+                tool_call_ids_exact=tool_call_ids == [call.tool_call_id for call in pred_tool_calls],
+                first_rendered_token_stream_diff=self._first_diff(gt_decoded.output_render, pred.output_render),
+            )
+
+            artifact_dir = Path(request.output_artifact_dir) if request.output_artifact_dir else None
+            audio_artifact = None
+            if artifact_dir is not None:
+                self._write_json(artifact_dir / "source.json", structure)
+                self._write_text(artifact_dir / "gt_token_stream.txt", gt_decoded.output_render)
+                self._write_text(artifact_dir / "pred_token_stream.txt", pred.output_render)
+                self._write_json(artifact_dir / "units_info.json", [unit.model_dump() for unit in pred.units_info])
+                if request.generate_audio and pred.success:
+                    audio_artifact = self._save_audio_artifact(artifact_dir, pred.audio_waveforms)
+
+            result = FcDuplexTrainDataResult(
+                sample_id=sample_id,
+                success=pred.success,
+                error=pred.error,
+                source_path=str(source_path) if source_path else None,
+                user_audio_path=str(user_audio_path) if user_audio_path else None,
+                gt_output_ids=gt_output_ids,
+                pred_output_ids=pred.output_ids,
+                gt_output_render=gt_decoded.output_render,
+                pred_output_render=pred.output_render,
+                gt_spoken_text=gt_decoded.spoken_text,
+                pred_spoken_text=pred.spoken_text,
+                gt_think_text=gt_decoded.think_text,
+                pred_think_text=pred.think_text,
+                gt_tool_calls=gt_decoded.tool_calls,
+                pred_tool_calls=pred_tool_calls,
+                tool_call_ids=tool_call_ids,
+                tool_responses_by_call_id=tool_responses_by_call_id,
+                units_info=pred.units_info,
+                comparison=comparison,
+                audio_artifact=audio_artifact,
+                total_duration_ms=(time.time() - start_time) * 1000,
+            )
+            if artifact_dir is not None:
+                self._write_json(artifact_dir / "comparison.json", result)
+            return result
+        except Exception as exc:
+            logger.exception("FC duplex train-data offline inference failed")
+            return FcDuplexTrainDataResult(
+                sample_id=Path(request.train_data_path).stem if request.train_data_path else "",
+                success=False,
+                error=str(exc),
+                source_path=request.train_data_path,
+                total_duration_ms=(time.time() - start_time) * 1000,
+            )
+
+
 # ============================================================
 # UnifiedProcessor：统一入口
 # ============================================================
@@ -1242,6 +2186,7 @@ class UnifiedProcessor(BaseProcessor):
         self._chat_view: Optional[ChatView] = None
         self._half_duplex_view: Optional[HalfDuplexView] = None
         self._duplex_view: Optional[DuplexView] = None
+        self._fc_duplex_view: Optional[FcDuplexView] = None
 
         # Current mode
         self._current_mode: Optional[ProcessorMode] = None
@@ -1420,6 +2365,7 @@ class UnifiedProcessor(BaseProcessor):
         self._chat_view = ChatView(self.model, self.ref_audio_path)
         self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
         self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
+        self._fc_duplex_view = FcDuplexView(self.model)
 
         total_time = time.time() - start
         logger.info(f"UnifiedProcessor initialization complete in {total_time:.1f}s")
@@ -1490,6 +2436,15 @@ class UnifiedProcessor(BaseProcessor):
 
         return self._duplex_view
 
+    def set_fc_duplex_mode(self) -> FcDuplexView:
+        """Return FC slot Duplex view.
+
+        FC duplex uses its own runtime on the same model instance and does not
+        reuse the old ``ProcessorMode.DUPLEX`` switching path.
+        """
+        self._sync_compile_state(True)
+        return self._fc_duplex_view
+
     # ==================== KV Cache State ====================
 
     @property
@@ -1546,3 +2501,8 @@ class UnifiedProcessor(BaseProcessor):
     def duplex(self) -> DuplexView:
         """Duplex view (does not switch mode, only returns the view)."""
         return self._duplex_view
+
+    @property
+    def fc_duplex(self) -> FcDuplexView:
+        """FC slot Duplex view (does not switch old Duplex mode)."""
+        return self._fc_duplex_view

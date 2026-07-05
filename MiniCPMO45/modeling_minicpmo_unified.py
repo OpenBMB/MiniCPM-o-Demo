@@ -21,6 +21,7 @@ import os
 import tempfile
 import threading
 import time
+from collections import Counter
 from copy import deepcopy
 from typing import Dict
 from typing import List
@@ -38,6 +39,7 @@ from tqdm import tqdm
 from enum import Enum
 
 # 相对导入（同目录）
+from .fc_duplex_capability import FcDuplexCapability
 from .modeling_minicpmo import gen_logits
 from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
 from .modeling_minicpmo import MiniCPMODuplex as BaseMiniCPMODuplex
@@ -87,6 +89,7 @@ class MiniCPMO(BaseMiniCPMO):
         
         # 双工能力组件（组合模式，通过 init_unified 初始化）
         self.duplex: Optional["DuplexCapability"] = None
+        self.fc_duplex: Optional["FcDuplexCapability"] = None
         
         # 双工生成配置（传递给 DuplexCapability）
         self._duplex_config = {
@@ -100,6 +103,15 @@ class MiniCPMO(BaseMiniCPMO):
             "text_repetition_window_size": 512,
             "listen_prob_scale": 1.0,
             "force_listen_count": 0,
+            "tts_temperature": 0.8,
+            "tts_repetition_penalty": 1.05,
+        }
+        self._fc_duplex_config = {
+            "generate_audio": True,
+            "tool_format": "openai",
+            "temperature": 0.7,
+            "top_k": 20,
+            "top_p": 0.8,
             "tts_temperature": 0.8,
             "tts_repetition_penalty": 1.05,
         }
@@ -172,15 +184,47 @@ class MiniCPMO(BaseMiniCPMO):
         if pt_path is not None:
             logger.info(f"Loading extra weights: {pt_path}")
             state_dict = torch.load(pt_path, map_location="cpu")
+            prefix_counts = Counter(key.split(".", 1)[0] for key in state_dict)
+            embed_key = "llm.model.embed_tokens.weight"
+            resize_info = {"resized": False, "current_vocab": None, "checkpoint_vocab": None}
+            if embed_key in state_dict:
+                checkpoint_vocab = int(state_dict[embed_key].shape[0])
+                current_vocab = int(self.llm.get_input_embeddings().weight.shape[0])
+                resize_info = {
+                    "resized": checkpoint_vocab > current_vocab,
+                    "current_vocab": current_vocab,
+                    "checkpoint_vocab": checkpoint_vocab,
+                }
+                if checkpoint_vocab > current_vocab:
+                    logger.info(
+                        "Resizing LLM token embeddings before loading extra weights: %d -> %d",
+                        current_vocab,
+                        checkpoint_vocab,
+                    )
+                    self.llm.resize_token_embeddings(checkpoint_vocab)
             info = self.load_state_dict(state_dict, strict=False)
             logger.info(f"Weights loaded — missing: {len(info.missing_keys)}, unexpected: {len(info.unexpected_keys)}")
             if info.unexpected_keys:
                 logger.warning(f"Unexpected keys: {info.unexpected_keys[:5]}...")
+            print(
+                "[MiniCPMO45 init_unified] extra_weights_loaded "
+                f"pt_path={pt_path} "
+                f"num_keys={len(state_dict)} "
+                f"prefix_counts={dict(sorted(prefix_counts.items()))} "
+                f"resize_info={resize_info} "
+                f"missing_count={len(info.missing_keys)} "
+                f"unexpected_count={len(info.unexpected_keys)} "
+                f"missing_first={list(info.missing_keys[:20])} "
+                f"unexpected_first={list(info.unexpected_keys[:20])}",
+                flush=True,
+            )
             del state_dict
 
         # Update duplex config
         if duplex_config:
             self._duplex_config.update(duplex_config)
+            fc_keys = set(self._fc_duplex_config)
+            self._fc_duplex_config.update({k: v for k, v in duplex_config.items() if k in fc_keys})
 
         # Preload TTS vocoder
         self.init_token2wav(streaming=True)
@@ -190,6 +234,11 @@ class MiniCPMO(BaseMiniCPMO):
             model=self,
             device=device,
             **self._duplex_config,
+        )
+        self.fc_duplex = FcDuplexCapability(
+            model=self,
+            device=device,
+            **self._fc_duplex_config,
         )
 
         self._unified_initialized = True
@@ -2295,6 +2344,82 @@ class MiniCPMO(BaseMiniCPMO):
         if self.duplex is None:
             return False
         return self.duplex.is_session_stop_set()
+
+    # ==================== FC Duplex 透传方法 ====================
+
+    def _require_fc_duplex(self) -> "FcDuplexCapability":
+        if self.fc_duplex is None:
+            raise RuntimeError("FC Duplex 未初始化，请先调用 init_unified()")
+        return self.fc_duplex
+
+    def fc_duplex_prepare(
+        self,
+        system_prompt: str,
+        tools=None,
+        ref_audio: Optional[np.ndarray] = None,
+        prompt_wav_path: Optional[str] = None,
+        generate_audio: Optional[bool] = None,
+    ) -> dict:
+        return self._require_fc_duplex().prepare(
+            system_prompt=system_prompt,
+            tools=tools,
+            ref_audio=ref_audio,
+            prompt_wav_path=prompt_wav_path,
+            generate_audio=generate_audio,
+        )
+
+    def fc_duplex_streaming_prefill(
+        self,
+        audio_waveform: Optional[np.ndarray] = None,
+        frame_list: Optional[List] = None,
+        tool_responses=None,
+        sample_rate: int = 16000,
+        max_slice_nums: int = 1,
+    ) -> dict:
+        return self._require_fc_duplex().streaming_prefill(
+            audio_waveform=audio_waveform,
+            frame_list=frame_list,
+            tool_responses=tool_responses,
+            sample_rate=sample_rate,
+            max_slice_nums=max_slice_nums,
+        )
+
+    def fc_duplex_streaming_spoken_generate(
+        self,
+        max_tokens: int = 24,
+        decode_mode: str = "greedy",
+    ) -> dict:
+        return self._require_fc_duplex().streaming_spoken_generate(
+            max_tokens=max_tokens,
+            decode_mode=decode_mode,
+        )
+
+    def fc_duplex_streaming_non_spoken_generate(
+        self,
+        decode_mode: str = "greedy",
+        max_tokens: int = 1,
+        close_reason: Optional[str] = None,
+    ) -> dict:
+        return self._require_fc_duplex().streaming_non_spoken_generate(
+            decode_mode=decode_mode,
+            max_tokens=max_tokens,
+            close_reason=close_reason,
+        )
+
+    def fc_duplex_finalize_unit(self) -> dict:
+        return self._require_fc_duplex().finalize_unit()
+
+    def fc_duplex_decode_output_ids(self, output_ids=None, tools=None) -> dict:
+        return self._require_fc_duplex().decode_output_ids(output_ids=output_ids, tools=tools)
+
+    def fc_duplex_trace_snapshot(self, session_id=None, reason=None) -> dict:
+        return self._require_fc_duplex().trace_snapshot(session_id=session_id, reason=reason)
+
+    def fc_duplex_dump_trace(self, path, session_id=None, reason=None) -> dict:
+        return self._require_fc_duplex().dump_trace(path, session_id=session_id, reason=reason)
+
+    def fc_duplex_cleanup(self) -> None:
+        self._require_fc_duplex().cleanup()
     
     def duplex_chat(
         self,

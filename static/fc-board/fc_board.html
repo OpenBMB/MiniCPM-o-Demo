@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MiniCPM-o · FC Board</title>
+  <link rel="stylesheet" href="/static/fc-board/fc-board.css" />
+</head>
+<body>
+
+  <!-- ============ Header (compact) ============ -->
+  <header class="header">
+    <div class="header-left">
+      <h1>MiniCPM-o · FC Board</h1>
+      <span id="modeBadge" class="mode-tag">Realtime API</span>
+    </div>
+    <div class="header-right">
+      <span id="wsState" class="ws-state">idle</span>
+    </div>
+  </header>
+
+  <!-- ============ Main grid: left (1fr) | right (2fr) ============ -->
+  <div class="main">
+
+    <!-- ===== Left column: status + settings ===== -->
+    <div class="col-left">
+
+      <section class="panel status-panel">
+        <div class="panel-title">Mic</div>
+        <div class="mic-meter">
+          <div class="meter-head">
+            <span>Input level</span>
+            <strong id="micLevelText">0.00</strong>
+          </div>
+          <div class="meter-track"><div id="micLevelBar" class="meter-fill"></div></div>
+        </div>
+        <div id="statusLamp" class="status-lamp">
+          <span class="dot"></span>
+          <span class="label">IDLE</span>
+        </div>
+        <div id="status" class="status-line">Click Start to begin.</div>
+      </section>
+
+      <section class="panel settings-panel">
+        <div class="panel-title">Session</div>
+        <ul class="kv">
+          <li><span class="k">Mode</span><span class="v" id="kvMode">—</span></li>
+          <li><span class="k">Checkpoint</span><span class="v" id="kvCkpt">—</span></li>
+          <li><span class="k">Tools</span><span class="v" id="kvTools">—</span></li>
+        </ul>
+      </section>
+
+      <!-- System prompt + reference audio.
+           Changes take effect on the NEXT Start mic click. -->
+      <section class="panel settings-edit-panel">
+        <details class="cfg-group" open>
+          <summary>System prompt</summary>
+          <textarea id="systemPrompt" rows="6" spellcheck="false"
+                    placeholder="Loading default..."></textarea>
+          <button id="resetSystemPrompt" class="ctrl-btn tiny">Reset to training default</button>
+        </details>
+        <details class="cfg-group">
+          <summary>Reference audio</summary>
+          <input id="refAudioPath" type="text" spellcheck="false"
+                 placeholder="absolute path to .wav" />
+          <p class="hint">Optional. Empty means the backend uses its default reference audio.</p>
+          <button id="resetRefAudio" class="ctrl-btn tiny">Clear</button>
+        </details>
+        <details class="cfg-group">
+          <summary>Runtime</summary>
+          <label class="field-row">
+            <span>Mode</span>
+            <select id="nonSpokenScheduling">
+              <option value="quality" selected>Quality</option>
+              <option value="latency">Latency</option>
+            </select>
+          </label>
+          <label class="field-row">
+            <span>Budget</span>
+            <input id="nonSpokenBudget" type="number" min="1" max="512" step="1" value="12" />
+          </label>
+          <p class="hint">Budget is non-spoken decode steps per audio unit. MVP hard cap was 200.</p>
+        </details>
+      </section>
+
+      <section class="panel runtime-debug-panel">
+        <div class="runtime-debug-head">
+          <span>Budget</span>
+          <span id="debugBudgetUpdated">—</span>
+        </div>
+        <div class="runtime-metrics">
+          <div class="runtime-metric">
+            <span class="metric-label">used</span>
+            <strong id="debugBudgetUsed">—</strong>
+          </div>
+          <div class="runtime-metric">
+            <span class="metric-label">max / 1s</span>
+            <strong id="debugBudgetMax">—</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel stream-panel">
+        <div class="panel-title">
+          Realtime Stream
+          <span class="hint">TX / RX API events</span>
+          <button id="openStreamDialog" class="panel-title-action" type="button">Open stream</button>
+        </div>
+        <label class="stream-filter">
+          <span>Show</span>
+          <select id="streamFilter">
+            <option value="all">All</option>
+            <option value="tx">TX only</option>
+            <option value="rx">RX only</option>
+            <option value="session">Session</option>
+            <option value="input">Input</option>
+            <option value="output">Output delta</option>
+            <option value="sp">SP tokens</option>
+            <option value="debug">Debug</option>
+            <option value="think">Think</option>
+            <option value="tool_call">Tool call</option>
+            <option value="tool_result">Tool result</option>
+            <option value="error">Errors</option>
+          </select>
+        </label>
+        <div id="streamFeed" class="stream-feed">
+          <div class="placeholder">还没有数据流</div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ===== Right column: board (top) + conversation row (bottom) ===== -->
+    <div class="col-right">
+
+      <section class="panel board-panel">
+        <div class="panel-title">
+          Board · display_object_on_board
+          <span class="hint">2 × 3 cards · FIFO</span>
+        </div>
+        <div id="board" class="board empty-board">
+          <div class="empty-state">说出具体物体，例如「你看这只猫」「桌上有个苹果」</div>
+        </div>
+      </section>
+
+      <div class="conv-row">
+        <section class="panel conv-panel">
+          <div class="panel-title">AI Speech</div>
+          <div class="scroll-body">
+            <div id="aiSpeech" class="speech-stream">
+              <div class="placeholder">AI 还没开口</div>
+            </div>
+          </div>
+        </section>
+        <section class="panel ns-panel">
+          <div class="panel-title">
+            Think / Tool-Call
+            <span class="hint">streaming = id-to-token · full = BPE merged</span>
+          </div>
+          <div class="scroll-body">
+            <div id="nonSpokenStream" class="ns-stream">
+              <div class="placeholder">还没有 think / tool_call 块</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+    </div>
+
+    <!-- ===== Bottom controls (spans full width) ===== -->
+    <div class="controls-bar">
+      <button id="startMicLive" class="ctrl-btn primary">Start mic live</button>
+      <button id="stopMicLive" class="ctrl-btn danger">Stop</button>
+      <span class="ctrl-divider"></span>
+      <div class="ctrl-stats">
+        <span>Chunks <b id="sentChunks">0</b></span>
+        <span>AI audio <b id="aiAudioCount">0</b></span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ Debug drawer (collapsible, fixed bottom-right) ============ -->
+  <button id="debugToggle" class="debug-toggle">Debug ▴</button>
+  <aside id="debugDrawer" class="debug-drawer">
+    <header>Debug / Diagnostics</header>
+    <div class="drawer-body">
+      <div>
+        <h3>Live status</h3>
+        <p class="hint" id="liveHint">If mic permission is blocked on this URL, use file replay below.</p>
+      </div>
+      <div>
+        <h3>Event timeline (raw)</h3>
+        <div id="timeline" class="timeline"></div>
+      </div>
+      <div>
+        <h3>AI audio replay</h3>
+        <div id="aiAudioList" class="audio-list"></div>
+      </div>
+      <div>
+        <h3>File streaming replay</h3>
+        <p class="hint">Browser decodes a wav, splits into 1s chunks, sends like online audio.</p>
+        <input type="file" id="audioFileInput" accept="audio/*" />
+        <div class="form-row">
+          <label>Pad before <input id="padBeforeSec" type="number" value="0" min="0" max="30" /></label>
+          <label>Pad after <input id="padAfterSec" type="number" value="2" min="0" max="30" /></label>
+        </div>
+        <div class="actions">
+          <button id="runFileReplay" class="primary">Run file streaming</button>
+        </div>
+        <audio id="userAudioPlayer" controls></audio>
+      </div>
+    </div>
+  </aside>
+
+  <dialog id="streamDialog" class="stream-dialog">
+    <form method="dialog" class="stream-modal">
+      <header class="stream-modal-head">
+        <div>
+          <strong>Realtime Stream</strong>
+          <span id="streamModalCount" class="stream-modal-count">0 events</span>
+        </div>
+        <button class="modal-close" value="close" aria-label="Close">×</button>
+      </header>
+      <div id="streamModalList" class="stream-modal-list"></div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/static/fc-board/fc-board-app.js"></script>
+</body>
+</html>

@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from core.processors.backend_factory import create_backend
 from py_backend.media import decode_audio_base64, decode_frame_base64_list
 from py_backend.voice import resolve_duplex_voice_refs
+from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime, fc_duplex_enabled
 from py_backend.chat_util import (
     convert_to_model_msgs,
     parse_raw_messages,
@@ -166,6 +167,7 @@ class BackendProtocolSession:
         self._finalize_task: Optional[asyncio.Task[None]] = None
         self._op_lock = asyncio.Lock()
         self._active_response_id: Optional[str] = None
+        self._fc_runtime: Optional[FcDuplexSessionRuntime] = None
 
     async def send(self, event_type: str, **fields: Any) -> None:
         data = {"type": event_type, **{k: v for k, v in fields.items() if v is not None}}
@@ -209,10 +211,13 @@ class BackendProtocolSession:
         await self._drain_finalize()
 
         if self.mode == "full_duplex":
-            with suppress(Exception):
-                await asyncio.to_thread(self.backend.duplex_stop)
-            await self._drain_finalize()
-            await asyncio.to_thread(self.backend.duplex_cleanup)
+            if self._fc_runtime is not None:
+                await self._fc_runtime.close()
+            else:
+                with suppress(Exception):
+                    await asyncio.to_thread(self.backend.duplex_stop)
+                await self._drain_finalize()
+                await asyncio.to_thread(self.backend.duplex_cleanup)
 
         if emit_event:
             with suppress(Exception):
@@ -235,12 +240,24 @@ class BackendProtocolSession:
             await self.ws.close(code=1011, reason=reason)
         with suppress(Exception):
             if self.mode == "full_duplex":
-                await asyncio.to_thread(self.backend.duplex_stop)
-                await self._drain_finalize()
-                await asyncio.to_thread(self.backend.duplex_cleanup)
+                if self._fc_runtime is not None:
+                    await self._fc_runtime.close()
+                else:
+                    await asyncio.to_thread(self.backend.duplex_stop)
+                    await self._drain_finalize()
+                    await asyncio.to_thread(self.backend.duplex_cleanup)
         await self.state.forget(self.session_id)
 
     async def _init_duplex(self, params: Dict[str, Any]) -> None:
+        if fc_duplex_enabled(params):
+            self._fc_runtime = FcDuplexSessionRuntime(
+                session_id=self.session_id,
+                backend=self.backend,
+                send=self.send,
+            )
+            await self._fc_runtime.prepare(params)
+            return
+
         config = _first_dict(params.get("config"), params.get("duplex"))
         if config:
             await asyncio.to_thread(self.backend.set_duplex_config, config)
@@ -395,6 +412,10 @@ class BackendProtocolSession:
 
     async def _push_full_duplex(self, payload: Dict[str, Any]) -> None:
         async with self._op_lock:
+            if self._fc_runtime is not None:
+                await self._fc_runtime.push(payload)
+                return
+
             await self._wait_finalize()
             input_id = payload.get("input_id")
             audio_base64 = _extract_audio_base64(payload)
@@ -582,6 +603,11 @@ async def backend_ws(ws: WebSocket) -> None:
             msg_type = _message_type(message)
             if msg_type == "input.append":
                 await session.push(message)
+                continue
+            if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done"}:
+                payload = dict(message)
+                payload["type"] = msg_type.removeprefix("input.")
+                await session.push({"type": "input.append", "input": payload})
                 continue
             # close 只走 HTTP unary 控制通道（见协议 network §3.2），WS 上不接受 close
             raise RuntimeError(f"unsupported message type: {msg_type}")

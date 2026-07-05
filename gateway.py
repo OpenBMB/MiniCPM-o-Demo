@@ -9,7 +9,8 @@
 启动方式：
     cd /user/sunweiyue/lib/swy-dev/minicpmo45_service
     PYTHONPATH=. .venv/base/bin/python gateway.py \\
-        --port 10024 --internal-port 10025
+        --port 10024 \\
+        --workers localhost:22400,localhost:22401
 """
 
 import os
@@ -26,19 +27,19 @@ from urllib.parse import urlencode
 
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Body
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from gateway_modules.models import (
     GatewayWorkerStatus,
     ServiceStatus,
     WorkersResponse,
-    WorkerRegistrationRequest,
     QueueStatus,
     EtaConfig,
     EtaStatus,
@@ -61,6 +62,86 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("gateway")
+
+
+_FC_BOARD_CASE_FOLDER_CANDIDATES = [
+    os.environ.get("FC_BOARD_CASE_FOLDER"),
+    "/home/weihongliang/o45_fc_assets/training/delivery_train_data",
+    "/user/weihongliang/o45_fc_assets/training/delivery_train_data",
+]
+
+_FC_BOARD_LIVE_IMAGE_DIR = (
+    Path(__file__).resolve().parent
+    / "demos"
+    / "fc_board"
+    / "tools"
+    / "display_object_on_board"
+    / "live_image_downloads"
+)
+_FC_BOARD_TOOL_SERVICE = None
+
+
+def _fc_board_tool_service():
+    global _FC_BOARD_TOOL_SERVICE
+    if _FC_BOARD_TOOL_SERVICE is None:
+        from demos.fc_board.tools.display_object_on_board.service import (
+            DisplayObjectOnBoardService,
+        )
+
+        _FC_BOARD_TOOL_SERVICE = DisplayObjectOnBoardService(download_dir=_FC_BOARD_LIVE_IMAGE_DIR)
+    return _FC_BOARD_TOOL_SERVICE
+
+
+def _display_object_tool_default() -> Dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "display_object_on_board",
+            "description": (
+                "Display a named concrete object on the visual board so the user can see it. "
+                "Use only for concrete, visualizable objects mentioned in user speech."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+    }
+
+
+def _extract_fc_board_defaults_from_case(case_path: str) -> Dict[str, Any]:
+    with open(case_path, "r", encoding="utf-8") as fp:
+        structure = json.load(fp)
+
+    data_root = os.path.dirname(case_path)
+    system_prompt_parts: List[str] = []
+    ref_audio_path: Optional[str] = None
+    for segment in (structure.get("system", {}) or {}).get("segments", []) or []:
+        kind = segment.get("kind")
+        if kind == "text":
+            text = segment.get("text") or ""
+            if text:
+                system_prompt_parts.append(text)
+        elif kind == "audio":
+            file_path = (segment.get("audio") or {}).get("file_path")
+            if file_path:
+                candidate = os.path.realpath(os.path.join(data_root, file_path))
+                if os.path.exists(candidate):
+                    ref_audio_path = candidate
+
+    return {
+        "system_prompt": "\n".join(system_prompt_parts) or None,
+        "ref_audio_path": ref_audio_path,
+        "tools": structure.get("tools") or [_display_object_tool_default()],
+    }
+
+
+def _fc_board_case_folder() -> Optional[str]:
+    for candidate in _FC_BOARD_CASE_FOLDER_CANDIDATES:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return None
 
 
 
@@ -143,7 +224,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期"""
     global worker_pool, ref_audio_registry, _cleanup_task
 
-    workers = GATEWAY_CONFIG.get("workers", [])
+    workers = GATEWAY_CONFIG.get("workers", ["localhost:10031"])
     max_queue = GATEWAY_CONFIG.get("max_queue_size", 1000)
     timeout = GATEWAY_CONFIG.get("timeout", 300.0)
 
@@ -209,33 +290,6 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
-
-internal_app = FastAPI(
-    title="MiniCPMO45 Gateway Internal",
-    description="Internal worker registration API",
-    version="1.0.0-alpha.2",
-    docs_url=None,
-    redoc_url=None,
-)
-
-
-_PUBLIC_ADMIN_ENABLED = os.getenv("ENABLE_PUBLIC_ADMIN", "").lower() in {"1", "true", "yes", "on"}
-_BLOCKED_ADMIN_PATHS = {"/admin", "/admin/"}
-_BLOCKED_ADMIN_STATIC_PATHS = {"/static/admin.html", "/static/admin.html/"}
-
-
-@app.middleware("http")
-async def hide_admin_routes(request: Request, call_next):
-    """Keep admin-only surfaces unavailable on public deployments by default."""
-    if not _PUBLIC_ADMIN_ENABLED:
-        path = request.url.path
-        if (
-            path in _BLOCKED_ADMIN_PATHS
-            or path.startswith("/api/admin/")
-            or path in _BLOCKED_ADMIN_STATIC_PATHS
-        ):
-            return JSONResponse({"detail": "Not found"}, status_code=404)
-    return await call_next(request)
 
 
 # ============ 健康检查 ============
@@ -322,36 +376,6 @@ async def list_workers():
         total=len(worker_pool.workers),
         workers=worker_pool.get_all_workers(),
     )
-
-
-@internal_app.get("/health")
-async def internal_health():
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-@internal_app.put("/internal/workers/{worker_id}")
-async def register_worker(worker_id: str, payload: WorkerRegistrationRequest):
-    """Register or update a worker endpoint from the internal control plane."""
-    if worker_pool is None:
-        raise HTTPException(status_code=503, detail="Service not ready")
-
-    try:
-        worker = await worker_pool.register_worker(
-            worker_id=worker_id,
-            endpoint=payload.endpoint,
-            gpu_group=payload.gpu_group,
-            labels=payload.labels,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "ok": True,
-        "worker": worker.to_info(),
-    }
 
 
 
@@ -1256,6 +1280,13 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+_FC_BOARD_LIVE_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/live-image-downloads",
+    StaticFiles(directory=str(_FC_BOARD_LIVE_IMAGE_DIR)),
+    name="fc_board_live_image_downloads",
+)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -1320,6 +1351,81 @@ async def realtime_page():
     if os.path.exists(page_path):
         return FileResponse(page_path)
     return HTMLResponse("<h1>Realtime API</h1><p>Page not found</p>")
+
+
+@app.get("/fc_board", response_class=HTMLResponse)
+async def fc_board_page():
+    """FC tool-calling board demo over the formal Realtime API."""
+    page_path = os.path.join(static_dir, "fc-board", "fc_board.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>FC Board</h1><p>Page not found</p>")
+
+
+@app.get("/api/fc_board/defaults")
+async def fc_board_defaults():
+    """Training-aligned defaults for the FC board API demo."""
+    case_folder = _fc_board_case_folder()
+    default_case_path = None
+    defaults: Dict[str, Any] = {
+        "system_prompt": None,
+        "ref_audio_path": None,
+        "tools": [_display_object_tool_default()],
+    }
+    if case_folder:
+        cases = sorted(
+            os.path.join(case_folder, name)
+            for name in os.listdir(case_folder)
+            if name.endswith(".json")
+        )
+        if cases:
+            default_case_path = cases[0]
+            try:
+                defaults.update(_extract_fc_board_defaults_from_case(default_case_path))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[fc_board_defaults] failed to extract defaults from %s: %s: %s",
+                    default_case_path,
+                    type(exc).__name__,
+                    exc,
+                )
+    return {
+        "case_folder": case_folder,
+        "default_case_path": default_case_path,
+        "default_system_prompt": defaults.get("system_prompt"),
+        "default_ref_audio_path": defaults.get("ref_audio_path"),
+        "default_tools": defaults.get("tools") or [_display_object_tool_default()],
+    }
+
+
+@app.post("/api/fc_board/tools/display_object_on_board")
+async def fc_board_display_object_tool(payload: Dict[str, Any] = Body(...)):
+    """Execute the board display tool outside the model runtime.
+
+    This endpoint is intentionally part of the frontend/tool layer rather than
+    FcDuplexSessionRuntime. It reuses the standalone MVP search service and
+    returns both the board image payload and the training-aligned tool response
+    string that the client should send back as input.tool_result.
+    """
+
+    query = str(payload.get("name") or payload.get("query") or "").strip()
+    tool_call_id = payload.get("tool_call_id")
+    if not query:
+        raise HTTPException(status_code=400, detail="display_object_on_board requires name/query")
+
+    from demos.fc_board.tools.display_object_on_board.service import (
+        board_image_result_from_tool_result,
+    )
+
+    result = await asyncio.to_thread(_fc_board_tool_service().search, query)
+    image = board_image_result_from_tool_result(result, tool_call_id=str(tool_call_id or query))
+    image_payload = image.model_dump() if hasattr(image, "model_dump") else image.dict()
+    return {
+        "query": result.query,
+        "image": image_payload,
+        "error": result.error,
+        "tool_response_content": result.tool_response_content,
+    }
 
 
 # ============ Docs Hosting ============
@@ -1487,8 +1593,9 @@ def main():
 
     parser = argparse.ArgumentParser(description="MiniCPMO45 Gateway")
     parser.add_argument("--port", type=int, default=None, help=f"Gateway port (default: {cfg.gateway_port})")
-    parser.add_argument("--internal-port", type=int, default=8007, help="Internal worker registration port")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
+    parser.add_argument("--workers", type=str, default=None, help="Worker addresses, comma-separated")
+    parser.add_argument("--num-workers", type=int, default=None, help="Number of workers (auto-generate addresses)")
     parser.add_argument("--max-queue-size", type=int, default=None, help="Max queue size")
     parser.add_argument("--timeout", type=float, default=None, help="Request timeout (s)")
     # 协议选择：默认 HTTPS，--http 可降级为 HTTP
@@ -1509,11 +1616,20 @@ def main():
 
     port = args.port or cfg.gateway_port
 
+    # Worker 地址：优先命令行，否则根据 num_workers 自动生成
+    if args.workers:
+        worker_list = args.workers.split(",")
+    elif args.num_workers:
+        worker_list = cfg.worker_addresses(args.num_workers)
+    else:
+        # 默认 1 个 Worker
+        worker_list = cfg.worker_addresses(1)
+
     if args.lang:
         GATEWAY_CONFIG["default_lang"] = args.lang
 
     GATEWAY_CONFIG.update({
-        "workers": [],
+        "workers": worker_list,
         "max_queue_size": args.max_queue_size or cfg.max_queue_size,
         "timeout": args.timeout or cfg.request_timeout,
         "eta_config": {
@@ -1528,8 +1644,7 @@ def main():
 
     proto_label = "HTTPS" if use_https else "HTTP"
     logger.info(f"Starting Gateway on port {port} ({proto_label})")
-    logger.info(f"Starting internal registry on port {args.internal_port} (HTTP)")
-    logger.info("Workers: dynamic registration only")
+    logger.info(f"Workers: {worker_list}")
 
     ssl_kwargs = {}
     if use_https:
@@ -1548,25 +1663,13 @@ def main():
     # Bump WS max payload from uvicorn's 16 MiB default to 128 MiB so that
     # base64-encoded video attachments coming in from the browser can be
     # proxied to a worker without being rejected with code 1009.
-    async def serve() -> None:
-        public_config = uvicorn.Config(
-            app,
-            host=args.host,
-            port=port,
-            ws_max_size=128 * 1024 * 1024,
-            **ssl_kwargs,
-        )
-        internal_config = uvicorn.Config(
-            internal_app,
-            host=args.host,
-            port=args.internal_port,
-            log_level="info",
-        )
-        public_server = uvicorn.Server(public_config)
-        internal_server = uvicorn.Server(internal_config)
-        await asyncio.gather(public_server.serve(), internal_server.serve())
-
-    asyncio.run(serve())
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=port,
+        ws_max_size=128 * 1024 * 1024,
+        **ssl_kwargs,
+    )
 
 
 if __name__ == "__main__":

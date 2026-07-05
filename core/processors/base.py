@@ -364,7 +364,7 @@ class MiniCPMOProcessorMixin:
             ref_audio = self._resolve_ref_audio(tts_config)
             
             # 获取 system prompt（包含参考音频）
-            from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
+            from MiniCPMO45.modeling_minicpmo import MiniCPMO
             sys_msg = MiniCPMO.get_sys_prompt(
                 ref_audio=ref_audio,
                 mode=tts_config.mode.value,

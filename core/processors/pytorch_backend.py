@@ -14,6 +14,14 @@ import torch
 from core.schemas.metrics import BackendMetrics
 from core.schemas.common import Message
 from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
+from core.schemas.fc_duplex import (
+    FcDuplexPrepareRequest,
+    FcDuplexPrefillRequest,
+    FcFinalizeUnitRequest,
+    FcNonSpokenGenerateRequest,
+    FcSpokenGenerateRequest,
+    FcToolResponse,
+)
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
 
 logger = logging.getLogger("pytorch_backend")
@@ -293,6 +301,90 @@ class PyTorchBackend:
         torch.cuda.empty_cache()
         logger.info(f"[GPU {self.gpu_id}] Duplex cleanup done, GPU memory released")
 
+    # ========== FC Duplex ==========
+
+    def fc_duplex_prepare(
+        self,
+        *,
+        system_prompt: str = "",
+        tools: Optional[List[Dict[str, Any]]] = None,
+        ref_audio_path: Optional[str] = None,
+        prompt_wav_path: Optional[str] = None,
+        generate_audio: bool = False,
+    ) -> Any:
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.prepare(
+            FcDuplexPrepareRequest(
+                system_prompt=system_prompt,
+                tools=tools,
+                ref_audio_path=ref_audio_path or self.ref_audio_path,
+                prompt_wav_path=prompt_wav_path or ref_audio_path or self.ref_audio_path,
+                generate_audio=generate_audio,
+            )
+        )
+
+    def fc_duplex_prefill(
+        self,
+        *,
+        audio_data: Optional[str] = None,
+        frame_list: Optional[list] = None,
+        tool_responses: Optional[List[FcToolResponse]] = None,
+        sample_rate: int = 16000,
+    ) -> Any:
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.streaming_prefill(
+            FcDuplexPrefillRequest(
+                audio_data=audio_data,
+                frame_list=frame_list,
+                tool_responses=tool_responses,
+                sample_rate=sample_rate,
+            )
+        )
+
+    def fc_duplex_spoken_generate(
+        self,
+        *,
+        max_tokens: int = 24,
+        decode_mode: str = "greedy",
+    ) -> Any:
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.streaming_spoken_generate(
+            FcSpokenGenerateRequest(max_tokens=max_tokens, decode_mode=decode_mode)
+        )
+
+    def fc_duplex_non_spoken_generate(
+        self,
+        *,
+        max_tokens: int = 1,
+        decode_mode: str = "greedy",
+        close_reason: Optional[str] = None,
+    ) -> Any:
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.streaming_non_spoken_generate(
+            FcNonSpokenGenerateRequest(
+                max_tokens=max_tokens,
+                decode_mode=decode_mode,
+                close_reason=close_reason,
+            )
+        )
+
+    def fc_duplex_finalize(self) -> Any:
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.finalize_unit(FcFinalizeUnitRequest())
+
+    def fc_duplex_dump_trace(self, *, path: str, session_id: Optional[str] = None, reason: Optional[str] = None) -> Any:
+        if self.processor is None:
+            return None
+        return self.processor.set_fc_duplex_mode().dump_trace(path, session_id=session_id, reason=reason)
+
+    def fc_duplex_cleanup(self) -> None:
+        if self.processor is None:
+            return
+        self.processor.set_fc_duplex_mode().cleanup()
+        gc.collect()
+        torch.cuda.empty_cache()
+        logger.info(f"[GPU {self.gpu_id}] FC duplex cleanup done, GPU memory released")
+
     def shutdown(self) -> None:
         """PyTorch backend currently has no external process to shut down."""
         return
@@ -359,4 +451,3 @@ class PyTorchBackend:
         half_duplex_view = self.processor.set_half_duplex_mode()
         half_duplex_view._model.reset_session(reset_token2wav_cache=False)
         logger.info(f"[GPU {self.gpu_id}] Half-Duplex model session reset (KV cache cleared)")
-
