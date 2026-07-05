@@ -108,7 +108,7 @@ class MiniCPMO(BaseMiniCPMO):
         }
         self._fc_duplex_config = {
             "generate_audio": True,
-            "tool_format": "openai",
+            "tool_format": "minicpm4_xml",
             "temperature": 0.7,
             "top_k": 20,
             "top_p": 0.8,
