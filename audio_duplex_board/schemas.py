@@ -87,12 +87,14 @@ class BoardEvent(BaseModel):
 
     - `block_id`：non_spoken block 在一个 session 内的稳定 id（格式 `nsb-<unit>-<seq>`），
       `*_block_started` / `*_delta` / `*_block_closed` 必须带同一个 id，前端据此找到容器。
-    - `block_kind`：`think` | `tool_call` | `unknown`（first token 未到时还无法判断；
-      允许后端先发 started + delta，等首个 token_str 出来后判定，前端先不渲染 kind 标签）。
-    - `token_ids` / `token_strs`：本次 step 新增的 token id 和 id-to-token vocab piece
-      （vocab piece 不是 BPE 整体 decode；前端用 token_strs 拼 streaming 层）。
-    - `step_text`：本次 step 后端 BPE merge 出的增量文本（参考用，前端可选择以 token_strs
-      为主、step_text 为辅）。
+    - `block_kind`：`think` | `tool_call` | `unknown`（首个内容 token 未到时还无法判断；
+      允许后端先发 started + delta，等命中已知的 think/tool_call 起始 token id 后判定，
+      前端先不渲染 kind 标签）。
+    - `token_ids`：本次 step 新增的原始 token id（业务侧用来跟 SDK 协议里已知的
+      think/tool_call 起始 id 做精确匹配，见 `session.py::_guess_block_kind_from_token_ids`）。
+    - `step_text`：本次 step 后端正常 BPE decode 出的增量文本，是 streaming 层展示的
+      唯一数据源（`tokenizer.convert_ids_to_tokens` 反查得到的 id-to-token vocab piece
+      对 byte-level BPE 不是合法可读文本，已废弃，不再作为协议字段）。
     - `full_text`：闭合时整体 BPE decode 的文本，前端填到 full 层；如果 tool_call 非法
       或 think 提前截断，可能为空字符串。
     """
@@ -107,7 +109,6 @@ class BoardEvent(BaseModel):
     block_id: str | None = None
     block_kind: Literal["think", "tool_call", "unknown"] | None = None
     token_ids: list[int] = Field(default_factory=list)
-    token_strs: list[str] = Field(default_factory=list)
     step_text: str | None = None
     full_text: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)

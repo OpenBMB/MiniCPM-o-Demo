@@ -401,13 +401,11 @@ function appendNonSpokenDelta(event) {
   if (!block) return;
   // 原始需求："streaming 里边就去呈现它的原始的那个内容就行了，你不需要
   // 做 XML 解析。包括 <tool_call> 和 </tool_call> 你也是都是带上的。"
-  // step_text 是 SDK 每一步 BPE decode 的增量文本，天然包含所有 XML 标签
-  // 和特殊 marker 的可读形式，是"原样呈现"最合适的来源。
-  // 实测 real ckpt 上 token_strs 常常是空（special id → convert_ids_to_tokens
-  // 回来是空串），只能靠 step_text。
-  const raw = (event.step_text && event.step_text.length)
-    ? event.step_text
-    : (event.token_strs || []).join('');
+  // step_text 是 SDK 每一步正常 BPE decode 出的增量文本，天然包含所有 XML
+  // 标签和特殊 marker 的可读形式，是唯一的 streaming 数据源（协议里已经
+  // 删掉了 token_strs 字段——它是 `convert_ids_to_tokens` 反查结果，对
+  // byte-level BPE 不是合法可读文本，普通内容 token 100% 乱码）。
+  const raw = event.step_text || '';
   if (raw) block.streamingPieces.push(raw);
   if (block.kind === 'unknown' && event.block_kind && event.block_kind !== 'unknown') {
     block.kind = event.block_kind;

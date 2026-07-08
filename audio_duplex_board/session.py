@@ -7,7 +7,7 @@ Responsibilities:
     session_started → unit_started
                     → spoken_final (if speaking, with TTS waveform)
                     → non_spoken_block_started
-                    → non_spoken_delta (per-step, with token_id + token_str)
+                    → non_spoken_delta (per-step, with token_ids + BPE-decoded step_text)
                     → non_spoken_block_closed (with parsed full_text)
                     → think_final / tool_call_final  (derived, for log readers)
                     → board_card_created (status=searching) once tool_call closes
@@ -347,7 +347,6 @@ class AudioDuplexBoardSession:
                 unit_index=unit_index,
                 text=spoken.spoken_text,
                 token_ids=list(spoken.spoken_token_ids),
-                token_strs=list(spoken.spoken_token_strs),
                 payload={
                     "is_speaking": bool(spoken.is_speaking),
                     "is_listen": bool(spoken.is_listen),
@@ -719,16 +718,15 @@ class AudioDuplexBoardSession:
         """Convert one FcNonSpokenGenerateResult into board events."""
 
         token_ids = list(step.token_ids or [])
-        token_strs = list(step.token_strs or [])
         step_text = step.text or ""
 
         # 判断这一步是否是"有内容"的一步：只要 step 产出的 BPE decode 文本
-        # 非空、或者带任何 token id 就算。之前只在 token_strs 里含
-        # <think>/<tool_call> 才开 block —— 但实际 ckpt 的 tokenizer 把
-        # opener 编成 special id，convert_ids_to_tokens 回来的 str 可能是
-        # `<|think|>` 甚至空串，永远匹配不上，结果 units 9-11 的所有 delta
-        # 都被静默丢掉，只在 unit 12 的 closed_span 里才被合成一个空 block
-        # 立即 close —— 就是用户截图 STREAMING 层完全空的原因。
+        # 非空、或者带任何 token id 就算。之前只在反查出来的 token 字符串里
+        # 含 <think>/<tool_call> 子串才开 block —— 但实际 ckpt 的 tokenizer
+        # 把 opener 编成 special id，`convert_ids_to_tokens` 反查回来的字符串
+        # 可能是 `<|think|>` 甚至空串，永远匹配不上，结果 units 9-11 的所有
+        # delta 都被静默丢掉，只在 unit 12 的 closed_span 里才被合成一个空
+        # block 立即 close —— 就是用户截图 STREAMING 层完全空的原因。
         # 现在改成：只要有 token 就开 block，kind 先记 unknown，等 closed_span
         # 或后续步骤能识别时再 upgrade。
         # 需要过滤掉的例外：`<|non_spoken_no_action|>` 单 token + 立刻
@@ -742,9 +740,10 @@ class AudioDuplexBoardSession:
             and not is_no_action_marker
         )
         if should_open:
-            # 先给一个 tentative kind：能从 token_strs 一眼看出就直接标注，
-            # 看不出就 unknown（等 closed_span 或后续 step 揭晓）
-            tentative_kind = _guess_block_kind_from_tokens(token_strs) if token_strs else None
+            # 先给一个 tentative kind：跟 SDK 协议里已知的 think/tool_call
+            # 起始 token id 精确比对，命中就直接标注，没命中就 unknown（等
+            # closed_span 或后续 step 揭晓）。
+            tentative_kind = _guess_block_kind_from_token_ids(token_ids)
             await self._begin_block(tentative_kind, unit_index)
 
         # 每一步都发 delta —— 前端字符级 streaming 就靠这个。
@@ -752,8 +751,8 @@ class AudioDuplexBoardSession:
         #   显示上去" + "streaming 里边就去呈现它的原始的那个内容就行了，
         #   你不需要做 XML 解析。包括 <tool_call> 和 </tool_call> 你也是
         #   都是带上的。"
-        # 所以 step_text（BPE 逐 step 增量，包含所有 XML 标签）是唯一可靠
-        # 的 streaming 来源；token_strs 带上做 fallback / 展示用。
+        # step_text（BPE 逐 step 增量正常解码，包含所有 XML 标签）是唯一的
+        # streaming 数据源。
         if (token_ids or step_text) and self._current_block_id is not None:
             await self._send_event(
                 BoardEvent(
@@ -763,7 +762,6 @@ class AudioDuplexBoardSession:
                     block_id=self._current_block_id,
                     block_kind=_kind_for_event(self._current_block_kind),
                     token_ids=token_ids,
-                    token_strs=token_strs,
                     step_text=step_text,
                 )
             )
@@ -1029,19 +1027,68 @@ def _full_text_from_span(span: Any) -> str | None:
     return None
 
 
-def _guess_block_kind_from_tokens(token_strs: list[str]) -> str | None:
-    """Best-effort kind detection from the first token piece of a block.
+# Lazily resolved + cached module-level cache for the SDK's think/tool_call
+# opener token ids. Must be lazy: `session.py` is imported by run_server.py
+# before `_prepend_sdk_src(config.sdk_src)` runs, so `minicpm_o5_sdk` is not
+# guaranteed to be on `sys.path` yet at module import time. By the time a
+# real ws session is driving `_emit_step_events`, `create_app()` has already
+# run `_prepend_sdk_src`, so the import inside this function succeeds.
+_BLOCK_OPENER_IDS: dict[str, int] | None = None
 
-    Returns "think" or "tool_call" when an opener token appears, otherwise None
-    (caller renders as `unknown` until kind becomes clear or closed span tells us).
+
+def _block_opener_ids() -> dict[str, int]:
+    """Resolve the SDK's think/tool_call opener token ids (cached after first call).
+
+    之前用 `token_strs`（`tokenizer.convert_ids_to_tokens` 字符串反查）做子串
+    匹配来猜一个 non-spoken block 是 think 还是 tool_call。实测这条路径对
+    byte-level BPE 不可靠：普通内容 token 反查出来是字节代理编码乱码，协议
+    控制 token 也可能反查到训练早期遗留的旧名字，或者因为 id 超出模型自带
+    tokenizer 词表长度而直接查不到（详见 `feature_fc_alignment_checklist.md`）。
+
+    think_start / tool_call_start 具体是哪个 token id，是 SDK 协议
+    `O5SpecialTokenRegistry` 里定死的权威信息，不需要经过字符串这一层去猜。
+    `token_ids`（原始采样 id）本身一直可靠，用整数精确比对比字符串子串匹配
+    更准，是纯粹的正向改进，不是功能降级。
+
+    解析本身纯 CPU、不碰模型权重（一次性加载 tokenizer 约 4s），只在进程内
+    做一次，之后每次调用都是字典查找。
     """
 
-    for piece in token_strs:
-        if not isinstance(piece, str):
-            continue
-        if "think" in piece and "<" in piece:
+    global _BLOCK_OPENER_IDS
+    if _BLOCK_OPENER_IDS is None:
+        try:
+            from minicpm_o5_sdk import load_builtin_o45_fc_tokenizer
+            from minicpm_o5_sdk.protocols.duplex.special_tokens import (
+                O5SpecialTokenKey,
+                O5SpecialTokenRegistry,
+            )
+
+            tokenizer = load_builtin_o45_fc_tokenizer()
+            registry = O5SpecialTokenRegistry.from_tokenizer(tokenizer)
+            _BLOCK_OPENER_IDS = {
+                "think": registry.get(O5SpecialTokenKey.THINK_START).token_id,
+                "tool_call": registry.get(O5SpecialTokenKey.TOOL_CALL_START).token_id,
+            }
+        except Exception:  # noqa: BLE001 - tentative kind 是体验优化，解析失败不能挂主流程
+            _BLOCK_OPENER_IDS = {}
+    return _BLOCK_OPENER_IDS
+
+
+def _guess_block_kind_from_token_ids(token_ids: list[int]) -> str | None:
+    """Detect a new block's tentative kind by exact match against known opener ids.
+
+    Returns "think" or "tool_call" when this step's sampled ids contain the
+    corresponding SDK-registered opener token id, otherwise None (caller
+    renders as `unknown` until kind becomes clear from the closed span).
+    """
+
+    opener_ids = _block_opener_ids()
+    if not opener_ids:
+        return None
+    for tid in token_ids:
+        if tid == opener_ids.get("think"):
             return "think"
-        if "tool_call" in piece and "<" in piece:
+        if tid == opener_ids.get("tool_call"):
             return "tool_call"
     return None
 
