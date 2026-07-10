@@ -1327,7 +1327,9 @@ class StreamDecoder:
         if self.cache is None:
             return 0
         if isinstance(self.cache, DynamicCache):
-            if len(self.cache.key_cache) > 0 and self.cache.key_cache[0].numel() > 0:
+            if hasattr(self.cache, "get_seq_length"):
+                return int(self.cache.get_seq_length())
+            if hasattr(self.cache, "key_cache") and len(self.cache.key_cache) > 0 and self.cache.key_cache[0].numel() > 0:
                 return self.cache.key_cache[0].shape[2]
             return 0
         # Tuple cache format

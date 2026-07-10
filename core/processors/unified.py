@@ -1340,55 +1340,11 @@ class FcDuplexView:
             return NonSpokenStepGenerationFlag.no_action
         return NonSpokenStepGenerationFlag.non_spoken_slot_eos
 
-    def _token_strs(self, token_ids: List[int]) -> List[str]:
-        """Map token ids to raw vocab pieces or FC special-token display names.
-
-        This is NOT BPE merged decode. For FC protocol special tokens it returns
-        the SDK registry display name, because the HF tokenizer may not know rows
-        added for the trained checkpoint and can return ``None``. For ordinary
-        tokens it returns the per-token pieces stored in the tokenizer vocab.
-
-        Returns:
-            A list with the same length as `token_ids`. Falls back to an empty
-            list if the tokenizer is missing for any reason; callers should
-            treat empty lists as "tokenizer unavailable".
-        """
-
-        if not token_ids:
-            return []
-        fc_duplex = getattr(self._model, "fc_duplex", None)
-        id2name = getattr(fc_duplex, "id2name", {}) or {}
-        tokenizer = getattr(self._model, "tokenizer", None)
-        try:
-            ordinary = []
-            ordinary_positions = []
-            result: List[Optional[str]] = []
-            for token_id in token_ids:
-                tid = int(token_id)
-                if tid in id2name:
-                    result.append(str(id2name[tid]))
-                else:
-                    result.append(None)
-                    ordinary.append(tid)
-                    ordinary_positions.append(len(result) - 1)
-            if ordinary and tokenizer is not None and hasattr(tokenizer, "convert_ids_to_tokens"):
-                converted = list(tokenizer.convert_ids_to_tokens(ordinary))
-                for index, pos in enumerate(ordinary_positions):
-                    piece = converted[index] if index < len(converted) else None
-                    result[pos] = str(piece) if piece is not None else f"<id:{ordinary[index]}>"
-            for index, pos in enumerate(ordinary_positions):
-                if result[pos] is None:
-                    result[pos] = f"<id:{ordinary[index]}>"
-            return [str(item) for item in result]
-        except Exception:
-            return []
-
-    def _step_result(self, data: dict) -> FcNonSpokenGenerateResult:
+    @staticmethod
+    def _step_result(data: dict) -> FcNonSpokenGenerateResult:
         spans = [FcClosedSpan(**span) for span in data.get("closed_spans", []) or []]
-        token_ids = data.get("token_ids", [])
         return FcNonSpokenGenerateResult(
-            token_ids=token_ids,
-            token_strs=self._token_strs(token_ids),
+            token_ids=data.get("token_ids", []),
             terminated=data.get("terminated", False),
             close_reason=data.get("close_reason"),
             closed_spans=spans,
@@ -1429,26 +1385,24 @@ class FcDuplexView:
             prompt_wav_path=data.get("prompt_wav_path"),
         )
 
-    def _prefill_result(self, data: dict) -> FcDuplexPrefillResult:
-        inserted_ids = data.get("inserted_token_ids", [])
+    @staticmethod
+    def _prefill_result(data: dict) -> FcDuplexPrefillResult:
         return FcDuplexPrefillResult(
             unit_index=data.get("unit", 0),
             n_audio_placeholders=data.get("n_audio", 0),
             has_input_event=data.get("has_event", False),
             is_listen=data.get("is_listen"),
             is_speaking=data.get("is_speaking", False),
-            inserted_token_ids=inserted_ids,
-            inserted_token_strs=self._token_strs(inserted_ids),
+            inserted_token_ids=data.get("inserted_token_ids", []),
         )
 
-    def _spoken_result(self, data: dict) -> FcSpokenGenerateResult:
+    @staticmethod
+    def _spoken_result(data: dict) -> FcSpokenGenerateResult:
         audio_waveform = data.get("audio_waveform")
-        spoken_ids = data.get("spoken_ids", [])
         return FcSpokenGenerateResult(
             is_listen=bool(data.get("is_listen", False)),
             is_speaking=bool(data.get("is_speaking", False)),
-            spoken_token_ids=spoken_ids,
-            spoken_token_strs=self._token_strs(spoken_ids),
+            spoken_token_ids=data.get("spoken_ids", []),
             spoken_text=data.get("spoken_text", data.get("text", "")),
             spoken_turn_eos=bool(data.get("spoken_turn_eos", False)),
             audio_waveform=audio_waveform,

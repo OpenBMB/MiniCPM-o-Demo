@@ -85,10 +85,6 @@ class FcDuplexPrefillResult(BaseModel):
     is_listen: Optional[bool] = Field(None, description="Current unit listen state if already known")
     is_speaking: bool = Field(False, description="Current unit speaking state if already known")
     inserted_token_ids: List[int] = Field(default_factory=list, description="Token ids inserted by this prefill, if tracked")
-    inserted_token_strs: List[str] = Field(
-        default_factory=list,
-        description="Per-token id-to-token strs for inserted_token_ids (vocab lookup, not BPE decode)",
-    )
 
 
 class FcSpokenGenerateRequest(BaseModel):
@@ -134,20 +130,10 @@ class FcDuplexStepResult(BaseModel):
     """Result of one FC duplex primitive call."""
 
     token_ids: List[int] = Field(default_factory=list, description="Generated or inserted token ids")
-    token_strs: List[str] = Field(
-        default_factory=list,
-        description=(
-            "Per-token raw pieces from tokenizer.convert_ids_to_tokens(token_ids). "
-            "This is the id-to-token vocab lookup (e.g. '\u0120apple', '<|tool_call|>'), "
-            "NOT a BPE merged decode of the token sequence. "
-            "Use `token_strs` for character-level streaming UI; use `text` for BPE-merged readable form. "
-            "Length always equals len(token_ids)."
-        ),
-    )
     terminated: bool = Field(False, description="Whether the current slot naturally or forcibly terminated")
     close_reason: Optional[str] = Field(None, description="Close reason if the slot was closed")
     closed_spans: List[FcClosedSpan] = Field(default_factory=list, description="Spans closed by this step")
-    text: str = Field("", description="BPE-merged decode of token_ids (may differ from concat(token_strs))")
+    text: str = Field("", description="BPE-merged decode of token_ids")
     audio_waveform: Optional[Any] = Field(None, description="Generated 24kHz audio waveform, if requested")
     audio_sample_rate: Optional[int] = Field(None, description="Sample rate of audio_waveform")
     n_tts_tokens: int = Field(0, description="Number of generated TTS audio tokens")
@@ -160,10 +146,6 @@ class FcSpokenGenerateResult(BaseModel):
     is_listen: bool = Field(False, description="Whether the model chose listen")
     is_speaking: bool = Field(False, description="Whether the model chose speak")
     spoken_token_ids: List[int] = Field(default_factory=list, description="Spoken slot token ids")
-    spoken_token_strs: List[str] = Field(
-        default_factory=list,
-        description="Per-token id-to-token strs for spoken_token_ids (vocab lookup, not BPE decode)",
-    )
     spoken_text: str = Field("", description="Decoded spoken text (BPE merged)")
     spoken_turn_eos: bool = Field(False, description="Whether this unit ended the spoken turn")
     audio_waveform: Optional[Any] = Field(None, description="Generated 24kHz waveform, if requested")
