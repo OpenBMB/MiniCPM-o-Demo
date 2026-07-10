@@ -566,6 +566,7 @@ class FcDuplexSessionRuntime:
                     response_id=self._response_id,
                     input_id=input_id,
                     delta=step_text,
+                    token_observations=_token_observations(token_ids, self.backend),
                 )
             return
 
@@ -580,6 +581,7 @@ class FcDuplexSessionRuntime:
                     input_id=input_id,
                     tool_call_id=tool_call_id,
                     delta=step_text,
+                    token_observations=_token_observations(token_ids, self.backend),
                 )
             return
 
@@ -591,6 +593,7 @@ class FcDuplexSessionRuntime:
                 input_id=input_id,
                 text=step_text,
                 token_ids=token_ids,
+                token_observations=_token_observations(token_ids, self.backend),
                 block_id=self._current_block_id,
                 block_kind=_kind_for_event(self._current_block_kind),
             )
@@ -826,6 +829,24 @@ def _contents_to_text(contents: Any) -> str:
     return "".join(parts)
 
 
+def _resolve_fc_duplex_capability(backend: Any) -> Optional[Any]:
+    """Reach the model's initialized ``FcDuplexCapability`` instance from ``backend``.
+
+    ``backend`` here is a ``core.processors.pytorch_backend.PyTorchBackend``
+    (or an equivalent backend implementing the same fc_duplex_* facade); the
+    model instance holding the initialized ``FcDuplexCapability`` sits at
+    ``backend.processor.model.fc_duplex``, not directly on ``backend``. Any
+    other backend implementation (e.g. a C++ backend without this Python
+    model layer) simply won't have this attribute chain, in which case this
+    returns None and callers degrade gracefully (no exact-match kind
+    detection / no token_observations, never a crash).
+    """
+
+    processor = getattr(backend, "processor", None)
+    model = getattr(processor, "model", None)
+    return getattr(model, "fc_duplex", None)
+
+
 def _guess_block_kind_from_token_ids(token_ids: List[int], backend: Any) -> Optional[str]:
     """Detect a new block's tentative kind by exact match against known opener ids.
 
@@ -840,24 +861,17 @@ def _guess_block_kind_from_token_ids(token_ids: List[int], backend: Any) -> Opti
     sampled ids) has always been reliable; this uses it correctly by comparing
     against the exact opener ids the model's own ``FcDuplexCapability``
     already resolved once via ``minicpm_o5_sdk.O5SpecialTokenRegistry``
-    (``backend.fc_duplex.ids["think_start"/"tool_call_start"]``), so no new
-    SDK dependency is needed at this layer.
+    (``fc_duplex.ids["think_start"/"tool_call_start"]``), so no new SDK
+    dependency is needed at this layer.
 
     Returns "think" or "tool_call" when this step's sampled ids contain the
     corresponding opener token id, otherwise None (caller renders as
     `unknown` until kind becomes clear from the closed span). See
     docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md for the full comparison
     against the o45-fc board MVP this behavior is ported from.
-
-    ``backend`` here is a ``core.processors.pytorch_backend.PyTorchBackend``
-    (or an equivalent backend implementing the same fc_duplex_* facade); the
-    model instance holding the initialized ``FcDuplexCapability`` sits at
-    ``backend.processor.model.fc_duplex``, not directly on ``backend``.
     """
 
-    processor = getattr(backend, "processor", None)
-    model = getattr(processor, "model", None)
-    fc_duplex = getattr(model, "fc_duplex", None)
+    fc_duplex = _resolve_fc_duplex_capability(backend)
     opener_ids = getattr(fc_duplex, "ids", None) or {}
     think_start_id = opener_ids.get("think_start")
     tool_call_start_id = opener_ids.get("tool_call_start")
@@ -873,6 +887,54 @@ def _kind_for_event(kind: Optional[str]) -> str:
     if kind in ("think", "tool_call"):
         return kind
     return "unknown"
+
+
+def _token_observations(token_ids: List[int], backend: Any) -> Optional[List[Dict[str, Any]]]:
+    """Per-token ``{id, text}`` observations for protocol §8 ``token_observations``.
+
+    Previously sourced ``text`` from ``token_strs`` (a
+    ``tokenizer.convert_ids_to_tokens`` reverse lookup that is structurally
+    unreliable for byte-level BPE — it exposes the internal byte-to-surrogate
+    vocab mapping table, not real decoded text, so a token that's half of a
+    multi-byte character comes back as unrelated-looking garbage rather than
+    any recognizable placeholder). That field no longer exists; this instead
+    decodes each token individually through the SDK's own decoder
+    (``FcDuplexCapability.decode_text``, i.e. ``minicpm_o5_sdk``'s
+    ``decode_ordinary``), the same method already used to produce the
+    reliable ``text``/``step_text`` field. Empirically verified: for a token
+    that's a complete character/word on its own, this returns the correct
+    readable text; for a token that's only half of a multi-byte character
+    split across a token boundary, the SDK decoder's standard UTF-8
+    decode-with-replacement semantics return a single U+FFFD ``'�'`` --
+    an honest, universally-recognized "encoding boundary" marker, not
+    misleading garbage. Special tokens (``is_special``) use the protocol's
+    ``id2name`` display name instead of attempting a text decode. See
+    docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md for the verification
+    transcript.
+
+    Returns None (omit the field) when the model's FcDuplexCapability isn't
+    reachable through ``backend`` (e.g. a non-Python backend) -- per protocol
+    §8 this field is optional ("backend MAY"), so omitting it entirely is
+    protocol-compliant when there is no reliable source.
+    """
+
+    if not token_ids:
+        return None
+    fc_duplex = _resolve_fc_duplex_capability(backend)
+    if fc_duplex is None:
+        return None
+    observations = []
+    for tid in token_ids:
+        tid_int = int(tid)
+        try:
+            if fc_duplex.is_special(tid_int):
+                text = fc_duplex.id2name.get(tid_int)
+            else:
+                text = fc_duplex.decode_text([tid_int])
+        except Exception:  # noqa: BLE001 - 观测是可选调试字段，解码失败不能挂主流程
+            text = None
+        observations.append({"id": tid_int, "text": text})
+    return observations
 
 
 def _estimate_remaining_budget_1s(
