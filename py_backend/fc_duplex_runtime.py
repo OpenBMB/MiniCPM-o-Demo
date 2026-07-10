@@ -17,13 +17,15 @@ import re
 import time
 import uuid
 from contextlib import suppress
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import numpy as np
+import soundfile as sf
 
 from core.schemas.fc_duplex import FcToolResponse, NonSpokenStepGenerationFlag
-from py_backend.media import decode_frame_base64_list
+from py_backend.media import decode_audio_base64, decode_frame_base64_list
 
 
 SendEvent = Callable[[str], Awaitable[None]]
@@ -33,7 +35,6 @@ logger = logging.getLogger(__name__)
 def _deferred_budget_reached_step() -> SimpleNamespace:
     return SimpleNamespace(
         token_ids=[],
-        token_strs=["non_spoken_budget_reached"],
         terminated=True,
         close_reason="budget_reached",
         generation_flag="continue_non_spoken_generation",
@@ -96,6 +97,19 @@ class FcDuplexSessionRuntime:
         self._current_block_streamed = False
         self._block_seq = 0
         self._block_started_sent = False
+        self._audio_dump_unit_seq = 0
+        self._audio_dump_session_dir: Optional[Path] = None
+        self._audio_dump_manifest_path: Optional[Path] = None
+        audio_dump_root = os.environ.get("FC_DUPLEX_AUDIO_DUMP_DIR")
+        if audio_dump_root:
+            self._audio_dump_session_dir = Path(audio_dump_root) / self.session_id
+            self._audio_dump_session_dir.mkdir(parents=True, exist_ok=True)
+            self._audio_dump_manifest_path = self._audio_dump_session_dir / "manifest.jsonl"
+            logger.info(
+                "fc_duplex audio dump enabled: session=%s dir=%s",
+                self.session_id,
+                self._audio_dump_session_dir,
+            )
 
     async def prepare(self, params: Dict[str, Any]) -> None:
         config = _first_dict(params.get("config"), params.get("duplex"), params.get("fc_duplex"))
@@ -211,13 +225,23 @@ class FcDuplexSessionRuntime:
         frame_list = decode_frame_base64_list(_extract_frame_base64_list(payload)).frame_list
         tool_responses = list(self._pending_tool_responses)
         self._pending_tool_responses.clear()
+        sample_rate = int(payload.get("sample_rate") or self._sample_rate)
+        unit_index = self._audio_dump_unit_seq
+        self._audio_dump_unit_seq += 1
+
+        if self._audio_dump_session_dir is not None:
+            self._maybe_dump_user_wav(
+                unit_index=unit_index,
+                samples=_safe_decode_audio_base64(audio_base64),
+                sample_rate=sample_rate,
+            )
 
         await asyncio.to_thread(
             self.backend.fc_duplex_prefill,
             audio_data=audio_base64,
             frame_list=frame_list,
             tool_responses=tool_responses or None,
-            sample_rate=int(payload.get("sample_rate") or self._sample_rate),
+            sample_rate=sample_rate,
         )
 
         spoken = await asyncio.to_thread(
@@ -226,6 +250,8 @@ class FcDuplexSessionRuntime:
             decode_mode=self._decode_mode,
         )
         await self._emit_spoken(spoken, input_id=input_id)
+        if self._audio_dump_session_dir is not None:
+            self._maybe_dump_speak_wav(unit_index=unit_index, spoken=spoken)
         spoken_done_elapsed_ms = (time.perf_counter() - unit_t0) * 1000
 
         await self._run_non_spoken_loop(
@@ -243,6 +269,94 @@ class FcDuplexSessionRuntime:
                 await self._queue_worker
         await self._dump_model_trace(reason="session_close")
         await asyncio.to_thread(self.backend.fc_duplex_cleanup)
+
+    def _maybe_dump_user_wav(self, *, unit_index: int, samples: Optional[np.ndarray], sample_rate: int) -> None:
+        """把这一 unit 的用户输入音频落成 unit_NNNN_user.wav。
+
+        Ported from audio_duplex_board.session._maybe_dump_user_wav (see
+        docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md). Only active when
+        FC_DUPLEX_AUDIO_DUMP_DIR is set; opt-in, off by default. Diagnostic
+        purpose: users reported ~50% non-response rates that turned out to be
+        partly a loudness/phrasing mismatch with training data — only by
+        listening back to what was actually captured per unit can you tell
+        "mic captured silence" apart from "model chose not to respond".
+        Same manifest.jsonl as the spoken-audio dump, disambiguated by
+        `role`. Skips near-silent units (rms<0.001) to avoid flooding the
+        dump dir with empty wavs.
+        """
+
+        if self._audio_dump_session_dir is None or samples is None or samples.size == 0:
+            return
+        rms = float(np.sqrt(np.mean(samples * samples)))
+        peak = float(np.max(np.abs(samples)))
+        if rms < 0.001:
+            return
+        wav_path = self._audio_dump_session_dir / f"unit_{unit_index:04d}_user.wav"
+        try:
+            sf.write(str(wav_path), samples, int(sample_rate), format="WAV")
+        except Exception as exc:  # noqa: BLE001 - dump 是诊断能力，出错不能挂主流程
+            logger.warning("audio dump: user wav write failed unit=%s: %s", unit_index, exc)
+            return
+        self._append_audio_dump_manifest({
+            "unit": unit_index,
+            "role": "user",
+            "sample_rate": int(sample_rate),
+            "n_samples": int(samples.size),
+            "duration_ms": round(1000.0 * samples.size / sample_rate, 1),
+            "rms": round(rms, 5),
+            "peak": round(peak, 4),
+            "wav": wav_path.name,
+            "ts": time.time(),
+        })
+
+    def _maybe_dump_speak_wav(self, *, unit_index: int, spoken: Any) -> None:
+        """将本 unit 的 TTS waveform 落成一个 WAV + 一行 manifest。
+
+        Ported from audio_duplex_board.session._maybe_dump_speak_wav (see
+        docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md). Only active when
+        FC_DUPLEX_AUDIO_DUMP_DIR is set. Diagnostic purpose: lets you listen
+        back to exactly what the model actually synthesized per unit, to
+        separate "TTS itself glitched" from "frontend playback path glitched"
+        when a user reports garbled/overlapping/cut-off AI speech.
+        """
+
+        if self._audio_dump_session_dir is None or not getattr(spoken, "is_speaking", False):
+            return
+        waveform = getattr(spoken, "audio_waveform", None)
+        if waveform is None:
+            return
+        array = np.asarray(waveform, dtype=np.float32).reshape(-1)
+        if array.size == 0:
+            return
+        sr = int(getattr(spoken, "audio_sample_rate", None) or 24000)
+        wav_path = self._audio_dump_session_dir / f"unit_{unit_index:04d}_speak.wav"
+        try:
+            sf.write(str(wav_path), array, sr, format="WAV")
+        except Exception as exc:  # noqa: BLE001 - dump 是诊断能力，出错不能挂主流程
+            logger.warning("audio dump: speak wav write failed unit=%s: %s", unit_index, exc)
+            return
+        self._append_audio_dump_manifest({
+            "unit": unit_index,
+            "role": "speak",
+            "text": getattr(spoken, "spoken_text", "") or "",
+            "sample_rate": sr,
+            "n_samples": int(array.size),
+            "duration_ms": round(1000.0 * array.size / sr, 1),
+            "spoken_turn_eos": bool(getattr(spoken, "spoken_turn_eos", False)),
+            "wav": wav_path.name,
+            "ts": time.time(),
+        })
+
+    def _append_audio_dump_manifest(self, line: Dict[str, Any]) -> None:
+        """向 session dump manifest 追加一行 JSON。写盘失败仅打印不抛。"""
+
+        if self._audio_dump_manifest_path is None:
+            return
+        try:
+            with self._audio_dump_manifest_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("audio dump: manifest append failed: %s", exc)
 
     async def _dump_model_trace(self, *, reason: str) -> None:
         dump = getattr(self.backend, "fc_duplex_dump_trace", None)
@@ -334,12 +448,11 @@ class FcDuplexSessionRuntime:
         metadata = _model_to_dict(spoken)
         metadata.pop("audio_waveform", None)
         logger.info(
-            "fc_spoken input_id=%s listen=%s speaking=%s text=%r token_strs=%s turn_eos=%s",
+            "fc_spoken input_id=%s listen=%s speaking=%s text=%r turn_eos=%s",
             input_id,
             is_listen,
             is_speaking,
             _short(text),
-            _short_list(getattr(spoken, "spoken_token_strs", None)),
             bool(getattr(spoken, "spoken_turn_eos", False)),
         )
 
@@ -390,16 +503,14 @@ class FcDuplexSessionRuntime:
         """
 
         token_ids = list(getattr(step, "token_ids", None) or [])
-        token_strs = [str(token) for token in list(getattr(step, "token_strs", None) or [])]
         step_text = str(getattr(step, "text", "") or "")
         close_reason = getattr(step, "close_reason", None)
 
         logger.info(
-            "fc_non_spoken_step input_id=%s close=%s text=%r token_strs=%s spans=%s",
+            "fc_non_spoken_step input_id=%s close=%s text=%r spans=%s",
             input_id,
             close_reason,
             _short(step_text),
-            _short_list(token_strs),
             [getattr(span, "type", None) for span in list(getattr(step, "closed_spans", None) or [])],
         )
 
@@ -414,13 +525,12 @@ class FcDuplexSessionRuntime:
             and not is_no_action_marker
         )
         if should_open:
-            tentative_kind = _guess_block_kind_from_tokens(token_strs) if token_strs else None
+            tentative_kind = _guess_block_kind_from_token_ids(token_ids, self.backend)
             await self._begin_block(tentative_kind, input_id=input_id)
 
         if (token_ids or step_text) and self._current_block_id is not None:
             await self._send_block_delta(
                 token_ids=token_ids,
-                token_strs=token_strs,
                 step_text=step_text,
                 input_id=input_id,
             )
@@ -439,12 +549,11 @@ class FcDuplexSessionRuntime:
         self,
         *,
         token_ids: List[int],
-        token_strs: List[str],
         step_text: str,
         input_id: Optional[str],
     ) -> None:
         if self._current_block_kind is None:
-            kind = _guess_block_kind_from_tokens(token_strs)
+            kind = _guess_block_kind_from_token_ids(token_ids, self.backend)
             if kind:
                 await self._upgrade_block_kind(kind, input_id=input_id)
 
@@ -457,7 +566,6 @@ class FcDuplexSessionRuntime:
                     response_id=self._response_id,
                     input_id=input_id,
                     delta=step_text,
-                    token_observations=_token_observations(token_ids, token_strs),
                 )
             return
 
@@ -472,18 +580,16 @@ class FcDuplexSessionRuntime:
                     input_id=input_id,
                     tool_call_id=tool_call_id,
                     delta=step_text,
-                    token_observations=_token_observations(token_ids, token_strs),
                 )
             return
 
-        if step_text or token_strs:
+        if step_text or token_ids:
             await self._send(
                 "debug.fc_non_spoken.delta",
                 session_id=self.session_id,
                 response_id=self._response_id,
                 input_id=input_id,
                 text=step_text,
-                token_strs=token_strs,
                 token_ids=token_ids,
                 block_id=self._current_block_id,
                 block_kind=_kind_for_event(self._current_block_kind),
@@ -720,21 +826,45 @@ def _contents_to_text(contents: Any) -> str:
     return "".join(parts)
 
 
-def _guess_block_kind_from_tokens(token_strs: List[str]) -> Optional[str]:
-    """Best-effort kind detection from token pieces.
+def _guess_block_kind_from_token_ids(token_ids: List[int], backend: Any) -> Optional[str]:
+    """Detect a new block's tentative kind by exact match against known opener ids.
 
-    Mirrors audio_duplex_board.session._guess_block_kind_from_tokens: returns
-    ``think`` or ``tool_call`` when an opener token appears, otherwise None so
-    the caller keeps an unknown block open until a later step or closed span
-    reveals the kind.
+    Replaces the former ``_guess_block_kind_from_tokens(token_strs)`` (mirrored
+    from ``audio_duplex_board.session``), which guessed the kind by substring-
+    matching ``tokenizer.convert_ids_to_tokens`` output. That reverse lookup is
+    structurally unreliable for byte-level BPE: ordinary content tokens decode
+    to byte-surrogate representations that are not valid UTF-8 (100% garbled,
+    regardless of whether a character was split across multiple tokens), and
+    protocol special tokens can resolve to stale pre-training names or fail to
+    resolve entirely for ids added by embedding resize. ``token_ids`` (the raw
+    sampled ids) has always been reliable; this uses it correctly by comparing
+    against the exact opener ids the model's own ``FcDuplexCapability``
+    already resolved once via ``minicpm_o5_sdk.O5SpecialTokenRegistry``
+    (``backend.fc_duplex.ids["think_start"/"tool_call_start"]``), so no new
+    SDK dependency is needed at this layer.
+
+    Returns "think" or "tool_call" when this step's sampled ids contain the
+    corresponding opener token id, otherwise None (caller renders as
+    `unknown` until kind becomes clear from the closed span). See
+    docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md for the full comparison
+    against the o45-fc board MVP this behavior is ported from.
+
+    ``backend`` here is a ``core.processors.pytorch_backend.PyTorchBackend``
+    (or an equivalent backend implementing the same fc_duplex_* facade); the
+    model instance holding the initialized ``FcDuplexCapability`` sits at
+    ``backend.processor.model.fc_duplex``, not directly on ``backend``.
     """
 
-    for piece in token_strs:
-        if not isinstance(piece, str):
-            continue
-        if "think" in piece and "<" in piece:
+    processor = getattr(backend, "processor", None)
+    model = getattr(processor, "model", None)
+    fc_duplex = getattr(model, "fc_duplex", None)
+    opener_ids = getattr(fc_duplex, "ids", None) or {}
+    think_start_id = opener_ids.get("think_start")
+    tool_call_start_id = opener_ids.get("tool_call_start")
+    for tid in token_ids:
+        if tid == think_start_id:
             return "think"
-        if "tool_call" in piece and "<" in piece:
+        if tid == tool_call_start_id:
             return "tool_call"
     return None
 
@@ -743,16 +873,6 @@ def _kind_for_event(kind: Optional[str]) -> str:
     if kind in ("think", "tool_call"):
         return kind
     return "unknown"
-
-
-def _token_observations(token_ids: List[int], token_strs: List[str]) -> Optional[List[Dict[str, Any]]]:
-    if not token_ids:
-        return None
-    observations = []
-    for index, token_id in enumerate(token_ids):
-        text = token_strs[index] if index < len(token_strs) else ""
-        observations.append({"id": int(token_id), "text": text})
-    return observations
 
 
 def _estimate_remaining_budget_1s(
@@ -775,13 +895,6 @@ def _short(value: str, limit: int = 300) -> str:
     if len(value) <= limit:
         return value
     return value[:limit] + "..."
-
-
-def _short_list(value: Any, limit: int = 80) -> List[str]:
-    items = [str(item) for item in list(value or [])]
-    if len(items) <= limit:
-        return items
-    return items[:limit] + [f"...(+{len(items) - limit})"]
 
 
 def _audio_waveform_to_float32_base64(audio_waveform: Any) -> str:
@@ -846,3 +959,19 @@ def _extract_audio_base64(payload: Dict[str, Any]) -> Optional[str]:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _safe_decode_audio_base64(audio_base64: Optional[str]) -> Optional[np.ndarray]:
+    """Decode base64 float32 PCM audio for diagnostics; never raises.
+
+    The audio dump is opt-in diagnostics (FC_DUPLEX_AUDIO_DUMP_DIR), so a
+    decode failure must not take down the main prefill/generate flow.
+    """
+
+    if not audio_base64:
+        return None
+    try:
+        return decode_audio_base64(audio_base64)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("audio dump: failed to decode audio_base64 for dump: %s", exc)
+        return None

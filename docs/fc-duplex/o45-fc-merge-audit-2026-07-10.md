@@ -26,4 +26,29 @@ o45-fc 在旧的单体 `class MiniCPMO(MiniCPMOPreTrainedModel)` 里直接加了
 
 ## C 类：board demo（`audio_duplex_board` vs `demos/fc_board` + `static/fc-board`）
 
-见后续提交，进行中。
+### 工具目录（`demos/fc_board/tools/display_object_on_board`）
+
+跟 `audio_duplex_board/tools/display_object_on_board` 逐行对比：核心逻辑完全一致，只有 docstring 文案（"audio_duplex_board 原型" vs "FC board demo"）和 `BoardImageResult` 所在模块路径（我们放在顶层 `audio_duplex_board/schemas.py`，这边放在 `demos/fc_board/tools/display_object_on_board/schemas.py`）不同。**无需移植。**
+
+### 业务编排层（`audio_duplex_board/session.py` vs `py_backend/fc_duplex_runtime.py`）
+
+`py_backend/fc_duplex_runtime.py` 的模块 docstring 和多处方法 docstring 明确写着"mirrors audio_duplex_board.session"——同样是同一份代码快照分叉演化。已核对并移植的差异：
+
+- **`_guess_block_kind_from_tokens(token_strs)` → `_guess_block_kind_from_token_ids(token_ids, backend)`**：跟 A 类同样的问题（字符串子串匹配不可靠），同样的修复方向。但这里用了比 o45-fc 更好的实现：不需要单独 import `minicpm_o5_sdk` 加载 tokenizer，直接复用模型自己已经初始化好的 `backend.processor.model.fc_duplex.ids["think_start"/"tool_call_start"]`（`FcDuplexCapability._ensure_protocol()` 早已经用 `O5SpecialTokenRegistry` 建好的同一份映射）。**注意 `backend` 不是模型本身**：`FcDuplexSessionRuntime.backend` 是 `core/processors/pytorch_backend.py::PyTorchBackend`，要经过 `backend.processor.model.fc_duplex` 三层才能拿到真正的 `FcDuplexCapability` 实例；`getattr` 链在任一环节拿不到都会优雅返回 `None`（`unknown`），不会抛异常。
+- 连带删除了 `_token_observations`（用 `token_strs[index]` 给每个 token 配一段文本，发到 `response.think.delta`/`response.tool_call.args.delta` 的 `token_observations` 字段）——前端 `fc-board-app.js` 从未消费这个字段，且它的数据源没了之后只会一直吐空字符串，删除比留着更诚实。同时清理了 `_short_list`（唯一调用点被删除后变成死代码）。
+- **`static/fc-board/fc-board-app.js` 的两处 `event.token_strs` fallback** 同步删除，跟 A 类前端修复一致，只用 `event.text`（后端 `step_text`）。
+
+**未动的 `token_strs`**：`MiniCPMO45/fc_duplex_capability.py` 里 `_record_trace(..., token_strs=self._token_pieces(...))` 那几处，是 `trace_snapshot`/`dump_trace`（他们自己的整段 trace 落盘诊断工具，见 B 类审计）内部用的字段，走的是 `_token_pieces`（已经用 `id2name` 改进过特殊 token 识别的版本），不是 o45-fc 删除的那个 pydantic schema 字段，也不是我们移植范围内的东西——保留不动。
+
+### 前端 UI（`audio_duplex_board/web/*` vs `static/fc-board/*`）
+
+逐文件核对结论：
+
+- `audio-player.js`/`board-state.js`/`duplex-utils.js`/`file-audio-provider.js`/`live-mic-provider.js`：**逐字节相同**，无需移植。
+- 打字机流式呈现（`enqueueSpeech`/`pumpSpeechQueue`/`appendSpeechChar`）、`scrollNsToBottom`（滚动到 `.nsStream.parentElement` 而不是自身）、turn-based 音频播放（`handleSpokenOutput` 依据 `isListen`/`isSpeaking` 调 `beginTurn`/`endTurn`，debug 面板的 `appendAiAudio` 只在抽屉打开时才建 `<audio>` 且没有 autoplay，不会重叠播放）：**已经存在，逐段核对没有回归，无需移植。**
+- **LUFS mic 表**：确认缺失——他们的 `updateMicLevel` 还是原始 RMS（`level.toFixed(2)`，无 dB 换算、无目标响度区间），已移植 o45-fc 的 `rmsToDb`/`MIC_METER_MIN/MAX_DB`/`MIC_TARGET_LO/HI_DB`/`resetMicPeak` 全套实现到 `fc-board-app.js`，CSS 目标区间遮罩（`.mic-meter .meter-track::before`）加进 `fc-board.css`。
+- **训练分布对齐的空状态引导文案**：他们原来的 empty-state 是泛化文案（"说出具体物体，例如「你看这只猫」「桌上有个苹果」"），已替换成 o45-fc 的训练句式引导（先说指令→等 AI 应声→再自由描述），文案根据这个分支的通用 system prompt 措辞做了适配（不再写"农场"这类 o45-fc 特定训练子集的场景词）。同步改了 HTML 里的初始文案和 `renderBoard()` 里重新渲染时的 innerHTML。
+
+### 音频落盘诊断（新增，他们完全没有）
+
+`py_backend/fc_duplex_runtime.py` 新增 `_maybe_dump_user_wav`/`_maybe_dump_speak_wav`/`_append_audio_dump_manifest`，逻辑从 `audio_duplex_board/session.py` 移植，语义不变（用户音频 rms<0.001 跳过、AI 音频仅 `is_speaking=True` 且有 waveform 才落盘，同一个 `manifest.jsonl` 用 `role` 字段区分）。**开关方式不同**：o45-fc 走显式 config 字段 `audio_dump_dir`（CLI 参数一路传进 session）；这个分支为了不改动 `config.py`/`gateway.py`/`worker.py` 的参数传递链，改用环境变量 `FC_DUPLEX_AUDIO_DUMP_DIR`，跟这个分支已有的同类诊断开关（`FC_DUPLEX_TRACE_DIR`，见 `_dump_model_trace`）保持同一种约定，默认不设置 = 关闭。已用 mock backend 跑过端到端单测（写 wav + manifest + 静音/非说话跳过 + 默认关闭四种场景）。

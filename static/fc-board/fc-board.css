@@ -129,12 +129,30 @@ body {
   background: #f0f0eb;
   border-radius: 999px;
   overflow: hidden;
+  position: relative;
 }
 .mic-meter .meter-fill {
   height: 100%;
   background: linear-gradient(90deg, #22c55e 0%, #f59e0b 70%, #ef4444 100%);
   width: 0%;
   transition: width 0.1s ease-out;
+}
+/* 目标 loudness 区间（-28 → -18 dB ≈ 训练集 p5-p95 LUFS）：在 meter 上叠
+   一条浅灰竖条，帮用户把说话响度调到"训练数据分布内"。
+   数值来自 fc-board-app.js MIC_TARGET_LO/HI_DB 和 MIC_METER_MIN/MAX_DB：
+     left  = (-28 - (-50)) / (-10 - (-50)) = 22/40 = 55%
+     right = (-18 - (-50)) / (-10 - (-50)) = 32/40 = 80%
+     width = 25% */
+.mic-meter .meter-track::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 55%;
+  width: 25%;
+  background: rgba(60, 90, 130, 0.15);
+  pointer-events: none;
+  z-index: 1;
 }
 .status-lamp {
   display: inline-flex;
