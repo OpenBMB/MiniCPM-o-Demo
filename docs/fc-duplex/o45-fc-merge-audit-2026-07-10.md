@@ -49,6 +49,23 @@ o45-fc 在旧的单体 `class MiniCPMO(MiniCPMOPreTrainedModel)` 里直接加了
 - **LUFS mic 表**：确认缺失——他们的 `updateMicLevel` 还是原始 RMS（`level.toFixed(2)`，无 dB 换算、无目标响度区间），已移植 o45-fc 的 `rmsToDb`/`MIC_METER_MIN/MAX_DB`/`MIC_TARGET_LO/HI_DB`/`resetMicPeak` 全套实现到 `fc-board-app.js`，CSS 目标区间遮罩（`.mic-meter .meter-track::before`）加进 `fc-board.css`。
 - **训练分布对齐的空状态引导文案**：他们原来的 empty-state 是泛化文案（"说出具体物体，例如「你看这只猫」「桌上有个苹果」"），已替换成 o45-fc 的训练句式引导（先说指令→等 AI 应声→再自由描述），文案根据这个分支的通用 system prompt 措辞做了适配（不再写"农场"这类 o45-fc 特定训练子集的场景词）。同步改了 HTML 里的初始文案和 `renderBoard()` 里重新渲染时的 innerHTML。
 
+### 真实模型端到端验证（cctl job `142631`）
+
+`cctl job copy`/`job create` 起了一个 `py_backend.server` + `worker.py` bundle（不开 `--compile`，config.example.json 默认 `compile: false`，跳过 ~10 分钟 warmup，纯正确性验证不测延迟），devbox 本地起 `gateway.py --http` 指向它，走正式 `/v1/realtime` 协议（`session.init` + `input.append`，跟 `fc-realtime-client.js`/`fc-board-app.js` 的真实用法一致）灌同一条训练音频（`dob_midtrain_v1_20260628_animal_seed_ct01_and_04842`）。
+
+第一次尝试（比 o45-fc 板子当时验证幸运，那边试了 3 次才中）就拿到了决定性结果：
+
+```
+[EVT] response.think.begin @ 22803607.472
+[EVT] response.think.delta (FIRST) @ 22803607.505 gap_since_begin_ms=33.7
+```
+
+`response.think.begin` 在第一个内容 token 那一步就发出，跟第一条 `response.think.delta` 只差 34ms（同一个生成 step），证明 `_guess_block_kind_from_token_ids` 在真实模型输出上确实是"span 一开就精确命中"，不是等 span 闭合才知道。后续 think 内容正常流式吐出可读中文（"用户希望我在...接下来的描述中，识别出兼具生活与农务属性的物品...我先爽快地答应他，然后保持倾听，不打断他的叙述。过程中只要听到符合这类特征的工具，就调用 display_object_on_board 展示，对于纯粹的生活用品则直接跳过。"），中间出现的一处 " �"+"�" 是已知的多字节 UTF-8 跨 token 边界的增量解码伪影（跟昨天 o45-fc 板子验证时看到的一样，最终整体解码不受影响，不是本次改动引入的问题）。这次模型选择只推理规则、不触发 tool_call（这条训练 case 的 `user_instruction_0.wav` 本身只是"立规则"阶段，没有提到具体物体），跟 tool_call 检测逻辑是否正确无关——`_guess_block_kind_from_token_ids` 对 `think_start`/`tool_call_start` 走的是同一段代码，think 侧已经拿到真实证据。
+
+服务端日志唯一的 ERROR 跟这次改动无关：`_dump_model_trace`（他们自己原有的、写死路径 `/user/weihongliang/fc_trace_logs` 的诊断功能）在我们的运行环境下路径只读，被自身的 `try/except` 优雅捕获、不影响主流程，只是这个日志行本身值得他们后续把路径改成可配置。
+
+验证完成后已清理资源：devbox 上的 `gateway.py` 进程已停，cctl job `142631` 已 stop。
+
 ### 音频落盘诊断（新增，他们完全没有）
 
 `py_backend/fc_duplex_runtime.py` 新增 `_maybe_dump_user_wav`/`_maybe_dump_speak_wav`/`_append_audio_dump_manifest`，逻辑从 `audio_duplex_board/session.py` 移植，语义不变（用户音频 rms<0.001 跳过、AI 音频仅 `is_speaking=True` 且有 waveform 才落盘，同一个 `manifest.jsonl` 用 `role` 字段区分）。**开关方式不同**：o45-fc 走显式 config 字段 `audio_dump_dir`（CLI 参数一路传进 session）；这个分支为了不改动 `config.py`/`gateway.py`/`worker.py` 的参数传递链，改用环境变量 `FC_DUPLEX_AUDIO_DUMP_DIR`，跟这个分支已有的同类诊断开关（`FC_DUPLEX_TRACE_DIR`，见 `_dump_model_trace`）保持同一种约定，默认不设置 = 关闭。已用 mock backend 跑过端到端单测（写 wav + manifest + 静音/非说话跳过 + 默认关闭四种场景）。
