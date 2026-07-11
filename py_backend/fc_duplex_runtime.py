@@ -889,28 +889,56 @@ def _kind_for_event(kind: Optional[str]) -> str:
     return "unknown"
 
 
-def _token_observations(token_ids: List[int], backend: Any) -> Optional[List[Dict[str, Any]]]:
-    """Per-token ``{id, text}`` observations for protocol §8 ``token_observations``.
+_BYTE_DECODER: Dict[str, int] = {}
 
-    Previously sourced ``text`` from ``token_strs`` (a
-    ``tokenizer.convert_ids_to_tokens`` reverse lookup that is structurally
-    unreliable for byte-level BPE — it exposes the internal byte-to-surrogate
-    vocab mapping table, not real decoded text, so a token that's half of a
-    multi-byte character comes back as unrelated-looking garbage rather than
-    any recognizable placeholder). That field no longer exists; this instead
-    decodes each token individually through the SDK's own decoder
-    (``FcDuplexCapability.decode_text``, i.e. ``minicpm_o5_sdk``'s
-    ``decode_ordinary``), the same method already used to produce the
-    reliable ``text``/``step_text`` field. Empirically verified: for a token
-    that's a complete character/word on its own, this returns the correct
-    readable text; for a token that's only half of a multi-byte character
-    split across a token boundary, the SDK decoder's standard UTF-8
-    decode-with-replacement semantics return a single U+FFFD ``'�'`` --
-    an honest, universally-recognized "encoding boundary" marker, not
-    misleading garbage. Special tokens (``is_special``) use the protocol's
-    ``id2name`` display name instead of attempting a text decode. See
-    docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md for the verification
-    transcript.
+
+def _byte_decoder() -> Dict[str, int]:
+    """惰性构造 GPT2 风格 byte<->unicode 反查表（``convert_ids_to_tokens`` 用的编码约定）。
+
+    见 ``transformers.models.gpt2.tokenization_gpt2.bytes_to_unicode``：byte-level BPE
+    把每个原始字节映射到一个固定的、可逆的 unicode 码点，跟这个字节是否构成合法
+    UTF-8 字符完全无关。这里只是把这张表反过来，用于从 vocab piece 还原原始字节。
+    """
+
+    if not _BYTE_DECODER:
+        from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
+
+        _BYTE_DECODER.update({v: k for k, v in bytes_to_unicode().items()})
+    return _BYTE_DECODER
+
+
+def _token_raw_bytes(piece: str) -> bytes:
+    """把 ``convert_ids_to_tokens`` 反查出的 vocab piece 还原成该 token 的原始字节。
+
+    这一步只是字节级映射表反查，从不尝试判断这些字节是否构成合法字符，所以对
+    任何 token（无论是完整字符还是被切断的半个多字节字符）都精确、可逆，没有
+    fallback、不丢信息。
+    """
+
+    decoder = _byte_decoder()
+    return bytes(decoder[ch] for ch in piece)
+
+
+def _token_observations(token_ids: List[int], backend: Any) -> Optional[List[Dict[str, Any]]]:
+    """Per-token ``{id, text, bytes_hex}`` observations for protocol §8 ``token_observations``.
+
+    ``text`` 曾经先后用过两种不可靠的来源：
+    1. ``token_strs``（``tokenizer.convert_ids_to_tokens`` 的展示层，byte-level BPE 的
+       字节代理编码，本身就不是文本，看起来像乱码）；
+    2. ``FcDuplexCapability.decode_text``（即 ``decode_ordinary``）逐 token 调用——这个
+       方法的契约是"输入字节能构成合法字符"，对被 token 边界切断的多字节字符会
+       静默 fallback 成 ``U+FFFD``，而 ``U+FFFD`` 不携带任何原字符信息（不同的字被
+       切断后解码结果完全相同，实测验证过），观测字段里出现这种"假占位符"比
+       "没有值"更容易误导排查问题的人。
+
+    正确做法：只用 ``convert_ids_to_tokens`` 反查 vocab piece 再反查字节表还原原始
+    字节（``_token_raw_bytes``，无 fallback、逐 token 精确可逆），然后**显式**尝试
+    strict UTF-8 decode——能解出来就是完整字符，解不出来就诚实地把 ``text`` 设为
+    ``None``（不是伪造的 ``U+FFFD`` 占位符），同时始终提供 ``bytes_hex``（原始字节
+    的十六进制）作为无损兜底，方便排查问题的人自己拼接多个 token 的字节还原文本。
+    Special tokens（``is_special``）继续用协议的 ``id2name`` 展示名。
+
+    见 docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md 的完整推导和实证记录。
 
     Returns None (omit the field) when the model's FcDuplexCapability isn't
     reachable through ``backend`` (e.g. a non-Python backend) -- per protocol
@@ -923,17 +951,26 @@ def _token_observations(token_ids: List[int], backend: Any) -> Optional[List[Dic
     fc_duplex = _resolve_fc_duplex_capability(backend)
     if fc_duplex is None:
         return None
+    tokenizer = getattr(fc_duplex, "tokenizer", None)
+    if tokenizer is None:
+        return None
     observations = []
     for tid in token_ids:
         tid_int = int(tid)
+        if fc_duplex.is_special(tid_int):
+            observations.append({"id": tid_int, "text": fc_duplex.id2name.get(tid_int), "bytes_hex": None})
+            continue
         try:
-            if fc_duplex.is_special(tid_int):
-                text = fc_duplex.id2name.get(tid_int)
-            else:
-                text = fc_duplex.decode_text([tid_int])
-        except Exception:  # noqa: BLE001 - 观测是可选调试字段，解码失败不能挂主流程
-            text = None
-        observations.append({"id": tid_int, "text": text})
+            piece = tokenizer.convert_ids_to_tokens([tid_int])[0]
+            raw = _token_raw_bytes(piece)
+        except Exception:  # noqa: BLE001 - vocab 反查在极端情况下也不能挂主流程
+            observations.append({"id": tid_int, "text": None, "bytes_hex": None})
+            continue
+        try:
+            text: Optional[str] = raw.decode("utf-8")  # strict：解不出来就抛异常，不用 errors='replace'
+        except UnicodeDecodeError:
+            text = None  # 诚实信号"这个 token 单独不构成合法字符"，不是伪造的占位符
+        observations.append({"id": tid_int, "text": text, "bytes_hex": raw.hex()})
     return observations
 
 

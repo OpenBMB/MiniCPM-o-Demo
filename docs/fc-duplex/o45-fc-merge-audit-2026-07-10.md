@@ -73,3 +73,111 @@ o45-fc 在旧的单体 `class MiniCPMO(MiniCPMOPreTrainedModel)` 里直接加了
 ### 音频落盘诊断（新增，他们完全没有）
 
 `py_backend/fc_duplex_runtime.py` 新增 `_maybe_dump_user_wav`/`_maybe_dump_speak_wav`/`_append_audio_dump_manifest`，逻辑从 `audio_duplex_board/session.py` 移植，语义不变（用户音频 rms<0.001 跳过、AI 音频仅 `is_speaking=True` 且有 waveform 才落盘，同一个 `manifest.jsonl` 用 `role` 字段区分）。**开关方式不同**：o45-fc 走显式 config 字段 `audio_dump_dir`（CLI 参数一路传进 session）；这个分支为了不改动 `config.py`/`gateway.py`/`worker.py` 的参数传递链，改用环境变量 `FC_DUPLEX_AUDIO_DUMP_DIR`，跟这个分支已有的同类诊断开关（`FC_DUPLEX_TRACE_DIR`，见 `_dump_model_trace`）保持同一种约定，默认不设置 = 关闭。已用 mock backend 跑过端到端单测（写 wav + manifest + 静音/非说话跳过 + 默认关闭四种场景）。
+
+## `token_observations` / 流式 decode 深挖（2026-07-11，commit `0b605e1` 之后的后续修正）
+
+commit `0b605e1` 把 `_token_observations` 从"直接删掉"改成了"用 `fc_duplex.decode_text([tid])`（即 SDK 的 `decode_ordinary`）逐 token decode"。**这个实现本身还不是最终版本，下面记录为什么，以及正确的做法应该是什么。**
+
+### 核心原则：不允许 fallback，每个函数只做自己能保证做对的事
+
+`decode_ordinary`（本质是 HF `tokenizers` 库 Rust 层的 `String::from_utf8_lossy`，已用 subagent 精确定位到 `tokenizers/src/pre_tokenizers/byte_level.rs` 的 `ByteLevel::decode_chain`，本地不可配置、无法关闭）对"字节不完整"这件事的处理方式是**用 `U+FFFD` 顶上**——这是一个丢信息的 fallback：拿到 `U+FFFD` 之后无法反推原始字节是什么，也无法区分"这是哪个字被切断的"（实测过："展"和"放"被切断后单独 decode 出来的码点完全一样，`['0x20', '0xfffd']`，证明 `U+FFFD` 不携带任何原字符信息）。
+
+对"逐 token 观测"这个场景（`token_observations` 的契约就是"一个 token 一条记录"），`decode_ordinary` 天然不适用——它的契约假设"输入的字节能形成合法字符"，逐 token 场景经常不满足这个假设。**正确工具是 `tokenizer.convert_ids_to_tokens`**：它只做字节级的可逆映射（GPT2 风格的 byte↔unicode 表，`transformers.models.gpt2.tokenization_gpt2.bytes_to_unicode`），从不尝试判断"这些字节是不是一个合法字符"，所以对任何 token（完整字符还是半个字符）都精确、可逆，没有 fallback。
+
+### 已落地的修正（`_token_observations`，`py_backend/fc_duplex_runtime.py`）
+
+```python
+from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
+
+_BYTE_DECODER = {v: k for k, v in bytes_to_unicode().items()}
+
+
+def _token_raw_bytes(piece: str) -> bytes:
+    """把 convert_ids_to_tokens 反查出的 vocab piece 还原成原始字节。
+
+    这一步只是字节级映射表反查，从不做 UTF-8 判断，对任何 piece 都精确、
+    可逆，没有 fallback。
+    """
+    return bytes(_BYTE_DECODER[ch] for ch in piece)
+
+
+def _token_observations(token_ids: List[int], backend: Any) -> Optional[List[Dict[str, Any]]]:
+    if not token_ids:
+        return None
+    fc_duplex = _resolve_fc_duplex_capability(backend)
+    if fc_duplex is None:
+        return None
+    tokenizer = getattr(fc_duplex, "tokenizer", None)  # FcDuplexCapability.tokenizer 是公开属性（self.processor.tokenizer），已经在用，不需要新加
+    if tokenizer is None:
+        return None
+    observations = []
+    for tid in token_ids:
+        tid_int = int(tid)
+        if fc_duplex.is_special(tid_int):
+            observations.append({"id": tid_int, "text": fc_duplex.id2name.get(tid_int), "bytes_hex": None})
+            continue
+        try:
+            piece = tokenizer.convert_ids_to_tokens([tid_int])[0]
+            raw = _token_raw_bytes(piece)
+        except Exception:  # noqa: BLE001 - vocab 反查在极端情况下也不能挂主流程
+            observations.append({"id": tid_int, "text": None, "bytes_hex": None})
+            continue
+        try:
+            text = raw.decode("utf-8")  # 默认 strict，不用 errors='replace' 这种 fallback
+        except UnicodeDecodeError:
+            text = None  # 诚实信号"这个 token 单独不构成合法字符"，不是伪造的占位符
+        observations.append({"id": tid_int, "text": text, "bytes_hex": raw.hex()})
+    return observations
+```
+
+**不需要改模型层**：`FcDuplexCapability.tokenizer`（`self.processor.tokenizer`，`__init__` 第 64 行）已经是公开属性，直接暴露原始 HF tokenizer，`convert_ids_to_tokens` 是标准方法，不用新加任何东西到 `MiniCPMO45/fc_duplex_capability.py`。
+
+**实测验证过的关键事实**（用 `/tmp` 下的脚本 + subagent，都可以重新跑）：
+- `decode_ordinary([243])` → `'\ufffd'`（Python `str`，恰好一个字符，不抛异常，不会有变长/失控的输出）；跟 `raw.decode('utf-8')`（strict）比较：默认 strict 会抛 `UnicodeDecodeError`，只有显式传 `errors='replace'` 才会变成 `U+FFFD`——这行为在 SDK/transformers/tokenizers 整条链路里都找不到显式的 `errors=` 参数，因为真正起作用的是 Rust `String::from_utf8_lossy`（编译进 `.abi3.so`，本地不可见源码，已用跟本机版本一致的 GitHub tag 源码核对）。
+- `convert_ids_to_tokens` 反查出的 vocab piece，**任何 token（完整字符还是半个字符）都一视同仁**，只做字节级映射，从不做 UTF-8 判断——`decode_ordinary([20002])`（"用户"，完整字符）反查出来同样是 `'çĶ¨æĪ·'` 这种"看起来像乱码"的东西，跟半个字符的 token 没有本质区别，区别只在于**后续要不要再做一次 UTF-8 decode**。
+- 用 `bytes_to_unicode()` 反查表可以把 vocab piece 精确还原成原始字节（`token_raw_bytes(79621) == b' \xe5\xb1'`，`token_raw_bytes(243) == b'\x95'`），拼起来 `decode('utf-8')` 能正确还原"展"——证明 `convert_ids_to_tokens` 路径无损，只是把"什么时候做 UTF-8 decode"这个决定权留给了调用者。
+
+### 顺带发现的一个更大的问题：流式增量 `step_text` 本身也会撞到同一个坑，不只是 `token_observations`
+
+`MiniCPMO45/fc_duplex_capability.py` 的 `streaming_non_spoken_generate`/`streaming_spoken_generate` 里，`text_ids = []` 在**每次调用**开头重新初始化（`streaming_non_spoken_generate` 第 1008 行，`streaming_spoken_generate` 第 846 行），`text = self._flush(text_ids)` 只 decode**这一次调用新采样的 token**。业务层调用约定是 `max_tokens=1`（`py_backend/fc_duplex_runtime.py::_run_non_spoken_loop`），也就是说**大多数情况下每个 step 只 decode 1 个新 token**——这跟 `token_observations` 的逐 token 场景是**同一个问题**，只是发生在"当前吐给前端看的正文"（`response.think.delta`/`response.tool_call.args.delta` 的 `delta` 字段）上，不是可选的调试字段。
+
+**已经在真实生成里实测确认过这个问题会真实发生**（2026-07-08 晚验证 token-id block-kind 检测那次的原始记录）：
+
+```
+[EVT] response.think.delta delta=' �'
+[EVT] response.think.delta delta='�'
+[EVT] response.think.delta delta='示'
+```
+
+"展"被拆到两个 step，前端会先看到两个 `�` 短暂闪一下，再看到"示"（"展"永久性地在流式展示里变成了两个问号，不会被后续修正——只有整段 span 闭合时的 `full_text`/`closed_span.text` 是整体 decode，最终是对的，但**流式过程中用户会看到错的**）。之前的分析笔记把这个记成"已知的、无害的增量解码伪影"，现在看来**不是无害，是一个真实的、有确定修复方案的 bug**。
+
+### 根本修法（还没有落地实现，留给下一轮）：`tokenizers.decoders.DecodeStream`
+
+已经系统性调研过业界标准做法（vLLM/SGLang/TGI/HF `TextStreamer`），结论都是同一个套路——**缓冲，等字节/字符攒够了再吐**，区别只在缓冲粒度。本机环境（`tokenizers==0.22.2`）已经验证 HuggingFace `tokenizers` 库自带现成的、按 token id 粒度工作的增量 decode 类，vLLM 自己也是直接调它当 fast path，不用我们发明状态机：
+
+```python
+from tokenizers.decoders import DecodeStream
+
+stream = DecodeStream(skip_special_tokens=False)
+piece = stream.step(backend_tokenizer, token_id)   # backend_tokenizer = fc_duplex.tokenizer.backend_tokenizer（Rust Tokenizer 对象）
+# piece is None   -> 这个 token 单独字节不够，先不吐，状态留在 stream 内部
+# piece is str    -> 攒够了，这次吐出的完整文本（可能包含好几个 step 之前攒的内容）
+```
+
+**已经详细验证过的性质**（`/tmp/demo_decode_stream_vs_naive.py`、`/tmp/verify_stream_chunk_reencode.py`，以及两个 subagent 大规模跑过的"安全点"恒等关系）：
+- `DecodeStream` 每次吐出的 chunk，重新 encode 回去，精确等于"从上次吐出之后累积到这次为止"的那些 token id（在真实生成的 15-token 句子上逐步验证过，全部一致）。
+- 内部状态**不会无限增长**：一旦确认吐出一个 chunk，源码（`tokenizers/src/tokenizer/mod.rs::step_decode_stream`，`*ids = ids.drain(*prefix_index..).collect()` 这一行）会把已经消费掉的 token id 从缓冲区里丢弃，只留下"还在等下一个 token 才能凑齐"的那一小段。
+- 算法本身是"整体重新 decode + 跟上次比长度 + 看结尾是不是 `U+FFFD`"（vLLM/SGLang 抄的也是同一套，只是有的用字节级缓冲、有的用这种字符串级 diff），不是按字节精确切分——比如"空格+半个展"这个 token，`DecodeStream` 会把空格也留在缓冲区里一起等，不会提前把空格吐出来；这个粒度上的"不够精确"对我们的场景没有实际影响（最多晚一步吐出一个空格，不会看到 `U+FFFD`，不会丢字）。
+- 三个前提性质都已经用真实训练数据 + 边缘场景做过大规模实测（不是靠理论推断）：安全点定义（"decode 出来的字符串不以 `U+FFFD` 结尾"）下，round-trip 恒等（9894/9894 个安全点验证通过）和分段拼接恒等（290360/290360 对安全点全量枚举验证通过）都成立，这是 `DecodeStream` 这类方案能正确工作的数学基础。
+
+**修复方案设计（分层，还没写代码）**：
+
+- **落地位置：业务层 `py_backend/fc_duplex_runtime.py`，不是模型层 `MiniCPMO45/fc_duplex_capability.py`。** 原因：（1）模型层的 `text_ids`/`_flush` 逐 call 重置这件事本身不用改，模型层继续按自己的节奏吐 `token_ids` 就行；（2）业务层已经拿到了可靠的 `step.token_ids`（原始采样 id，从来没有过失真问题），有它就足够重建正确文本，不需要依赖模型层的 `step.text` 字段；（3）改业务层不需要重新加载 9B 模型、不需要 GPU，能在本机快速验证，改模型层则需要重新起 cctl job 才能验证，成本高很多。
+- **状态放在哪**：`FcDuplexSessionRuntime`（每个 session 一个实例）需要新增至少 2 个 `DecodeStream` 实例——非语音（think/tool_call 混合的 non_spoken lane）和语音（spoken lane）各一个，因为这是两条独立的 token 序列，不能共用一个 `DecodeStream` 的内部状态。
+- **需要处理的细节（还没完全想清楚，下一轮要专门确认）**：
+  1. `DecodeStream` 不认识"special/control token"这个概念，会把喂给它的任何 token id 都当普通字节去尝试 decode——如果非语音 lane 里混进了 `<think>`/`<tool_call>`/`<|non_spoken_eos|>` 这类协议 token（`is_special(tid)==True`），不能直接喂给 `DecodeStream`，需要在喂之前先用 `fc_duplex.is_special(tid)` 过滤掉，只把"ordinary content token"喂进去（跟 `decode_ordinary` 自己会对 control token 抛 `ValueError` 是同一个约束）。
+  2. 一个 non_spoken block（比如一个 `<think>...</think>` span）闭合之后，下一个 span（可能是 `<tool_call>`）开始时，`DecodeStream` 的内部 `prefix`/`ids` 状态要不要重置？直觉上应该重置（两个 span 的内容语义上不连续，没必要让上一个 span 未消费完的缓冲字节"泄漏"到下一个 span），但需要确认："span 闭合"这个时间点，`DecodeStream` 内部缓冲区是不是保证已经空了（如果 span 内最后一个字符恰好也被跨 token 切断，缓冲区可能非空）——这种边界情况下要不要在 span 强制闭合时把 `DecodeStream` 剩余缓冲的内容强制吐出来（哪怕它当时还没等到"确认"），需要设计一个"flush"语义。
+  3. spoken lane 同理：每个 unit 的 `streaming_spoken_generate` 调用之间，`DecodeStream` 状态要不要跨 unit 保留？如果一个字被切在两个 unit 之间（理论上可能，因为 spoken 也是按 unit 调度的），跨 unit 保留状态才能修复；但这会让 spoken lane 的 `DecodeStream` 生命周期跟 `FcDuplexSessionRuntime` 整个 session 一样长，需要确认这样设计没有其它副作用（比如 session 内 spoken lane 有没有"turn 切换"之类需要重置的语义边界，跟 non_spoken 的 span 边界是不是类似的问题）。
+  4. 验证方式：这个改动改变了对外协议 `response.think.delta`/`response.tool_call.args.delta`/`response.output.delta(kind=text)` 的吐出时机（可能某个 delta 会因为在等字节而"迟一步"才出现，具体内容不受影响），需要一次真实 GPU 端到端验证（复用之前验证 block-kind 检测用的同一套 cctl job + WS 脚本流程），确认没有引入新的乱序/丢字问题，再合入。
+
+**执行顺序**：`_token_observations` 的低风险修正已落地并用真实 tokenizer + mock backend 验证；`DecodeStream` 流式修法涉及的细节多、需要真实 GPU 验证，留到下一轮专门做，不在同一个 commit 里混着改。
