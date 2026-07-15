@@ -82,7 +82,7 @@ After termination, GPU memory is released and the session recording is finalized
 
 | Message Type | Key Fields | When to send | Description |
 |-------------|-----------|-------------|-------------|
-| `prepare` | `prefix_system_prompt`, `config`, `ref_audio_path` | Once, after `queue_done` | Initialize the duplex session with system prompt and configuration |
+| `prepare` | `prefix_system_prompt`, `config`, `voice.ref_audio_base64` | Once, after `queue_done` | Initialize the duplex session with system prompt, voice reference, and configuration |
 | `audio_chunk` | `audio` (Base64) | Every `chunk_ms` ms, after `prepared` | Send one chunk of microphone audio (PCM float32, 16kHz). Chunk duration should match `config.chunk_ms` (default 1s) |
 | `video_frame` | `frame` (Base64 JPEG) | With each `audio_chunk` (Omni only) | Send a camera frame. Only for Omnimodal variant |
 | `pause` | — | Any time during active session | Temporarily suspend the session. Stop sending `audio_chunk` |
@@ -108,7 +108,10 @@ After termination, GPU memory is released and the session recording is finalized
     "ls_mode": "explicit",
     "sample_rate": 16000
   },
-  "ref_audio_path": "assets/ref_audio/ref_minicpm_signature.wav"
+  "voice": {
+    "ref_audio_base64": "<base64 reference audio>",
+    "tts_ref_audio_base64": "<base64 reference audio>"
+  }
 }
 ```
 
@@ -236,12 +239,15 @@ ws.onmessage = (event) => {
 
     case 'queue_done':
       // GPU assigned — send prepare with ref audio for voice cloning.
-      // ref_audio_base64 is used for both LLM system prompt embedding and TTS voice.
-      // To use a different voice for TTS, set tts_ref_audio_base64 separately.
+      // voice.ref_audio_base64 is used for both LLM system prompt embedding and TTS voice.
+      // To use a different voice for TTS, set voice.tts_ref_audio_base64 separately.
       ws.send(JSON.stringify({
         type: 'prepare',
         prefix_system_prompt: 'You are a fun assistant.',
-        ref_audio_base64: refAudioBase64,
+        voice: {
+          ref_audio_base64: refAudioBase64,
+          tts_ref_audio_base64: refAudioBase64,
+        },
         config: {
           generate_audio: true,
           chunk_ms: 1000,
@@ -356,8 +362,8 @@ async def duplex_session(
                 break
 
         # 2. Prepare — attach ref audio for voice cloning.
-        #    ref_audio_base64: used for both LLM system prompt embedding and TTS voice.
-        #    To use a different TTS voice, set tts_ref_audio_base64 separately.
+        #    voice.ref_audio_base64: used for both LLM system prompt embedding and TTS voice.
+        #    To use a different TTS voice, set voice.tts_ref_audio_base64 separately.
         prepare_msg = {
             "type": "prepare",
             "prefix_system_prompt": "You are a fun assistant.",
@@ -369,7 +375,11 @@ async def duplex_session(
             },
         }
         if ref_audio_path:
-            prepare_msg["ref_audio_base64"] = load_ref_audio(ref_audio_path)
+            ref_audio_base64 = load_ref_audio(ref_audio_path)
+            prepare_msg["voice"] = {
+                "ref_audio_base64": ref_audio_base64,
+                "tts_ref_audio_base64": ref_audio_base64,
+            }
         await ws.send(json.dumps(prepare_msg))
 
         msg = json.loads(await ws.recv())
@@ -429,4 +439,3 @@ The internal processing pipeline for each second of a Duplex session:
 | Interrupt | `DuplexView.set_break()` / `clear_break()` | Set or clear the interrupt flag. When set, the model will transition to listening on the next step |
 | Terminate | `DuplexView.stop()` | Signal the session to stop |
 | Cleanup | `DuplexView.cleanup()` | Release GPU memory, clear KV Cache, finalize session state |
-
