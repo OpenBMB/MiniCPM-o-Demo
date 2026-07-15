@@ -409,6 +409,10 @@ export function useDuplexSession(
       if (duplexSettings.refAudio.base64) {
         preparePayload.ref_audio_base64 = duplexSettings.refAudio.base64
         preparePayload.tts_ref_audio_base64 = duplexSettings.refAudio.base64
+        preparePayload.voice = {
+          ref_audio_base64: duplexSettings.refAudio.base64,
+          tts_ref_audio_base64: duplexSettings.refAudio.base64,
+        }
       }
 
       if (withVideo) {
