@@ -10,6 +10,10 @@ GPU_ID="${GPU_ID:-0}"
 N_GPU_LAYERS="${N_GPU_LAYERS:-99}"
 READY_TIMEOUT_S="${READY_TIMEOUT_S:-1200}"
 CHECK_MODEL_LAYOUT="${CHECK_MODEL_LAYOUT:-1}"
+GATEWAY_REGISTRY_URL="${GATEWAY_REGISTRY_URL:-}"
+WORKER_ID="${WORKER_ID:-$(hostname)}"
+WORKER_ENDPOINT="${WORKER_ENDPOINT:-${WORKER_ID}:${WORKER_PORT}}"
+WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-}"
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
 LOG_DIR="${LOG_DIR:-/app/logs}"
 LLAMA_LOG_FILE="${LLAMA_LOG_FILE:-${LOG_DIR}/llama-omni-server.log}"
@@ -119,6 +123,26 @@ if curl -sf "http://127.0.0.1:${WORKER_PORT}/health" >/dev/null 2>&1; then
     echo "[entrypoint] worker ready"
 else
     echo "[entrypoint] worker health check is not ready yet"
+fi
+
+if [ -n "$GATEWAY_REGISTRY_URL" ]; then
+    register_url="${GATEWAY_REGISTRY_URL%/}/${WORKER_ID}"
+    echo "[entrypoint] registering worker: ${register_url} endpoint=${WORKER_ENDPOINT}"
+    for i in $(seq 1 60); do
+        payload="{\"endpoint\":\"${WORKER_ENDPOINT}\",\"gpu_group\":\"${WORKER_GPU_GROUP}\"}"
+        if curl -sf -X PUT \
+            -H "content-type: application/json" \
+            --data "$payload" \
+            "$register_url" >/dev/null 2>&1; then
+            echo "[entrypoint] worker registered"
+            break
+        fi
+        if [ "$i" -eq 60 ]; then
+            echo "[entrypoint] warning: worker registration failed; continuing" >&2
+            break
+        fi
+        sleep 2
+    done
 fi
 
 echo "[entrypoint] running. backend pid=${backend_pid} worker pid=${worker_pid}"

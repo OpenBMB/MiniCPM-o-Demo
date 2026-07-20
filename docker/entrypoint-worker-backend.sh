@@ -14,6 +14,10 @@
 #   BACKEND_PORT      backend 协议端口。默认 22500
 #   WORKER_PORT       worker 转发端口（gateway 连这个）。默认 22400
 #   GPU_ID            backend --gpu-id（容器内通常 0，由 --gpus 决定看到哪张卡）。默认 0
+#   GATEWAY_REGISTRY_URL  可选，gateway 内部注册 API，例如 http://gateway:8007/internal/workers
+#   WORKER_ID         可选，动态注册 ID。默认 hostname
+#   WORKER_ENDPOINT   可选，动态注册 endpoint。默认 ${WORKER_ID}:${WORKER_PORT}
+#   WORKER_GPU_GROUP  可选，物理/共享 GPU 分组提示，只用于 gateway 调度观测
 
 set -euo pipefail
 
@@ -21,6 +25,10 @@ MODEL_PATH="${MODEL_PATH:-/models/MiniCPM-o-4_5}"
 BACKEND_PORT="${BACKEND_PORT:-22500}"
 WORKER_PORT="${WORKER_PORT:-22400}"
 GPU_ID="${GPU_ID:-0}"
+GATEWAY_REGISTRY_URL="${GATEWAY_REGISTRY_URL:-}"
+WORKER_ID="${WORKER_ID:-$(hostname)}"
+WORKER_ENDPOINT="${WORKER_ENDPOINT:-${WORKER_ID}:${WORKER_PORT}}"
+WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-}"
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
 
 cd /app
@@ -99,6 +107,26 @@ if curl -sf "http://127.0.0.1:${WORKER_PORT}/health" >/dev/null 2>&1; then
     echo "[entrypoint] worker 就绪（/health OK）"
 else
     echo "[entrypoint] 警告：worker /health 暂未就绪，继续运行"
+fi
+
+if [ -n "$GATEWAY_REGISTRY_URL" ]; then
+    register_url="${GATEWAY_REGISTRY_URL%/}/${WORKER_ID}"
+    echo "[entrypoint] 注册 worker: ${register_url} endpoint=${WORKER_ENDPOINT}"
+    for i in $(seq 1 60); do
+        payload="{\"endpoint\":\"${WORKER_ENDPOINT}\",\"gpu_group\":\"${WORKER_GPU_GROUP}\"}"
+        if curl -sf -X PUT \
+            -H "content-type: application/json" \
+            --data "$payload" \
+            "$register_url" >/dev/null 2>&1; then
+            echo "[entrypoint] worker 注册成功"
+            break
+        fi
+        if [ "$i" -eq 60 ]; then
+            echo "[entrypoint] 警告：worker 注册失败，容器继续运行" >&2
+            break
+        fi
+        sleep 2
+    done
 fi
 
 echo "[entrypoint] bundle 运行中。backend pid=$backend_pid worker pid=$worker_pid"

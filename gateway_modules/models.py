@@ -3,7 +3,7 @@
 定义 Gateway 层的 Pydantic 请求/响应模型、Worker 状态、队列模型等。
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict
 from enum import Enum
 from datetime import datetime
 
@@ -30,6 +30,8 @@ class WorkerInfo(BaseModel):
     host: str
     port: int
     gpu_id: int
+    gpu_group: Optional[str] = None
+    labels: Dict[str, str] = Field(default_factory=dict)
     status: GatewayWorkerStatus
     current_ticket_id: Optional[str] = None
     total_requests: int = 0
@@ -38,6 +40,13 @@ class WorkerInfo(BaseModel):
     current_request_type: Optional[str] = None
     task_started_at: Optional[datetime] = None
     capabilities: List[str] = Field(default_factory=list)
+
+
+class WorkerRegistrationRequest(BaseModel):
+    """Worker registration payload for the gateway internal control plane."""
+    endpoint: str = Field(..., description="Worker endpoint in host:port form")
+    gpu_group: Optional[str] = Field(default=None, description="Optional physical/shared GPU grouping hint")
+    labels: Dict[str, str] = Field(default_factory=dict)
 
 
 # ============ 队列模型 ============
