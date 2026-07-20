@@ -82,7 +82,7 @@ sequenceDiagram
 
 | 消息类型 | 关键字段 | 何时发送 | 说明 |
 |---------|---------|---------|------|
-| `prepare` | `prefix_system_prompt`, `config`, `ref_audio_path` | `queue_done` 后发一次 | 使用系统提示和配置初始化全双工会话 |
+| `prepare` | `prefix_system_prompt`, `config`, `voice.ref_audio_base64` | `queue_done` 后发一次 | 使用系统提示、参考音频和配置初始化全双工会话 |
 | `audio_chunk` | `audio` (Base64) | `prepared` 后每 `chunk_ms` ms | 发送一段麦克风音频（PCM float32, 16kHz）。chunk 时长应与 `config.chunk_ms` 匹配（默认 1s） |
 | `video_frame` | `frame` (Base64 JPEG) | 随每个 `audio_chunk` 一起（仅 Omni） | 发送一帧摄像头画面。仅 Omnimodal 变体使用 |
 | `pause` | — | 活跃会话期间任意时刻 | 临时挂起会话。停止发送 `audio_chunk` |
@@ -108,7 +108,10 @@ sequenceDiagram
     "ls_mode": "explicit",
     "sample_rate": 16000
   },
-  "ref_audio_path": "assets/ref_audio/ref_minicpm_signature.wav"
+  "voice": {
+    "ref_audio_base64": "<base64 reference audio>",
+    "tts_ref_audio_base64": "<base64 reference audio>"
+  }
 }
 ```
 
@@ -236,12 +239,15 @@ ws.onmessage = (event) => {
 
     case 'queue_done':
       // GPU 已分配——发送 prepare，附带参考音频用于声音克隆。
-      // ref_audio_base64 同时用于 LLM 系统提示嵌入和 TTS 声音。
-      // 如需使用不同的 TTS 声音，可单独设置 tts_ref_audio_base64。
+      // voice.ref_audio_base64 同时用于 LLM 系统提示嵌入和 TTS 声音。
+      // 如需使用不同的 TTS 声音，可单独设置 voice.tts_ref_audio_base64。
       ws.send(JSON.stringify({
         type: 'prepare',
         prefix_system_prompt: '你是一个有趣的助手。',
-        ref_audio_base64: refAudioBase64,
+        voice: {
+          ref_audio_base64: refAudioBase64,
+          tts_ref_audio_base64: refAudioBase64,
+        },
         config: {
           generate_audio: true,
           chunk_ms: 1000,
@@ -356,8 +362,8 @@ async def duplex_session(
                 break
 
         # 2. 发送 prepare — 附带参考音频用于声音克隆。
-        #    ref_audio_base64 同时用于 LLM 系统提示嵌入和 TTS 声音。
-        #    如需使用不同的 TTS 声音，可单独设置 tts_ref_audio_base64。
+        #    voice.ref_audio_base64 同时用于 LLM 系统提示嵌入和 TTS 声音。
+        #    如需使用不同的 TTS 声音，可单独设置 voice.tts_ref_audio_base64。
         prepare_msg = {
             "type": "prepare",
             "prefix_system_prompt": "你是一个有趣的助手。",
@@ -369,7 +375,11 @@ async def duplex_session(
             },
         }
         if ref_audio_path:
-            prepare_msg["ref_audio_base64"] = load_ref_audio(ref_audio_path)
+            ref_audio_base64 = load_ref_audio(ref_audio_path)
+            prepare_msg["voice"] = {
+                "ref_audio_base64": ref_audio_base64,
+                "tts_ref_audio_base64": ref_audio_base64,
+            }
         await ws.send(json.dumps(prepare_msg))
 
         msg = json.loads(await ws.recv())
@@ -428,4 +438,3 @@ Duplex 会话中每一秒的内部处理流水线：
 | 打断 | `DuplexView.set_break()` / `clear_break()` | 设置或清除打断标志。设置后模型在下一步将转为监听 |
 | 终止 | `DuplexView.stop()` | 通知会话停止 |
 | 清理 | `DuplexView.cleanup()` | 释放 GPU 显存，清空 KV Cache，终结会话状态 |
-
