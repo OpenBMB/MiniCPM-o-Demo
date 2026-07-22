@@ -149,6 +149,7 @@ export class FcRealtimeClient {
       || event.type.startsWith('response.tool_call.')
       || event.type === 'response.output.delta'
       || event.type === 'response.output.sp_tokens'
+      || event.type === 'response.warning'
     ) {
       this.history.push({
         dir: 'down',

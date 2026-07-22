@@ -35,7 +35,11 @@ from py_backend.media import decode_audio_base64, decode_frame_base64_list
 logger = logging.getLogger(__name__)
 
 
-def _deferred_budget_reached_step() -> SimpleNamespace:
+def _deferred_budget_reached_step(
+    *,
+    generation_steps: Optional[List[Any]] = None,
+    warnings: Optional[List[Any]] = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         token_ids=[],
         terminated=True,
@@ -43,6 +47,9 @@ def _deferred_budget_reached_step() -> SimpleNamespace:
         generation_flag="continue_non_spoken_generation",
         closed_spans=[],
         text="",
+        text_delta="",
+        generation_steps=list(generation_steps or []),
+        warnings=list(warnings or []),
         metadata={"deferred_model_feed": True},
     )
 
@@ -72,6 +79,13 @@ class _SendCallable(Protocol):
         """Send one public backend event."""
 
 
+class _FatalCallable(Protocol):
+    """Async callback used when detached FC processing cannot continue."""
+
+    def __call__(self, error: Exception) -> Awaitable[None]:
+        """Close the owning protocol Session with a public fatal event."""
+
+
 class FcDuplexSessionRuntime:
     """Small per-session scheduler for FC duplex protocol input/output."""
 
@@ -81,10 +95,12 @@ class FcDuplexSessionRuntime:
         session_id: str,
         backend: Any,
         send: _SendCallable,
+        on_fatal: Optional[_FatalCallable] = None,
     ) -> None:
         self.session_id = session_id
         self.backend = backend
         self._send = send
+        self._on_fatal = on_fatal
         self._response_id: Optional[str] = None
         self._tools: List[Dict[str, Any]] = []
         self._pending_tool_responses: List[FcToolResponse] = []
@@ -122,7 +138,6 @@ class FcDuplexSessionRuntime:
         self._generation_batch_started_at: Optional[float] = None
         self._generation_batch_steps: List[Dict[str, Any]] = []
         self._unit_has_deferred_close = False
-        self._resume_history_valid = True
         self._resume_identity: Dict[str, Any] = {}
         audio_dump_root = os.environ.get("FC_DUPLEX_AUDIO_DUMP_DIR")
         if audio_dump_root:
@@ -241,6 +256,7 @@ class FcDuplexSessionRuntime:
                 sample_rate=sample_rate,
                 spoken_token_ids=unit.spoken_token_ids,
                 non_spoken_token_ids=unit.non_spoken_token_ids,
+                deferred_non_spoken_close=unit.deferred_non_spoken_close,
             )
         restore_stream_sequence = getattr(
             self.backend,
@@ -366,9 +382,15 @@ class FcDuplexSessionRuntime:
             payload = await self._input_queue.get()
             try:
                 await self._process_audio_payload(payload)
-            except Exception:
+            except Exception as exc:
                 logger.exception("FC runtime failed to process audio payload")
-                raise
+                if self._on_fatal is None:
+                    raise
+                self._closed = True
+                await self._on_fatal(exc)
+                await self._dump_model_trace(reason="runtime_error")
+                await asyncio.to_thread(self.backend.fc_duplex_cleanup)
+                return
             finally:
                 self._input_queue.task_done()
             if self._input_queue.empty():
@@ -439,11 +461,6 @@ class FcDuplexSessionRuntime:
             }
         )
         if self._unit_has_deferred_close:
-            resume_status = {
-                "status": "unavailable",
-                "reason": "unsupported_deferred_close",
-            }
-        if not self._resume_history_valid:
             resume_status = {
                 "status": "unavailable",
                 "reason": "unsupported_deferred_close",
@@ -590,6 +607,27 @@ class FcDuplexSessionRuntime:
         except Exception:
             logger.exception("failed to dump fc model trace: session=%s path=%s", self.session_id, path)
 
+    async def _build_deferred_budget_reached_step(self) -> SimpleNamespace:
+        """Close the View text stream while deferring the model close to finalize."""
+
+        terminate = getattr(
+            self.backend,
+            "fc_duplex_terminate_non_spoken_text_stream",
+            None,
+        )
+        if terminate is None:
+            raise RuntimeError(
+                "backend lacks fc_duplex_terminate_non_spoken_text_stream; "
+                "cannot produce resumable deferred-close history"
+            )
+        result = await asyncio.to_thread(terminate, reason="budget_reached")
+        return _deferred_budget_reached_step(
+            generation_steps=list(
+                getattr(result, "generation_steps", None) or []
+            ),
+            warnings=list(getattr(result, "warnings", None) or []),
+        )
+
     async def _run_non_spoken_loop(
         self,
         *,
@@ -601,9 +639,8 @@ class FcDuplexSessionRuntime:
         step_durations_ms: List[float] = []
         for _ in range(max(0, self._non_spoken_budget_per_unit)):
             if self._non_spoken_scheduling == "latency" and self._next_input_event.is_set():
-                step = _deferred_budget_reached_step()
+                step = await self._build_deferred_budget_reached_step()
                 self._unit_has_deferred_close = True
-                self._resume_history_valid = False
                 await self._emit_step_events(
                     step,
                     input_id=input_id,
@@ -643,9 +680,8 @@ class FcDuplexSessionRuntime:
                     pre_non_spoken_elapsed_ms=pre_non_spoken_elapsed_ms,
                 )
                 return
-        step = _deferred_budget_reached_step()
+        step = await self._build_deferred_budget_reached_step()
         self._unit_has_deferred_close = True
-        self._resume_history_valid = False
         await self._emit_step_events(
             step,
             input_id=input_id,
@@ -781,6 +817,30 @@ class FcDuplexSessionRuntime:
         self._generation_batch_started_at = None
         self._generation_batch_steps = []
 
+    async def _emit_generation_warnings(
+        self,
+        warnings: List[Any],
+        *,
+        unit_index: int,
+        input_id: Optional[str],
+    ) -> None:
+        """Emit non-fatal View boundary warnings without exposing token IDs."""
+
+        for warning in warnings:
+            fields = (
+                warning.model_dump()
+                if hasattr(warning, "model_dump")
+                else dict(warning)
+            )
+            await self._send(
+                "response.warning",
+                session_id=self.session_id,
+                response_id=self._response_id,
+                input_id=input_id,
+                unit_index=unit_index,
+                **fields,
+            )
+
     async def _emit_spoken(
         self,
         spoken: Any,
@@ -796,11 +856,17 @@ class FcDuplexSessionRuntime:
             unit_index=unit_index,
             input_id=input_id,
         )
+        await self._emit_generation_warnings(
+            list(getattr(spoken, "warnings", None) or []),
+            unit_index=unit_index,
+            input_id=input_id,
+        )
         waveform = getattr(spoken, "audio_waveform", None)
         metadata = _model_to_dict(spoken)
         metadata.pop("audio_waveform", None)
         metadata.pop("spoken_token_ids", None)
         metadata.pop("generation_steps", None)
+        metadata.pop("warnings", None)
         logger.info(
             "fc_spoken input_id=%s listen=%s speaking=%s text=%r turn_eos=%s",
             input_id,
@@ -858,14 +924,20 @@ class FcDuplexSessionRuntime:
 
         This intentionally mirrors audio_duplex_board.session._emit_step_events:
         token/text opens an unknown block immediately, every generated step is
-        streamed, and only closed_spans close the current block. Budget markers
-        never close an open block.
+        streamed, matching end tokens close completed spans, and budget markers
+        terminate the current transport text stream without emitting business done.
         """
 
         token_ids = list(getattr(step, "token_ids", None) or [])
         step_text = str(getattr(step, "text_delta", "") or "")
         await self._record_generation_steps(
             list(getattr(step, "generation_steps", None) or []),
+            unit_index=unit_index,
+            input_id=input_id,
+        )
+        generation_warnings = list(getattr(step, "warnings", None) or [])
+        await self._emit_generation_warnings(
+            generation_warnings,
             unit_index=unit_index,
             input_id=input_id,
         )
@@ -890,7 +962,10 @@ class FcDuplexSessionRuntime:
             and not is_no_action_marker
         )
         if should_open:
-            tentative_kind = _guess_block_kind_from_token_ids(token_ids, self.backend)
+            tentative_kind = (
+                getattr(step, "span_started", None)
+                or _guess_block_kind_from_token_ids(token_ids, self.backend)
+            )
             await self._begin_block(tentative_kind, input_id=input_id)
 
         if (token_ids or step_text) and self._current_block_id is not None:
@@ -906,9 +981,20 @@ class FcDuplexSessionRuntime:
                 await self._send_sp_token(token, input_id=input_id)
             if str(close_reason) == "abort":
                 await self._abort_current_block(input_id=input_id)
+            elif str(close_reason) == "budget_reached":
+                self._clear_current_block()
 
+        suppress_fallback_text = any(
+            getattr(warning, "code", None)
+            == "incomplete_bpe_at_stream_end"
+            for warning in generation_warnings
+        )
         for span in list(getattr(step, "closed_spans", None) or []):
-            await self._emit_close_for_span(span, input_id=input_id)
+            await self._emit_close_for_span(
+                span,
+                input_id=input_id,
+                suppress_fallback_text=suppress_fallback_text,
+            )
 
     async def _send_block_delta(
         self,
@@ -930,6 +1016,7 @@ class FcDuplexSessionRuntime:
                     session_id=self.session_id,
                     response_id=self._response_id,
                     input_id=input_id,
+                block_id=self._current_block_id,
                     delta=step_text,
                 )
             return
@@ -944,6 +1031,7 @@ class FcDuplexSessionRuntime:
                     response_id=self._response_id,
                     input_id=input_id,
                     tool_call_id=tool_call_id,
+                    block_id=self._current_block_id,
                     delta=step_text,
                 )
             return
@@ -968,7 +1056,13 @@ class FcDuplexSessionRuntime:
         self._block_started_sent = False
         if kind == "think":
             self._block_started_sent = True
-            await self._send("response.think.begin", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
+            await self._send(
+                "response.think.begin",
+                session_id=self.session_id,
+                response_id=self._response_id,
+                input_id=input_id,
+                block_id=self._current_block_id,
+            )
         elif kind == "tool_call":
             self._current_tool_call_id = self._api_id_for_internal(None)
             self._block_started_sent = True
@@ -978,6 +1072,7 @@ class FcDuplexSessionRuntime:
                 response_id=self._response_id,
                 input_id=input_id,
                 tool_call_id=self._current_tool_call_id,
+                block_id=self._current_block_id,
             )
 
     async def _upgrade_block_kind(self, kind: str, *, input_id: Optional[str]) -> None:
@@ -998,6 +1093,7 @@ class FcDuplexSessionRuntime:
                     response_id=self._response_id,
                     input_id=input_id,
                     tool_call_id=self._current_tool_call_id,
+                    block_id=self._current_block_id,
                 )
 
     async def _abort_current_block(self, *, input_id: Optional[str]) -> None:
@@ -1024,7 +1120,13 @@ class FcDuplexSessionRuntime:
             token=token,
         )
 
-    async def _emit_close_for_span(self, span: Any, *, input_id: Optional[str]) -> None:
+    async def _emit_close_for_span(
+        self,
+        span: Any,
+        *,
+        input_id: Optional[str],
+        suppress_fallback_text: bool = False,
+    ) -> None:
         """Close the current non-spoken block and emit final API events.
 
         Mirrors audio_duplex_board.session._emit_close_for_span, replacing board
@@ -1038,15 +1140,23 @@ class FcDuplexSessionRuntime:
             elif self._current_block_kind != "think":
                 await self._upgrade_block_kind("think", input_id=input_id)
             text = str(getattr(span, "text", "") or "")
-            if text and not self._current_block_streamed:
+            block_id = self._current_block_id
+            if text and not self._current_block_streamed and not suppress_fallback_text:
                 await self._send(
                     "response.think.delta",
                     session_id=self.session_id,
                     response_id=self._response_id,
                     input_id=input_id,
+                    block_id=block_id,
                     delta=text,
                 )
-            await self._send("response.think.end", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
+            await self._send(
+                "response.think.end",
+                session_id=self.session_id,
+                response_id=self._response_id,
+                input_id=input_id,
+                block_id=block_id,
+            )
             self._clear_current_block()
             return
         if span_type != "tool_call":
@@ -1065,6 +1175,7 @@ class FcDuplexSessionRuntime:
                 self._api_to_internal[api_id] = str(internal_id)
         else:
             api_id = self._api_id_for_internal(str(internal_id) if internal_id else None)
+        block_id = self._current_block_id
         wire = getattr(span, "wire", None) or ""
         if not self._current_tool_call_id:
             self._current_tool_call_id = api_id
@@ -1076,7 +1187,20 @@ class FcDuplexSessionRuntime:
                 response_id=self._response_id,
                 input_id=input_id,
                 tool_call_id=api_id,
+                block_id=block_id,
             )
+        if suppress_fallback_text:
+            await self._send(
+                "response.tool_call.abort",
+                session_id=self.session_id,
+                response_id=self._response_id,
+                input_id=input_id,
+                tool_call_id=api_id,
+                block_id=block_id,
+                reason="incomplete_bpe_at_stream_end",
+            )
+            self._clear_current_block()
+            return
         if wire and not self._current_block_streamed:
             await self._send(
                 "response.tool_call.args.delta",
@@ -1084,6 +1208,7 @@ class FcDuplexSessionRuntime:
                 response_id=self._response_id,
                 input_id=input_id,
                 tool_call_id=api_id,
+                block_id=block_id,
                 delta=wire,
             )
         await self._send(
@@ -1092,6 +1217,7 @@ class FcDuplexSessionRuntime:
             response_id=self._response_id,
             input_id=input_id,
             tool_call_id=api_id,
+            block_id=block_id,
         )
         raw = _tool_call_raw(span)
         await self._send(
@@ -1100,6 +1226,7 @@ class FcDuplexSessionRuntime:
             response_id=self._response_id,
             input_id=input_id,
             tool_call_id=api_id,
+            block_id=block_id,
             raw=raw,
         )
         self._clear_current_block()

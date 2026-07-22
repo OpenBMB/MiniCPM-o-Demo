@@ -203,7 +203,7 @@ tool response 注入模型上下文。
 ### 4.1 response.output.sp_tokens
 
 `response.output.sp_tokens` 表示模型输出侧 special-token 的只读语义观测。它主要服务于
-尚未实现的 semantic resume / 事件日志，避免把 `budget_reached`、`tts_pad`、slot/turn eos
+semantic resume / 事件日志，避免把 `budget_reached`、`tts_pad`、slot/turn eos
 这类信息在拼接文本时丢掉。
 
 ```json
@@ -239,7 +239,7 @@ tool response 注入模型上下文。
 | `spoken_turn_eos` | `<|spoken_turn_eos|>` / 兼容目标中的 `<|turn_eos|>` | 当前 spoken turn 结束。 |
 | `no_action` | `<|no_action|>` | 当前 non-spoken lane 无动作。 |
 | `non_spoken_eos` | `<|non_spoken_eos|>` | 当前 non-spoken decode 正常结束。 |
-| `non_spoken_budget_reached` | `<|non_spoken_budget_reached|>` | 当前 non-spoken decode 因预算用尽中断，后续 unit 可继续。 |
+| `non_spoken_budget_reached` | `<|non_spoken_budget_reached|>` | 当前 non-spoken decode 因预算用尽中断，并终止当前 think/tool-call text stream；后续 Unit 如有 opener，会创建新 stream。 |
 | `non_spoken_hold` | `<|non_spoken_hold|>` | 模型要求 non-spoken lane 暂停/保持。 |
 | `non_spoken_abort` | `<|non_spoken_abort|>` | 模型要求中止当前 non-spoken 动作。 |
 
@@ -277,8 +277,9 @@ unit_k:
   non-spoken decode、事件被省略、或异常无输出。
 - `non_spoken_eos`：表示 non-spoken lane 正常结束。它不是某个 `think.end` 或
   `tool_call.args.end` 的简单同义词；span 可以闭合，但 lane 还需要自己的结束状态。
-- `non_spoken_budget_reached`：表示当前 unit 因预算耗尽而中断，后续 unit MAY 继续同一
-  non-spoken span。它和自然 `eos` 的 resume 行为不同，不能由 delta 停止推理出来。
+- `non_spoken_budget_reached`：表示当前 Unit 因预算耗尽而中断，并终止当前
+  think/tool-call text stream。模型 token、slot end 与 Unit end 可以延迟到下一 Unit
+  prefill 前进入 KV；canonical history 必须记录该 deferred feed 时序。
 - `non_spoken_hold`：表示模型要求 non-spoken lane 暂停/保持。它是显式状态，不等价于没有新 delta。
 - `non_spoken_abort`：表示模型中止当前 non-spoken 动作。它和 parser error、runtime cancel、
   budget stop 都不同；tool-call 场景下还需要与 `response.tool_call.abort` 的语义对齐。
@@ -325,6 +326,23 @@ Batch 内通过 `text_pending` / `text_delta` / `protocol` 三种 discriminated 
 
 完整字段和 batching 约束见
 [`FC Duplex Resumable Generation API`](../fc-duplex/resumable-generation-api.md)。
+
+#### 4.1.3 Stream boundary warning
+
+Think/tool-call 在 matching end 或 `non_spoken_budget_reached` 终止时，如果增量 decoder
+仍有 incomplete BPE，backend 下发：
+
+```json
+{
+  "type": "response.warning",
+  "code": "incomplete_bpe_at_stream_end",
+  "stream_id": "think_2",
+  "reason": "budget_reached",
+  "message": "文本边界包含未完成 BPE，公共 API 历史无法保证精确复现"
+}
+```
+
+Warning 不终止 live Session，但后续 resume 不保证可用。Backend 不得用替换字符补齐。
 
 ### 4.2 response.think
 

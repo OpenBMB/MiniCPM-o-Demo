@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from core.processors.unified import FcDuplexView
 from core.schemas.fc_duplex import (
     FcDuplexPrepareRequest,
@@ -145,3 +147,134 @@ def test_view_marks_non_roundtrippable_safe_delta_as_non_resumable() -> None:
         "reason": "text_delta_roundtrip_mismatch",
         "stream_id": result.generation_steps[1].stream_id,
     }
+
+
+def test_spoken_repeated_speak_across_units_reuses_turn_stream() -> None:
+    """每个 Unit 的 speak 是 continuation marker，不应重建 turn decoder。"""
+
+    model = _FakeFcModel()
+    tokenizer = model.fc_duplex.protocol_tokenizer
+    speak = tokenizer.token_to_id("<|speak|>")
+    slot_eos = tokenizer.token_to_id("<|spoken_slot_eos|>")
+    turn_eos = tokenizer.token_to_id("<|spoken_turn_eos|>")
+    text_ids = tokenizer.encode_ordinary("龘")
+    assert len(text_ids) == 2
+    model.spoken_results = [
+        {
+            "is_speaking": True,
+            "spoken_ids": [speak, text_ids[0], slot_eos],
+        },
+        {
+            "is_speaking": True,
+            "spoken_ids": [speak, text_ids[1], turn_eos],
+            "spoken_turn_eos": True,
+        },
+    ]
+    view = FcDuplexView(model)  # type: ignore[arg-type]
+    view.prepare(FcDuplexPrepareRequest())
+
+    first = view.streaming_spoken_generate(FcSpokenGenerateRequest())
+    second = view.streaming_spoken_generate(FcSpokenGenerateRequest())
+
+    assert first.generation_steps[1].stream_id == second.generation_steps[1].stream_id
+    assert second.spoken_text_delta == "龘"
+    assert view.resume_boundary_status() == {"status": "available"}
+
+
+def test_spoken_listen_before_turn_eos_is_runtime_error() -> None:
+    """Active spoken turn 尚未 turn_eos 时出现 listen 属于协议错误。"""
+
+    model = _FakeFcModel()
+    tokenizer = model.fc_duplex.protocol_tokenizer
+    speak = tokenizer.token_to_id("<|speak|>")
+    slot_eos = tokenizer.token_to_id("<|spoken_slot_eos|>")
+    listen = tokenizer.token_to_id("<|listen|>")
+    model.spoken_results = [
+        {
+            "is_speaking": True,
+            "spoken_ids": [speak, *tokenizer.encode_ordinary("继续"), slot_eos],
+        },
+        {
+            "is_listen": True,
+            "spoken_ids": [listen],
+        },
+    ]
+    view = FcDuplexView(model)  # type: ignore[arg-type]
+    view.prepare(FcDuplexPrepareRequest())
+    view.streaming_spoken_generate(FcSpokenGenerateRequest())
+
+    with pytest.raises(RuntimeError, match="listen before spoken_turn_eos"):
+        view.streaming_spoken_generate(FcSpokenGenerateRequest())
+
+
+def test_budget_reached_terminates_think_stream_and_next_opener_is_new_stream() -> None:
+    """Budget close 应销毁 decoder；下一 Unit opener 创建新 stream。"""
+
+    model = _FakeFcModel()
+    tokenizer = model.fc_duplex.protocol_tokenizer
+    think_start = tokenizer.token_to_id("<think>")
+    model.non_spoken_results = [
+        {"token_ids": [think_start, *tokenizer.encode_ordinary("完整")]},
+        {"token_ids": tokenizer.encode_ordinary("后续")},
+    ]
+    view = FcDuplexView(model)  # type: ignore[arg-type]
+    view.prepare(FcDuplexPrepareRequest())
+
+    first = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
+    terminated = view.terminate_non_spoken_text_stream("budget_reached")
+    second = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
+
+    assert terminated.warnings == []
+    assert terminated.generation_steps[0].output.semantic_key == "non_spoken_budget_reached"
+    assert terminated.generation_steps[0].output.deferred_model_feed is True
+    assert second.span_started == "think"
+    assert first.generation_steps[0].stream_id != second.generation_steps[0].stream_id
+
+
+def test_pending_bpe_at_budget_close_emits_warning_and_marks_resume_unsafe() -> None:
+    """Budget 终止 incomplete BPE 时应 warning，不应抛异常或补替换字符。"""
+
+    model = _FakeFcModel()
+    tokenizer = model.fc_duplex.protocol_tokenizer
+    think_start = tokenizer.token_to_id("<think>")
+    text_ids = tokenizer.encode_ordinary("龘")
+    assert len(text_ids) == 2
+    model.non_spoken_results = [{"token_ids": [think_start, text_ids[0]]}]
+    view = FcDuplexView(model)  # type: ignore[arg-type]
+    view.prepare(FcDuplexPrepareRequest())
+    view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
+
+    terminated = view.terminate_non_spoken_text_stream("budget_reached")
+
+    assert len(terminated.warnings) == 1
+    warning = terminated.warnings[0]
+    assert warning.code == "incomplete_bpe_at_stream_end"
+    assert warning.reason == "budget_reached"
+    assert "\ufffd" not in warning.message
+    assert view.resume_boundary_status()["reason"] == "pending_text_delta"
+
+
+def test_pending_bpe_at_explicit_end_emits_warning_instead_of_runtime_error() -> None:
+    """Matching end 遇到 incomplete BPE 时关闭 stream 并返回 warning。"""
+
+    model = _FakeFcModel()
+    tokenizer = model.fc_duplex.protocol_tokenizer
+    think_start = tokenizer.token_to_id("<think>")
+    think_end = tokenizer.token_to_id("</think>")
+    text_ids = tokenizer.encode_ordinary("龘")
+    assert len(text_ids) == 2
+    model.non_spoken_results = [
+        {"token_ids": [think_start, text_ids[0]]},
+        {
+            "token_ids": [think_end],
+            "closed_spans": [{"type": "think", "text": "\ufffd"}],
+        },
+    ]
+    view = FcDuplexView(model)  # type: ignore[arg-type]
+    view.prepare(FcDuplexPrepareRequest())
+    view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
+
+    closed = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
+
+    assert len(closed.warnings) == 1
+    assert closed.warnings[0].reason == "think_end"

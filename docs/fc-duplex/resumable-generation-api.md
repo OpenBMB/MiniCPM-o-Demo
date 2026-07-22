@@ -39,6 +39,35 @@ SDK ordinary text decode stream 输出的完整 Unicode 文本。每个 delta �
 表达 Unit、lane、span、turn 和终止原因的协议 token。公共 API 只暴露稳定 semantic key，
 不暴露 token ID 或 tokenizer 原始 token 字符串。
 
+### 2.5 跨 Unit stream 生命周期
+
+Unit 是模型调度帧，不自动创建或销毁文本 decoder。Stream 只由协议 token 驱动。
+
+Spoken turn：
+
+- 首个 `speak` 创建 stream；active turn 后续 Unit 再次出现 `speak` 只是 continuation，
+  复用原 `stream_id` 与 decoder。
+- `spoken_slot_eos` 只结束当前 Unit 的 spoken slot，不结束 turn。
+- `spoken_turn_eos` 结束 turn 并销毁 decoder。
+- `listen` 只能出现在两个 turn 之间；active turn 尚未收到 `spoken_turn_eos` 就出现
+  `listen`，View MUST 抛出 `RuntimeError`。
+
+Think / tool-call：
+
+- `<think>` / `<tool_call>` 创建对应 stream。
+- `</think>` / `</tool_call>` 或 `non_spoken_budget_reached` 终止 stream 并销毁 decoder。
+- Budget 后模型可能在下一 Unit 直接继续 ordinary token、而不重复 opener。此时 View
+  继承上一个 stream kind，但创建新的 `stream_id` 与 decoder；这不是跨 Unit 复用旧
+  decoder。
+- Unit 边界本身不影响 stream。
+- active stream 内再次出现任意 opener 是非法嵌套，View MUST 抛出 `RuntimeError`。
+
+终止 stream 时若 decoder 仍有 incomplete BPE：
+
+- View MUST 清理 decoder，不能输出 `U+FFFD` 或猜测文本；
+- API MUST 下发 `response.warning code=incomplete_bpe_at_stream_end`；
+- 相关 step 保持 `text_pending`，从该点开始的 checkpoint MUST 标为不可安全恢复。
+
 ### 2.5 Resume checkpoint
 
 Unit 完成时产生的恢复资格声明。Checkpoint 只说明客户端保存的历史是否足以重建当前
@@ -142,7 +171,8 @@ tokenizer.encode_ordinary(text) == source_token_ids
 ```json
 {
   "kind": "protocol",
-  "semantic_key": "think_end"
+  "semantic_key": "non_spoken_budget_reached",
+  "deferred_model_feed": true
 }
 ```
 
@@ -164,6 +194,10 @@ non_spoken_budget_reached
 non_spoken_hold
 non_spoken_abort
 ```
+
+`deferred_model_feed=true` 只用于 `non_spoken_budget_reached`：该 token、non-spoken
+slot end 和 Unit end 已进入 canonical output history，但 live KV 会在下一 Unit prefill
+前才 feed。Replay MUST 复现相同的延迟 feed 时序。
 
 纯模板骨架（`<unit>`、`</unit>`、slot start/end、audio placeholder）默认不逐条下发，
 由 replay canonicalizer 按 Unit 模板重建。
@@ -221,6 +255,24 @@ token 事实来源是 generation step batch 中逐项保留的 safe text delta�
 Tool-call 的 canonical text delta 保存模型实际生成的 ordinary wire；业务执行只使用
 `response.tool_call.args.raw` 的结构化结果。
 
+### 5.1 response.warning
+
+Stream 在 incomplete BPE 状态结束时发送：
+
+```json
+{
+  "type": "response.warning",
+  "code": "incomplete_bpe_at_stream_end",
+  "unit_index": 5,
+  "stream_id": "think_2",
+  "track": "non_spoken",
+  "reason": "budget_reached",
+  "message": "文本边界包含未完成 BPE，公共 API 历史无法保证精确复现"
+}
+```
+
+Warning 不终止 live Session，但对应 history 不再满足 exact resume 条件。
+
 ## 6. Unit checkpoint
 
 每个 Unit 完成后发送：
@@ -265,7 +317,8 @@ Unit checkpoint 只有同时满足以下条件才可标为 `available`：
 1. 所有 ordinary steps 已被某个 safe text delta 覆盖，并通过 re-encode 不变量。
 2. 当前没有未闭合的 think/tool-call span。
 3. 当前没有跨 Unit 延续的 spoken turn/TTS 状态。
-4. 当前没有 deferred non-spoken close 等待下一次 prefill 才进入 KV。
+4. 目标 Unit 没有 deferred non-spoken close 等待下一次 prefill 才进入 KV；历史中
+   更早的 deferred close 已按 canonical timing 在后续 prefill 前完成 feed。
 5. 本 Unit 所需上行输入已完整记录。
 6. 当前 Session 尚未产生需要恢复 tool-call ID 映射的工具调用或 tool result。
 7. 模型、tokenizer fingerprint、LLM reference audio 与 TTS prompt wav 的内容 hash
@@ -275,9 +328,10 @@ Unit checkpoint 只有同时满足以下条件才可标为 `available`：
 必须引用实际被 Worker 处理的输入。Latency 调度中被丢弃且没有 checkpoint 的 input
 不参与 replay。
 
-条件不满足时标记 `unavailable`。后续 Unit 重新满足条件后可以再次标记为
-`available`。例外：当前 MVP 一旦出现 deferred close 或 tool-call/tool-result 状态，
-后续 checkpoint 都保持 `unavailable`，因为 public history 尚不足以重建这些状态。
+条件不满足时标记 `unavailable`。Deferred close 只影响其所在 Unit；下一 Unit prefill
+完成 deferred feed 后，后续 checkpoint 可以重新变为 `available`。Incomplete BPE
+warning 与当前不支持的 tool-call/tool-result state 会使后续 checkpoint 保持
+`unavailable`。
 
 ## 7. Resume 请求
 

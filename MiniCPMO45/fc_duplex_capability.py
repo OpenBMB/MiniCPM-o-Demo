@@ -415,6 +415,7 @@ class FcDuplexCapability:
         self._spoken_logits = None
         self._non_spoken_logits = None
         self._non_spoken_mode = None
+        self._pending_non_spoken_continuation_mode = None
         self._think_buf = []
         self._tool_call_buf = []
         self.tts_text_start_pos = 0
@@ -483,6 +484,9 @@ class FcDuplexCapability:
             "current_unit_idx": self._current_unit_idx,
             "kv_cache_length": self.decoder.get_cache_length(),
             "current_non_spoken_mode": self._non_spoken_mode,
+            "pending_non_spoken_continuation_mode": (
+                self._pending_non_spoken_continuation_mode
+            ),
             "open_think_token_ids": list(self._think_buf),
             "open_tool_call_token_ids": list(self._tool_call_buf),
             "output_ids": ids,
@@ -948,6 +952,14 @@ class FcDuplexCapability:
         if self._current_unit_info is not None:
             self._current_unit_info["non_spoken_ids"].append(tid)
             self._current_unit_info["non_spoken_terminator"] = reason
+        if reason == "budget_reached":
+            if self._non_spoken_mode is not None:
+                self._pending_non_spoken_continuation_mode = (
+                    self._non_spoken_mode
+                )
+            self._non_spoken_mode = None
+            self._think_buf = []
+            self._tool_call_buf = []
         self._record_trace(
             "streaming_non_spoken_close",
             token_ids=[tid],
@@ -966,10 +978,31 @@ class FcDuplexCapability:
         if self._non_spoken_mode is None:
             if nid == self.sid(K.THINK_START):
                 self._non_spoken_mode = "think"
+                self._pending_non_spoken_continuation_mode = None
                 self._think_buf = []
             elif nid == self.sid(K.TOOL_CALL_START):
                 self._non_spoken_mode = "tool_call"
+                self._pending_non_spoken_continuation_mode = None
                 self._tool_call_buf = []
+            elif (
+                not self.is_special(nid)
+                and self._pending_non_spoken_continuation_mode is not None
+            ):
+                self._non_spoken_mode = (
+                    self._pending_non_spoken_continuation_mode
+                )
+                self._pending_non_spoken_continuation_mode = None
+                if self._non_spoken_mode == "think":
+                    self._think_buf = [nid]
+                else:
+                    self._tool_call_buf = [nid]
+            elif nid in {
+                self.sid(K.NO_ACTION),
+                self.sid(K.NON_SPOKEN_EOS),
+                self.sid(K.NON_SPOKEN_HOLD),
+                self.sid(K.NON_SPOKEN_ABORT),
+            }:
+                self._pending_non_spoken_continuation_mode = None
         elif self._non_spoken_mode == "think":
             if nid == self.sid(K.THINK_END):
                 text = self._flush(self._think_buf) if self._think_buf else ""
@@ -1092,6 +1125,7 @@ class FcDuplexCapability:
         sample_rate: int = 16000,
         spoken_token_ids: list[int],
         non_spoken_token_ids: list[int],
+        deferred_non_spoken_close: bool = False,
     ) -> dict:
         """Deterministically feed one completed Unit without re-sampling outputs.
 
@@ -1124,10 +1158,20 @@ class FcDuplexCapability:
 
         self._open_non_spoken_slot()
         closed_spans = []
-        for token_id in non_spoken_ids:
+        budget_reached_id = self.sid(K.NON_SPOKEN_BUDGET_REACHED)
+        if deferred_non_spoken_close:
+            if not non_spoken_ids or non_spoken_ids[-1] != budget_reached_id:
+                raise RuntimeError(
+                    "deferred non-spoken replay requires trailing "
+                    "non_spoken_budget_reached"
+                )
+            immediate_non_spoken_ids = non_spoken_ids[:-1]
+        else:
+            immediate_non_spoken_ids = non_spoken_ids
+        for token_id in immediate_non_spoken_ids:
             closed_spans.extend(self._track_non_spoken_token(token_id))
-        if non_spoken_ids:
-            self._feed_ids(non_spoken_ids)
+        if immediate_non_spoken_ids:
+            self._feed_ids(immediate_non_spoken_ids)
         if self._current_unit_info is not None:
             self._current_unit_info["non_spoken_ids"] = list(non_spoken_ids)
             self._current_unit_info["closed_spans"].extend(closed_spans)
@@ -1136,6 +1180,7 @@ class FcDuplexCapability:
                 self.sid(K.NON_SPOKEN_EOS): "eos",
                 self.sid(K.NON_SPOKEN_HOLD): "hold",
                 self.sid(K.NON_SPOKEN_ABORT): "abort",
+                budget_reached_id: "budget_reached",
             }
             for token_id in reversed(non_spoken_ids):
                 if token_id in close_reason_by_id:
@@ -1143,12 +1188,31 @@ class FcDuplexCapability:
                         close_reason_by_id[token_id]
                     )
                     break
-        self._feed_ids(
-            [
+        if deferred_non_spoken_close:
+            deferred_ids = [
+                budget_reached_id,
                 self.sid(K.AI_NON_SPOKEN_SLOT_END),
                 self.sid(K.UNIT_END),
             ]
-        )
+            self.output_ids.extend(deferred_ids)
+            self._pending_prefill_close_ids.extend(deferred_ids)
+            self._pending_prefill_unit_info = dict(
+                self._current_unit_info or {"unit": self._current_unit_idx}
+            )
+            if self._non_spoken_mode is not None:
+                self._pending_non_spoken_continuation_mode = (
+                    self._non_spoken_mode
+                )
+            self._non_spoken_mode = None
+            self._think_buf = []
+            self._tool_call_buf = []
+        else:
+            self._feed_ids(
+                [
+                    self.sid(K.AI_NON_SPOKEN_SLOT_END),
+                    self.sid(K.UNIT_END),
+                ]
+            )
         self._non_spoken_slot_open = False
         self._non_spoken_logits = None
 
@@ -1158,6 +1222,7 @@ class FcDuplexCapability:
             "replay_completed_unit",
             spoken_token_ids=spoken_ids,
             non_spoken_token_ids=non_spoken_ids,
+            deferred_non_spoken_close=deferred_non_spoken_close,
             unit_info=info,
         )
         return info
@@ -1170,11 +1235,17 @@ class FcDuplexCapability:
                 "status": "unavailable",
                 "reason": "unsupported_deferred_close",
             }
-        if self._non_spoken_mode is not None:
+        if (
+            self._non_spoken_mode is not None
+            or self._pending_non_spoken_continuation_mode is not None
+        ):
             return {
                 "status": "unavailable",
                 "reason": "unsupported_open_span",
-                "stream_kind": self._non_spoken_mode,
+                "stream_kind": (
+                    self._non_spoken_mode
+                    or self._pending_non_spoken_continuation_mode
+                ),
             }
         if (
             self.tts_past_key_values is not None

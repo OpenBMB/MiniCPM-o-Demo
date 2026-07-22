@@ -34,6 +34,10 @@ class FcGenerationProtocolOutput(BaseModel):
 
     kind: Literal["protocol"] = "protocol"
     semantic_key: str = Field(..., min_length=1)
+    deferred_model_feed: bool = Field(
+        False,
+        description="Whether this protocol token enters model KV at next Unit prefill",
+    )
 
 
 FcGenerationStepOutput = Annotated[
@@ -57,6 +61,23 @@ class FcViewGenerationStep(BaseModel):
     stream_id: str
     track: FcGenerationTrack
     output: FcGenerationStepOutput
+
+
+class FcGenerationWarning(BaseModel):
+    """Non-fatal public warning produced at a lossy text stream boundary."""
+
+    code: Literal["incomplete_bpe_at_stream_end"]
+    stream_id: str
+    track: FcGenerationTrack
+    reason: str
+    message: str
+
+
+class FcGenerationStreamTerminationResult(BaseModel):
+    """View result for an externally-triggered stream boundary."""
+
+    generation_steps: List[FcViewGenerationStep] = Field(default_factory=list)
+    warnings: List[FcGenerationWarning] = Field(default_factory=list)
 
 
 class NonSpokenStepGenerationFlag(str, Enum):
@@ -180,10 +201,15 @@ class FcDuplexStepResult(BaseModel):
     closed_spans: List[FcClosedSpan] = Field(default_factory=list, description="Spans closed by this step")
     text: str = Field("", description="BPE-merged decode of token_ids")
     text_delta: str = Field("", description="Safe incremental Unicode produced by View")
+    span_started: Optional[Literal["think", "tool_call"]] = Field(
+        None,
+        description="Semantic span created by this View step, including implicit post-budget continuation",
+    )
     generation_steps: List[FcViewGenerationStep] = Field(
         default_factory=list,
         description="Per-token View steps used by resumable generation logging",
     )
+    warnings: List[FcGenerationWarning] = Field(default_factory=list)
     audio_waveform: Optional[Any] = Field(None, description="Generated 24kHz audio waveform, if requested")
     audio_sample_rate: Optional[int] = Field(None, description="Sample rate of audio_waveform")
     n_tts_tokens: int = Field(0, description="Number of generated TTS audio tokens")
@@ -202,6 +228,7 @@ class FcSpokenGenerateResult(BaseModel):
         default_factory=list,
         description="Per-token View steps used by resumable generation logging",
     )
+    warnings: List[FcGenerationWarning] = Field(default_factory=list)
     spoken_turn_eos: bool = Field(False, description="Whether this unit ended the spoken turn")
     audio_waveform: Optional[Any] = Field(None, description="Generated 24kHz waveform, if requested")
     audio_sample_rate: Optional[int] = Field(None, description="Sample rate of audio_waveform")

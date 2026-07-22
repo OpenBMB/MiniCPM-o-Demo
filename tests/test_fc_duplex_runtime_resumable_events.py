@@ -8,9 +8,12 @@ from typing import Any
 import pytest
 
 from core.schemas.fc_duplex import (
+    FcClosedSpan,
     FcGenerationProtocolOutput,
+    FcGenerationStreamTerminationResult,
     FcGenerationTextDeltaOutput,
     FcGenerationTextPendingOutput,
+    FcGenerationWarning,
     FcViewGenerationStep,
     NonSpokenStepGenerationFlag,
 )
@@ -87,6 +90,34 @@ class _FakeRuntimeBackend:
 
     def fc_duplex_cleanup(self) -> None:
         return
+
+    def fc_duplex_terminate_non_spoken_text_stream(
+        self,
+        *,
+        reason: str,
+    ) -> FcGenerationStreamTerminationResult:
+        return FcGenerationStreamTerminationResult(
+            generation_steps=[
+                FcViewGenerationStep(
+                    token_id=99,
+                    stream_id="think_1",
+                    track="non_spoken",
+                    output=FcGenerationProtocolOutput(
+                        semantic_key="non_spoken_budget_reached",
+                        deferred_model_feed=True,
+                    ),
+                )
+            ],
+            warnings=[
+                FcGenerationWarning(
+                    code="incomplete_bpe_at_stream_end",
+                    stream_id="think_1",
+                    track="non_spoken",
+                    reason=reason,
+                    message="文本边界包含未完成 BPE，公共 API 历史无法保证精确复现",
+                )
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -287,3 +318,121 @@ async def test_runtime_rejects_missing_or_duplicate_input_id() -> None:
     with pytest.raises(RuntimeError, match="duplicate"):
         await runtime.enqueue_audio_input(payload)
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_budget_protocol_step_and_incomplete_bpe_warning() -> None:
+    """Budget close 必须进入 canonical batch，并传输非致命 warning。"""
+
+    events: list[dict[str, Any]] = []
+
+    async def send(event_type: str, **fields: Any) -> None:
+        events.append({"type": event_type, **fields})
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_warning",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+    step = await runtime._build_deferred_budget_reached_step()
+    await runtime._emit_step_events(step, input_id="u0", unit_index=0)
+
+    batch = next(
+        event
+        for event in events
+        if event["type"] == "response.generation.step_batch"
+    )
+    output = batch["steps"][0]["output"]
+    assert output == {
+        "kind": "protocol",
+        "semantic_key": "non_spoken_budget_reached",
+        "deferred_model_feed": True,
+    }
+    warning = next(
+        event for event in events if event["type"] == "response.warning"
+    )
+    assert warning["code"] == "incomplete_bpe_at_stream_end"
+    assert warning["reason"] == "budget_reached"
+
+
+@pytest.mark.asyncio
+async def test_runtime_does_not_leak_replacement_text_after_incomplete_bpe_warning() -> None:
+    """Closed-span fallback 不得在 warning 后重新输出 lossy U+FFFD。"""
+
+    events: list[dict[str, Any]] = []
+
+    async def send(event_type: str, **fields: Any) -> None:
+        events.append({"type": event_type, **fields})
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_lossy",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+    await runtime._begin_block("think", input_id="u0")
+    step = SimpleNamespace(
+        token_ids=[],
+        text_delta="",
+        generation_steps=[],
+        warnings=[
+            FcGenerationWarning(
+                code="incomplete_bpe_at_stream_end",
+                stream_id="think_1",
+                track="non_spoken",
+                reason="think_end",
+                message="文本边界包含未完成 BPE，公共 API 历史无法保证精确复现",
+            )
+        ],
+        close_reason=None,
+        terminated=False,
+        closed_spans=[FcClosedSpan(type="think", text="\ufffd")],
+    )
+
+    await runtime._emit_step_events(step, input_id="u0", unit_index=0)
+
+    assert any(event["type"] == "response.warning" for event in events)
+    assert any(event["type"] == "response.think.end" for event in events)
+    assert not any(
+        event["type"] == "response.think.delta"
+        and "\ufffd" in str(event.get("delta") or "")
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_detached_queue_runtime_error_invokes_session_fatal_callback() -> None:
+    """后台 Unit 处理异常必须通知并关闭所属 Session，不能只留 task exception。"""
+
+    fatal_errors: list[Exception] = []
+    backend = _FakeRuntimeBackend()
+
+    def fail_spoken(**_: Any) -> Any:
+        raise RuntimeError("listen before spoken_turn_eos")
+
+    backend.fc_duplex_spoken_generate = fail_spoken  # type: ignore[method-assign]
+
+    async def send(_: str, **__: Any) -> None:
+        return
+
+    async def on_fatal(error: Exception) -> None:
+        fatal_errors.append(error)
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_fatal",
+        backend=backend,
+        send=send,
+        on_fatal=on_fatal,
+    )
+    await runtime.enqueue_audio_input(
+        {
+            "input_id": "u0",
+            "audio_base64": "AAAAAA==",
+            "sample_rate": 16000,
+        }
+    )
+    assert runtime._queue_worker is not None
+    await runtime._queue_worker
+
+    assert len(fatal_errors) == 1
+    assert "listen before spoken_turn_eos" in str(fatal_errors[0])
+    assert runtime._closed is True

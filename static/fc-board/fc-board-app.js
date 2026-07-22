@@ -388,6 +388,9 @@ function applyApiEvent(event) {
     case 'session.resume.failed':
       setStatus(`Resume failed: ${event.code || 'unknown'}`);
       return;
+    case 'response.warning':
+      setStatus(`Warning: ${event.message || event.code || 'unknown'}`);
+      return;
     case 'session.closed':
       setWsState('closed');
       releaseMicLive('closed');
@@ -404,26 +407,38 @@ function applyApiEvent(event) {
       handleUnitCheckpoint(event);
       return;
     case 'response.think.begin':
-      beginNonSpokenBlock({ block_id: blockIdFor(event, 'think'), block_kind: 'think' });
+      activeNonSpokenBlockId = blockIdFor(event, 'think');
+      beginNonSpokenBlock({ block_id: activeNonSpokenBlockId, block_kind: 'think' });
       return;
     case 'response.think.delta':
       appendNonSpokenDelta({ block_id: blockIdFor(event, 'think'), step_text: event.delta || '' });
       return;
     case 'response.think.end':
       closeNonSpokenBlock({ block_id: blockIdFor(event, 'think'), block_kind: 'think' });
+      activeNonSpokenBlockId = null;
       return;
     case 'response.tool_call.args.begin':
       toolCallBlocks.set(event.tool_call_id, blockIdFor(event, 'tool_call'));
-      beginNonSpokenBlock({ block_id: toolCallBlocks.get(event.tool_call_id), block_kind: 'tool_call' });
+      activeNonSpokenBlockId = toolCallBlocks.get(event.tool_call_id);
+      beginNonSpokenBlock({ block_id: activeNonSpokenBlockId, block_kind: 'tool_call' });
       return;
     case 'response.tool_call.args.delta':
       appendNonSpokenDelta({ block_id: blockIdFor(event, 'tool_call'), step_text: event.delta || '' });
       return;
     case 'response.tool_call.args.end':
       closeNonSpokenBlock({ block_id: blockIdFor(event, 'tool_call'), block_kind: 'tool_call' });
+      activeNonSpokenBlockId = null;
       return;
     case 'response.tool_call.args.raw':
       handleToolCallRaw(event);
+      return;
+    case 'response.tool_call.abort':
+      closeNonSpokenBlock({
+        block_id: blockIdFor(event, 'tool_call'),
+        block_kind: 'tool_call',
+      });
+      activeNonSpokenBlockId = null;
+      setStatus(`Tool call aborted: ${event.reason || 'abort'}`);
       return;
     case 'response.tool_result':
       handleToolResult(event);
@@ -469,6 +484,10 @@ function handleOutputDelta(event) {
 
 function handleSpToken(event) {
   const token = String(event.token || '');
+  if (token === 'spoken_turn_eos') {
+    if (audioPlayerReady && audioPlayer.turnActive) audioPlayer.endTurn();
+    return;
+  }
   if (['no_action', 'non_spoken_eos', 'non_spoken_budget_reached', 'non_spoken_hold', 'non_spoken_abort'].includes(token)) {
     closeActiveNonSpokenBlock();
   }
@@ -602,6 +621,7 @@ function sendDisplayObjectToolResult({ toolCallId, query, content }) {
 }
 
 function blockIdFor(event, kind) {
+  if (event.block_id) return event.block_id;
   if (kind === 'tool_call') {
     const key = event.tool_call_id || 'pending';
     if (!toolCallBlocks.has(key)) toolCallBlocks.set(key, `tool_call:${key}`);
@@ -1012,6 +1032,7 @@ function applyStreamFilter() {
 function streamEventCategory(direction, event) {
   const type = event.type || '';
   if (type === 'error' || type.endsWith('.error')) return 'error';
+  if (type === 'response.warning') return 'warning';
   if (type.startsWith('session.')) return 'session';
   if (type.startsWith('input.')) return 'input';
   if (type === 'response.generation.step_batch') return 'generation';
@@ -1053,6 +1074,9 @@ function summarizeStreamEvent(event) {
   }
   if (type === 'response.unit.committed') {
     return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · resume=${event.resume?.status || '-'}${event.resume?.reason ? ` (${event.resume.reason})` : ''}`;
+  }
+  if (type === 'response.warning') {
+    return `code=${event.code || '-'} · stream=${event.stream_id || '-'} · reason=${event.reason || '-'} · ${event.message || ''}`;
   }
   if (type.startsWith('response.tool_call')) {
     return `tool_call_id=${event.tool_call_id || '-'} · ${event.delta || formatRawForSummary(event.raw) || ''}`;

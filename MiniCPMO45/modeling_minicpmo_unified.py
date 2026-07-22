@@ -2418,6 +2418,7 @@ class MiniCPMO(BaseMiniCPMO):
         sample_rate: int = 16000,
         spoken_token_ids: list[int],
         non_spoken_token_ids: list[int],
+        deferred_non_spoken_close: bool = False,
     ) -> dict:
         """Deterministically replay one safe completed FC Duplex Unit."""
 
@@ -2428,6 +2429,7 @@ class MiniCPMO(BaseMiniCPMO):
             sample_rate=sample_rate,
             spoken_token_ids=spoken_token_ids,
             non_spoken_token_ids=non_spoken_token_ids,
+            deferred_non_spoken_close=deferred_non_spoken_close,
         )
 
     def fc_duplex_decode_output_ids(self, output_ids=None, tools=None) -> dict:

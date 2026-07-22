@@ -207,6 +207,7 @@ class BackendProtocolSession:
             session_id=self.session_id,
             backend=self.backend,
             send=self.send,
+            on_fatal=self._handle_fc_runtime_fatal,
         )
         await self._fc_runtime.resume(params)
         self.initialized = True
@@ -269,12 +270,30 @@ class BackendProtocolSession:
                     await asyncio.to_thread(self.backend.duplex_cleanup)
         await self.state.forget(self.session_id)
 
+    async def _handle_fc_runtime_fatal(self, error: Exception) -> None:
+        """Close the protocol connection from the detached FC queue worker."""
+
+        if self.closed:
+            return
+        self.closed = True
+        with suppress(Exception):
+            await self.send(
+                "session.closed",
+                session_id=self.session_id,
+                reason="backend_error",
+                diagnostic={"message": str(error)},
+            )
+        with suppress(Exception):
+            await self.ws.close(code=1011, reason="backend_error")
+        await self.state.forget(self.session_id)
+
     async def _init_duplex(self, params: Dict[str, Any]) -> None:
         if fc_duplex_enabled(params):
             self._fc_runtime = FcDuplexSessionRuntime(
                 session_id=self.session_id,
                 backend=self.backend,
                 send=self.send,
+                on_fatal=self._handle_fc_runtime_fatal,
             )
             await self._fc_runtime.prepare(params)
             return

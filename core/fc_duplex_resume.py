@@ -65,6 +65,7 @@ class FcDuplexResumeUnitPlan(BaseModel):
     tool_result_payloads: list[dict[str, Any]] = Field(default_factory=list)
     spoken_token_ids: list[int] = Field(default_factory=list)
     non_spoken_token_ids: list[int] = Field(default_factory=list)
+    deferred_non_spoken_close: bool = False
 
 
 class FcDuplexResumePlan(BaseModel):
@@ -93,6 +94,7 @@ class _StepSlot:
     stream_id: str
     track: Literal["spoken", "non_spoken"]
     token_id: int | None = None
+    deferred_model_feed: bool = False
 
 
 def _resume_error(
@@ -240,6 +242,10 @@ def build_fc_duplex_resume_plan(
     last_step_unit_index = -1
     maximum_batch_index = -1
     maximum_stream_sequence = 0
+    active_spoken_stream_id: str | None = None
+    pending_spoken_slot_eos_stream_id: str | None = None
+    active_non_spoken_stream: tuple[str, str] | None = None
+    pending_non_spoken_continuation_kind: str | None = None
     target_checkpoint: dict[str, Any] | None = None
 
     for event in history[1:]:
@@ -375,9 +381,43 @@ def build_fc_duplex_resume_plan(
             step_slots[step_index] = slot
 
             if kind == "text_pending":
+                if (
+                    track == "non_spoken"
+                    and active_non_spoken_stream is None
+                    and pending_non_spoken_continuation_kind is not None
+                ):
+                    active_non_spoken_stream = (
+                        stream_id,
+                        pending_non_spoken_continuation_kind,
+                    )
+                    pending_non_spoken_continuation_kind = None
+                if (
+                    track == "spoken"
+                    and active_spoken_stream_id != stream_id
+                ) or (
+                    track == "non_spoken"
+                    and (
+                        active_non_spoken_stream is None
+                        or active_non_spoken_stream[0] != stream_id
+                    )
+                ):
+                    raise _resume_error(
+                        "incomplete_event_history",
+                        f"ordinary step 没有匹配的 active stream: "
+                        f"track={track}, stream_id={stream_id}",
+                    )
                 continue
             if kind == "protocol":
                 semantic_key = str(output.get("semantic_key") or "")
+                deferred_model_feed = bool(
+                    output.get("deferred_model_feed", False)
+                )
+                if deferred_model_feed and semantic_key != "non_spoken_budget_reached":
+                    raise _resume_error(
+                        "incomplete_event_history",
+                        "deferred_model_feed 只允许用于 "
+                        "non_spoken_budget_reached",
+                    )
                 try:
                     slot.token_id = registry.get(O5SpecialTokenKey(semantic_key)).token_id
                 except (KeyError, ValueError) as exc:
@@ -385,6 +425,99 @@ def build_fc_duplex_resume_plan(
                         "incomplete_event_history",
                         f"未知 protocol semantic key: {semantic_key}",
                     ) from exc
+                slot.deferred_model_feed = deferred_model_feed
+                if track == "spoken":
+                    if semantic_key == "speak":
+                        if pending_spoken_slot_eos_stream_id is not None:
+                            raise _resume_error(
+                                "incomplete_event_history",
+                                "spoken_turn_eos 后缺少 synthetic spoken_slot_eos",
+                            )
+                        if active_spoken_stream_id is None:
+                            active_spoken_stream_id = stream_id
+                        elif active_spoken_stream_id != stream_id:
+                            raise _resume_error(
+                                "incomplete_event_history",
+                                "spoken continuation 改变了 stream_id",
+                            )
+                    elif semantic_key == "listen":
+                        if (
+                            active_spoken_stream_id is not None
+                            or pending_spoken_slot_eos_stream_id is not None
+                        ):
+                            raise _resume_error(
+                                "incomplete_event_history",
+                                "active spoken turn 在 turn_eos 前出现 listen",
+                            )
+                    elif semantic_key in {"spoken_slot_eos", "tts_pad"}:
+                        if semantic_key == "spoken_slot_eos" and (
+                            pending_spoken_slot_eos_stream_id == stream_id
+                        ):
+                            pending_spoken_slot_eos_stream_id = None
+                        elif active_spoken_stream_id != stream_id:
+                            raise _resume_error(
+                                "incomplete_event_history",
+                                f"{semantic_key} 没有匹配的 active spoken stream",
+                            )
+                    elif semantic_key == "spoken_turn_eos":
+                        if active_spoken_stream_id != stream_id:
+                            raise _resume_error(
+                                "incomplete_event_history",
+                                "spoken_turn_eos 没有匹配的 active stream",
+                            )
+                        active_spoken_stream_id = None
+                        pending_spoken_slot_eos_stream_id = stream_id
+                else:
+                    opener_kind = {
+                        "think_start": "think",
+                        "tool_call_start": "tool_call",
+                    }.get(semantic_key)
+                    closer_kind = {
+                        "think_end": "think",
+                        "tool_call_end": "tool_call",
+                    }.get(semantic_key)
+                    if opener_kind is not None:
+                        if active_non_spoken_stream is not None:
+                            raise _resume_error(
+                                "incomplete_event_history",
+                                "nested non-spoken stream opener",
+                            )
+                        active_non_spoken_stream = (
+                            stream_id,
+                            opener_kind,
+                        )
+                        pending_non_spoken_continuation_kind = None
+                    elif closer_kind is not None:
+                        if active_non_spoken_stream != (
+                            stream_id,
+                            closer_kind,
+                        ):
+                            raise _resume_error(
+                                "incomplete_event_history",
+                                f"{semantic_key} 没有匹配的 active stream",
+                            )
+                        active_non_spoken_stream = None
+                    elif semantic_key == "non_spoken_budget_reached":
+                        if (
+                            active_non_spoken_stream is not None
+                            and active_non_spoken_stream[0] != stream_id
+                        ):
+                            raise _resume_error(
+                                "incomplete_event_history",
+                                "budget_reached 改变了 active stream_id",
+                            )
+                        if active_non_spoken_stream is not None:
+                            pending_non_spoken_continuation_kind = (
+                                active_non_spoken_stream[1]
+                            )
+                        active_non_spoken_stream = None
+                    elif semantic_key in {
+                        "no_action",
+                        "non_spoken_eos",
+                        "non_spoken_hold",
+                        "non_spoken_abort",
+                    }:
+                        pending_non_spoken_continuation_kind = None
                 continue
             if kind != "text_delta":
                 raise _resume_error(
@@ -401,6 +534,33 @@ def build_fc_duplex_resume_plan(
                     f"expected={expected_delta_index}, actual={delta_index}",
                 )
             delta_index_by_stream[stream_id] = expected_delta_index + 1
+
+            if (
+                track == "non_spoken"
+                and active_non_spoken_stream is None
+                and pending_non_spoken_continuation_kind is not None
+            ):
+                active_non_spoken_stream = (
+                    stream_id,
+                    pending_non_spoken_continuation_kind,
+                )
+                pending_non_spoken_continuation_kind = None
+
+            if (
+                track == "spoken"
+                and active_spoken_stream_id != stream_id
+            ) or (
+                track == "non_spoken"
+                and (
+                    active_non_spoken_stream is None
+                    or active_non_spoken_stream[0] != stream_id
+                )
+            ):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"text delta 没有匹配的 active stream: "
+                    f"track={track}, stream_id={stream_id}",
+                )
 
             source_step_indices = output.get("source_step_indices")
             if (
@@ -461,6 +621,16 @@ def build_fc_duplex_resume_plan(
             unit_index=through_unit_index,
             stream_id=resume_info.get("stream_id"),
             pending_from_step=resume_info.get("pending_from_step"),
+        )
+    if (
+        active_spoken_stream_id is not None
+        or pending_spoken_slot_eos_stream_id is not None
+        or active_non_spoken_stream is not None
+        or pending_non_spoken_continuation_kind is not None
+    ):
+        raise _resume_error(
+            "incomplete_event_history",
+            "available checkpoint 仍有 active semantic stream",
         )
 
     last_step_index = int(target_checkpoint.get("last_step_index", -1))
@@ -535,6 +705,12 @@ def build_fc_duplex_resume_plan(
                 and slot.track == "non_spoken"
                 and slot.token_id is not None
             ],
+            deferred_non_spoken_close=any(
+                slot.unit_index == unit_index
+                and slot.track == "non_spoken"
+                and slot.deferred_model_feed
+                for slot in step_slots.values()
+            ),
         )
         for unit_index in range(expected_unit_count)
     ]

@@ -378,6 +378,12 @@ class PyTorchBackend:
         fc_view = self.processor.set_fc_duplex_mode()
         return fc_view.resume_boundary_status()
 
+    def fc_duplex_terminate_non_spoken_text_stream(self, *, reason: str) -> Any:
+        """Terminate one View text stream without advancing model/KV state."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.terminate_non_spoken_text_stream(reason)
+
     def fc_duplex_resume_identity(self) -> Dict[str, Any]:
         """Return current model/tokenizer identity for public resume metadata."""
 
@@ -393,6 +399,7 @@ class PyTorchBackend:
         sample_rate: int,
         spoken_token_ids: List[int],
         non_spoken_token_ids: List[int],
+        deferred_non_spoken_close: bool,
     ) -> Any:
         """Deterministically feed one historical FC Duplex Unit."""
 
@@ -404,6 +411,7 @@ class PyTorchBackend:
             sample_rate=sample_rate,
             spoken_token_ids=spoken_token_ids,
             non_spoken_token_ids=non_spoken_token_ids,
+            deferred_non_spoken_close=deferred_non_spoken_close,
         )
 
     def fc_duplex_restore_generation_stream_sequence(

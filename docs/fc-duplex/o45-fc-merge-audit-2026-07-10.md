@@ -250,3 +250,38 @@ piece = stream.step(backend_tokenizer, token_id)   # backend_tokenizer = fc_dupl
   - 点击后模拟网络断连，使用浏览器保存的 public history 重建 Session，并继续麦克风输入。
 - 部署脚本 `scripts/start_fc_resume_demo_deploy.sh` 从本机已认证 frpc 配置派生单一
   proxy，不把 auth token 写入仓库；当前 remote port 为 `7001`。
+
+## 2026-07-22：跨 Unit stream 生命周期修正
+
+公网 Demo 的真实 27-Unit 会话暴露了两个错误假设：
+
+1. View 把每个 Unit 重复出现的 `speak` 当成新 spoken turn，导致 active turn 上再次
+   `speak` 抛异常。
+2. `non_spoken_budget_reached` 被当作永久 resume 污染点，导致 Unit 5 后直到
+   Unit 25 都显示 `unsupported_deferred_close`。
+
+最终规则：
+
+- Spoken decoder 生命周期是 turn：重复 `speak` 复用；`spoken_slot_eos` 只结束 Unit
+  slot；`spoken_turn_eos` 结束 turn；active turn 遇 `listen` 立即 RuntimeError 并
+  fatal 关闭 Session。
+- Think/tool-call decoder 由 opener 创建，由 matching end 或 budget close 销毁。
+- Budget 后模型可能直接继续 ordinary token、不重复 opener；View 和 capability 继承
+  前一 kind，但创建新的 decoder/stream_id。
+- Stream 结束仍有 incomplete BPE 时只发送 `response.warning`，不发送 `U+FFFD`，
+  checkpoint 标记不可安全恢复。
+- Budget close 的 protocol token/slot end/Unit end 仍按 live 行为延迟到下一 prefill
+  feed；仅当前 Unit unavailable，后续 checkpoint 可恢复 available。
+
+验证：
+
+- CPU 定向 + schema 回归覆盖 spoken/listen、budget/end、pending warning、fatal callback、
+  semantic canonicalizer、deferred replay 和 UI block lifecycle。
+- `tasks/607731` 首轮真实 GPU 回归发现 budget 后模型省略 opener、直接继续 ordinary
+  token；据此增加 implicit continuation kind。
+- `tasks/607812` 最终通过：
+  - 回放原 `sess_fc820332f0c7` 共 27 个 checkpoint；
+  - 首个 deferred close 在 Unit 5；
+  - 后续 checkpoint 重新 available；
+  - 无 backend_error、无公共 `U+FFFD`；
+  - 基础 live→resume trace 仍满足 252 output IDs、KV length 322、Unit index 1 等价。

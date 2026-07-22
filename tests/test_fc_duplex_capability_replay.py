@@ -22,6 +22,7 @@ def test_replay_completed_unit_feeds_expected_slot_skeleton_without_sampling() -
         NON_SPOKEN_EOS="non_spoken_eos",
         NON_SPOKEN_HOLD="non_spoken_hold",
         NON_SPOKEN_ABORT="non_spoken_abort",
+        NON_SPOKEN_BUDGET_REACHED="non_spoken_budget_reached",
     )
     token_ids = {
         "listen": 1,
@@ -34,6 +35,7 @@ def test_replay_completed_unit_feeds_expected_slot_skeleton_without_sampling() -
         "non_spoken_hold": 8,
         "non_spoken_abort": 9,
         "ai_non_spoken_slot_start": 10,
+        "non_spoken_budget_reached": 11,
     }
     capability._current_unit_idx = 0
     capability._current_unit_info = None
@@ -42,6 +44,11 @@ def test_replay_completed_unit_feeds_expected_slot_skeleton_without_sampling() -
     capability._spoken_logits = None
     capability._non_spoken_logits = None
     capability._non_spoken_mode = None
+    capability._pending_prefill_close_ids = []
+    capability._pending_prefill_unit_info = None
+    capability._think_buf = []
+    capability._tool_call_buf = []
+    capability.output_ids = []
     capability.fed_ids = []
 
     def sid(self: Any, key: str) -> int:
@@ -94,3 +101,16 @@ def test_replay_completed_unit_feeds_expected_slot_skeleton_without_sampling() -
     assert info["is_listen"] is True
     assert info["non_spoken_terminator"] == "no_action"
     assert capability._current_unit_idx == 1
+
+    capability.replay_completed_unit(
+        spoken_token_ids=[token_ids["listen"]],
+        non_spoken_token_ids=[token_ids["non_spoken_budget_reached"]],
+        deferred_non_spoken_close=True,
+    )
+
+    assert capability._pending_prefill_close_ids == [
+        token_ids["non_spoken_budget_reached"],
+        token_ids["ai_non_spoken_slot_end"],
+        token_ids["unit_end"],
+    ]
+    assert capability.output_ids == capability._pending_prefill_close_ids
