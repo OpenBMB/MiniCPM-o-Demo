@@ -209,6 +209,14 @@ def build_fc_duplex_resume_plan(
             text delta 无法精确映射回 generation steps。
     """
 
+    if protocol_version == "fc-duplex-semantic-v2":
+        return _build_fc_duplex_semantic_v2_resume_plan(
+            model=model,
+            tokenizer_target=tokenizer_target,
+            tokenizer_fingerprint=tokenizer_fingerprint,
+            through_unit_index=through_unit_index,
+            history=history,
+        )
     if protocol_version != "fc-duplex-resume-v1":
         raise _resume_error(
             "model_or_tokenizer_mismatch",
@@ -893,6 +901,595 @@ def build_fc_duplex_resume_plan(
         seen_input_ids=list(input_payload_by_id),
         tool_call_count=tool_call_count,
         api_tool_call_sequence=maximum_api_tool_call_sequence,
+        session_init_payload=session_init_payload,
+        units=units,
+    )
+
+
+def _build_fc_duplex_semantic_v2_resume_plan(
+    *,
+    model: str,
+    tokenizer_target: Literal["o45_fc", "o5"],
+    tokenizer_fingerprint: dict[str, str],
+    through_unit_index: int,
+    history: list[dict[str, Any]],
+) -> FcDuplexResumePlan:
+    """Canonicalize the minimal ordered semantic-event v2 history."""
+
+    if through_unit_index < 0:
+        raise _resume_error(
+            "incomplete_event_history",
+            f"through_unit_index 必须 >= 0: {through_unit_index}",
+        )
+    if (
+        not history
+        or not isinstance(history[0], dict)
+        or history[0].get("type") != "session.init"
+    ):
+        raise _resume_error(
+            "incomplete_event_history",
+            "semantic v2 history 必须从 session.init 开始",
+        )
+    session_init_payload = dict(history[0].get("payload") or {})
+    history_target = session_init_payload.get("tokenizer_target")
+    if history_target is not None and history_target != tokenizer_target:
+        raise _resume_error(
+            "model_or_tokenizer_mismatch",
+            f"tokenizer target mismatch: {history_target} != {tokenizer_target}",
+        )
+    tokenizer = load_builtin_tokenizer(O5TokenizerID(tokenizer_target))
+    expected_fingerprint = {
+        "vocab_hash": tokenizer.fingerprint.vocab_hash,
+        "merges_hash": tokenizer.fingerprint.merges_hash,
+    }
+    if tokenizer_fingerprint != expected_fingerprint:
+        raise _resume_error(
+            "model_or_tokenizer_mismatch",
+            "tokenizer fingerprint mismatch",
+        )
+    registry = O5SpecialTokenRegistry.from_tokenizer(tokenizer)
+
+    input_payload_by_id: dict[str, dict[str, Any]] = {}
+    unit_input_id: dict[int, str] = {}
+    unit_tool_events: dict[int, list[dict[str, Any]]] = {}
+    unit_commits: dict[int, dict[str, Any]] = {}
+    slots: list[_StepSlot] = []
+    pending_slots: dict[str, list[_StepSlot]] = {}
+    tool_api_to_internal: dict[str, str] = {}
+    tool_result_content_by_api: dict[str, str] = {}
+    pending_tool_started: list[dict[str, Any]] = []
+    pending_tool_error: list[dict[str, Any]] = []
+    pending_tool_response: list[dict[str, Any]] = []
+    pending_valid_tool_calls: set[str] = set()
+    tool_call_count = 0
+    maximum_api_tool_sequence = 0
+    expected_started_unit = 0
+    expected_committed_unit = 0
+    active_think = False
+    think_parts: list[str] = []
+    active_tool_call_id: str | None = None
+    tool_parts: list[str] = []
+    spoken_turn_active = False
+    spoken_parts: list[str] = []
+    spoken_started_units: set[int] = set()
+    history_unsafe = False
+
+    def append_token(
+        *,
+        unit_index: int,
+        track: Literal["spoken", "non_spoken"],
+        token_id: int,
+    ) -> None:
+        slots.append(
+            _StepSlot(
+                step_index=len(slots),
+                unit_index=unit_index,
+                stream_id=track,
+                track=track,
+                token_id=token_id,
+            )
+        )
+
+    def consume_text_steps(
+        *,
+        unit_index: int,
+        track: Literal["spoken", "non_spoken"],
+        decoder_key: str,
+        raw_steps: Any,
+        aggregate_parts: list[str],
+    ) -> None:
+        nonlocal history_unsafe
+        if not isinstance(raw_steps, list):
+            raise _resume_error(
+                "incomplete_event_history",
+                "semantic delta.steps 必须是 list",
+            )
+        pending = pending_slots.setdefault(decoder_key, [])
+        for raw_step in raw_steps:
+            if not isinstance(raw_step, dict):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"semantic text step 必须是 object: {raw_step!r}",
+                )
+            slot = _StepSlot(
+                step_index=len(slots),
+                unit_index=unit_index,
+                stream_id=decoder_key,
+                track=track,
+            )
+            slots.append(slot)
+            pending.append(slot)
+            kind = raw_step.get("kind")
+            if kind == "pending":
+                continue
+            if kind != "text":
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"未知 semantic text step: {kind}",
+                )
+            text = raw_step.get("text")
+            source_steps = int(raw_step.get("source_steps", 0) or 0)
+            if not isinstance(text, str) or not text or source_steps != len(pending):
+                raise _resume_error(
+                    "text_delta_roundtrip_mismatch",
+                    "semantic text/source_steps 不匹配",
+                )
+            recovered_ids = tokenizer.encode_ordinary(text)
+            if len(recovered_ids) != source_steps:
+                raise _resume_error(
+                    "text_delta_roundtrip_mismatch",
+                    "semantic text re-encode 数量不匹配",
+                )
+            for pending_slot, token_id in zip(pending, recovered_ids):
+                pending_slot.token_id = token_id
+            pending.clear()
+            aggregate_parts.append(text)
+
+    def require_active_unit(event: dict[str, Any]) -> int:
+        """Require semantic output to belong to the started, uncommitted Unit."""
+
+        unit_index = int(event.get("unit_index", -1))
+        if (
+            unit_index != expected_committed_unit
+            or unit_index not in unit_input_id
+            or unit_index in unit_commits
+        ):
+            raise _resume_error(
+                "incomplete_event_history",
+                f"semantic event 不属于当前 active Unit: {unit_index}",
+            )
+        return unit_index
+
+    for event in history[1:]:
+        if not isinstance(event, dict):
+            raise _resume_error(
+                "incomplete_event_history",
+                f"history event 必须是 object: {event!r}",
+            )
+        event_type = str(event.get("type") or "")
+        if event_type == "input.append":
+            payload = dict(event.get("input") or {})
+            input_id = str(payload.get("input_id") or "")
+            if not input_id or input_id in input_payload_by_id:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"input.append 缺少唯一 input_id: {input_id!r}",
+                )
+            _validate_replay_audio(payload, input_id=input_id)
+            input_payload_by_id[input_id] = payload
+            continue
+        if event_type == "input.tool_result":
+            api_id = str(event.get("tool_call_id") or "")
+            if api_id not in pending_valid_tool_calls:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"tool result 无 pending call: {api_id}",
+                )
+            tool_result_content_by_api[api_id] = _tool_result_content(
+                event.get("content", event.get("contents"))
+            )
+            pending_valid_tool_calls.remove(api_id)
+            pending_tool_response.append(
+                {
+                    "type": "tool_response",
+                    "call_id": tool_api_to_internal[api_id],
+                    "content": tool_result_content_by_api[api_id],
+                }
+            )
+            continue
+        if event_type == "response.unit.started":
+            unit_index = int(event.get("unit_index", -1))
+            if (
+                unit_index != expected_started_unit
+                or unit_index != expected_committed_unit
+            ):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"Unit started 不连续: {unit_index}",
+                )
+            expected_started_unit += 1
+            input_id = str(event.get("input_id") or "")
+            if input_id not in input_payload_by_id:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"Unit started 引用未知 input_id: {input_id}",
+                )
+            expected_refs: list[dict[str, Any]] = []
+            for internal_event in [
+                *pending_tool_started,
+                *pending_tool_error,
+                *pending_tool_response,
+            ]:
+                attributed_api_id = next(
+                    (
+                        api
+                        for api, internal in tool_api_to_internal.items()
+                        if internal == internal_event["call_id"]
+                    ),
+                    None,
+                )
+                if attributed_api_id is None:
+                    raise _resume_error(
+                        "incomplete_event_history",
+                        "internal tool event 无 API id",
+                    )
+                expected_refs.append(
+                    {
+                        "type": (
+                            "tool_result"
+                            if internal_event["type"] == "tool_response"
+                            else internal_event["type"]
+                        ),
+                        "tool_call_id": attributed_api_id,
+                    }
+                )
+            if list(event.get("tool_events") or []) != expected_refs:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"Unit {unit_index} tool_events 与实际 history 不一致",
+                )
+            unit_input_id[unit_index] = input_id
+            unit_tool_events[unit_index] = [
+                *pending_tool_started,
+                *pending_tool_error,
+                *pending_tool_response,
+            ]
+            pending_tool_started = []
+            pending_tool_error = []
+            pending_tool_response = []
+            continue
+        if event_type == "response.think.begin":
+            if active_think:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    "nested think.begin",
+                )
+            unit_index = require_active_unit(event)
+            active_think = True
+            think_parts = []
+            append_token(
+                unit_index=unit_index,
+                track="non_spoken",
+                token_id=registry.get(O5SpecialTokenKey.THINK_START).token_id,
+            )
+            continue
+        if event_type == "response.think.delta":
+            if not active_think:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    "think.delta without begin",
+                )
+            consume_text_steps(
+                unit_index=require_active_unit(event),
+                track="non_spoken",
+                decoder_key="think",
+                raw_steps=event.get("steps"),
+                aggregate_parts=think_parts,
+            )
+            continue
+        if event_type == "response.think.end":
+            if not active_think:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    "think.end without begin",
+                )
+            if "".join(think_parts) != str(event.get("full_text") or ""):
+                raise _resume_error(
+                    "text_delta_roundtrip_mismatch",
+                    "think streaming/full mismatch",
+                )
+            append_token(
+                unit_index=require_active_unit(event),
+                track="non_spoken",
+                token_id=registry.get(O5SpecialTokenKey.THINK_END).token_id,
+            )
+            active_think = False
+            think_parts = []
+            pending_slots.pop("think", None)
+            continue
+        if event_type == "response.tool_call.begin":
+            if active_tool_call_id is not None:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    "nested tool_call.begin",
+                )
+            api_id = str(event.get("tool_call_id") or "")
+            match = re.fullmatch(r"tc_(\d+)", api_id)
+            if not match or api_id in tool_api_to_internal:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"非法 tool_call_id: {api_id}",
+                )
+            maximum_api_tool_sequence = max(
+                maximum_api_tool_sequence,
+                int(match.group(1)),
+            )
+            tool_call_count += 1
+            tool_api_to_internal[api_id] = f"fc_call_{tool_call_count:06d}"
+            active_tool_call_id = api_id
+            tool_parts = []
+            append_token(
+                unit_index=require_active_unit(event),
+                track="non_spoken",
+                token_id=registry.get(O5SpecialTokenKey.TOOL_CALL_START).token_id,
+            )
+            continue
+        if event_type == "response.tool_call.delta":
+            api_id = str(event.get("tool_call_id") or "")
+            if api_id != active_tool_call_id:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    "tool_call.delta 无 active call",
+                )
+            consume_text_steps(
+                unit_index=require_active_unit(event),
+                track="non_spoken",
+                decoder_key=f"tool:{api_id}",
+                raw_steps=event.get("steps"),
+                aggregate_parts=tool_parts,
+            )
+            continue
+        if event_type == "response.tool_call.done":
+            api_id = str(event.get("tool_call_id") or "")
+            if api_id != active_tool_call_id:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    "tool_call.done 无 active call",
+                )
+            full_text = str(event.get("full_text") or "")
+            if full_text and "".join(tool_parts) != full_text:
+                raise _resume_error(
+                    "text_delta_roundtrip_mismatch",
+                    "tool-call streaming/full mismatch",
+                )
+            append_token(
+                unit_index=require_active_unit(event),
+                track="non_spoken",
+                token_id=registry.get(O5SpecialTokenKey.TOOL_CALL_END).token_id,
+            )
+            internal_id = tool_api_to_internal[api_id]
+            pending_tool_started.append(
+                {"type": "tool_started", "call_id": internal_id}
+            )
+            if event.get("error"):
+                pending_tool_error.append(
+                    {
+                        "type": "tool_response",
+                        "call_id": internal_id,
+                        "content": (
+                            "工具调用解析失败，无法执行该工具调用。错误信息："
+                            + str(event["error"])
+                        ),
+                    }
+                )
+            else:
+                pending_valid_tool_calls.add(api_id)
+            active_tool_call_id = None
+            tool_parts = []
+            pending_slots.pop(f"tool:{api_id}", None)
+            continue
+        if event_type == "response.spoken.delta":
+            unit_index = require_active_unit(event)
+            if unit_index not in spoken_started_units:
+                append_token(
+                    unit_index=unit_index,
+                    track="spoken",
+                    token_id=registry.get(O5SpecialTokenKey.SPEAK).token_id,
+                )
+                spoken_started_units.add(unit_index)
+                spoken_turn_active = True
+            if event.get("steps") is not None:
+                consume_text_steps(
+                    unit_index=unit_index,
+                    track="spoken",
+                    decoder_key="spoken",
+                    raw_steps=event.get("steps"),
+                    aggregate_parts=spoken_parts,
+                )
+            continue
+        if event_type == "response.spoken.end":
+            unit_index = require_active_unit(event)
+            reason = str(event.get("reason") or "")
+            if reason == "listen":
+                if spoken_turn_active:
+                    raise _resume_error(
+                        "incomplete_event_history",
+                        "listen before spoken turn eos",
+                    )
+                append_token(
+                    unit_index=unit_index,
+                    track="spoken",
+                    token_id=registry.get(O5SpecialTokenKey.LISTEN).token_id,
+                )
+            elif reason == "tts_pad":
+                append_token(
+                    unit_index=unit_index,
+                    track="spoken",
+                    token_id=registry.get(O5SpecialTokenKey.TTS_PAD).token_id,
+                )
+            elif reason == "slot_end":
+                pass
+            elif reason == "slot_eos":
+                if not spoken_turn_active:
+                    raise _resume_error(
+                        "incomplete_event_history",
+                        "slot_eos without spoken turn",
+                    )
+                append_token(
+                    unit_index=unit_index,
+                    track="spoken",
+                    token_id=registry.get(O5SpecialTokenKey.SPOKEN_SLOT_EOS).token_id,
+                )
+            elif reason == "turn_eos":
+                if not spoken_turn_active:
+                    raise _resume_error(
+                        "incomplete_event_history",
+                        "turn_eos without spoken turn",
+                    )
+                if "".join(spoken_parts) != str(event.get("full_text") or ""):
+                    raise _resume_error(
+                        "text_delta_roundtrip_mismatch",
+                        "spoken streaming/full mismatch",
+                    )
+                append_token(
+                    unit_index=unit_index,
+                    track="spoken",
+                    token_id=registry.get(O5SpecialTokenKey.SPOKEN_TURN_EOS).token_id,
+                )
+                append_token(
+                    unit_index=unit_index,
+                    track="spoken",
+                    token_id=registry.get(O5SpecialTokenKey.SPOKEN_SLOT_EOS).token_id,
+                )
+                spoken_turn_active = False
+                spoken_parts = []
+                pending_slots.pop("spoken", None)
+            else:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"未知 spoken end reason: {reason}",
+                )
+            continue
+        if event_type == "response.warning":
+            if event.get("code") == "incomplete_bpe_at_stream_end":
+                history_unsafe = True
+            continue
+        if event_type == "response.unit.committed":
+            unit_index = int(event.get("unit_index", -1))
+            if (
+                unit_index != expected_committed_unit
+                or unit_index not in unit_input_id
+            ):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"Unit committed 不连续: {unit_index}",
+                )
+            expected_committed_unit += 1
+            reason = str(event.get("non_spoken_end") or "")
+            key_by_reason = {
+                "no_action": O5SpecialTokenKey.NO_ACTION,
+                "eos": O5SpecialTokenKey.NON_SPOKEN_EOS,
+                "budget_reached": O5SpecialTokenKey.NON_SPOKEN_BUDGET_REACHED,
+                "hold": O5SpecialTokenKey.NON_SPOKEN_HOLD,
+                "abort": O5SpecialTokenKey.NON_SPOKEN_ABORT,
+            }
+            if reason not in key_by_reason:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"未知 non_spoken_end: {reason}",
+                )
+            append_token(
+                unit_index=unit_index,
+                track="non_spoken",
+                token_id=registry.get(key_by_reason[reason]).token_id,
+            )
+            if reason == "budget_reached":
+                if active_think:
+                    pending_slots["think"] = []
+                if active_tool_call_id is not None:
+                    pending_slots[f"tool:{active_tool_call_id}"] = []
+            unit_commits[unit_index] = event
+            if unit_index == through_unit_index:
+                break
+
+    target_commit = unit_commits.get(through_unit_index)
+    if target_commit is None:
+        raise _resume_error(
+            "incomplete_event_history",
+            f"缺少目标 Unit committed: {through_unit_index}",
+        )
+    if dict(target_commit.get("resume") or {}).get("status") != "available":
+        raise _resume_error(
+            "non_resumable_text_boundary",
+            f"目标 Unit {through_unit_index} 不可恢复",
+            unit_index=through_unit_index,
+        )
+    if (
+        active_think
+        or active_tool_call_id is not None
+        or spoken_turn_active
+        or pending_valid_tool_calls
+        or pending_tool_started
+        or pending_tool_error
+        or pending_tool_response
+        or history_unsafe
+        or any(slot.token_id is None for slot in slots)
+    ):
+        raise _resume_error(
+            "non_resumable_text_boundary",
+            "available checkpoint 的 semantic history 不闭合",
+            unit_index=through_unit_index,
+        )
+    expected_units = through_unit_index + 1
+    if set(unit_input_id) != set(range(expected_units)):
+        raise _resume_error(
+            "incomplete_event_history",
+            "Unit started 不完整",
+        )
+    if set(unit_commits) != set(range(expected_units)):
+        raise _resume_error(
+            "incomplete_event_history",
+            "Unit committed 不完整",
+        )
+    units = [
+        FcDuplexResumeUnitPlan(
+            unit_index=unit_index,
+            input_payload=input_payload_by_id[unit_input_id[unit_index]],
+            tool_events=unit_tool_events.get(unit_index, []),
+            spoken_token_ids=[
+                int(slot.token_id)
+                for slot in slots
+                if slot.unit_index == unit_index
+                and slot.track == "spoken"
+                and slot.token_id is not None
+            ],
+            non_spoken_token_ids=[
+                int(slot.token_id)
+                for slot in slots
+                if slot.unit_index == unit_index
+                and slot.track == "non_spoken"
+                and slot.token_id is not None
+            ],
+            deferred_non_spoken_close=(
+                unit_commits[unit_index].get("non_spoken_end")
+                == "budget_reached"
+            ),
+        )
+        for unit_index in range(expected_units)
+    ]
+    return FcDuplexResumePlan(
+        protocol_version="fc-duplex-semantic-v2",
+        model=model,
+        tokenizer_target=tokenizer_target,
+        through_unit_index=through_unit_index,
+        next_event_index=0,
+        next_step_index=len(slots),
+        next_batch_index=0,
+        next_stream_sequence=1,
+        next_delta_index_by_stream={},
+        seen_input_ids=list(input_payload_by_id),
+        tool_call_count=tool_call_count,
+        api_tool_call_sequence=maximum_api_tool_sequence,
         session_init_payload=session_init_payload,
         units=units,
     )

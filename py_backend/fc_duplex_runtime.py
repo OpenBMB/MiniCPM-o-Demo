@@ -135,10 +135,15 @@ class FcDuplexSessionRuntime:
         self._generation_batch_stream_id: Optional[str] = None
         self._generation_batch_track: Optional[str] = None
         self._generation_batch_input_id: Optional[str] = None
+        self._generation_batch_unit_index: Optional[int] = None
         self._generation_batch_started_at: Optional[float] = None
         self._generation_batch_steps: List[Dict[str, Any]] = []
         self._unit_has_deferred_close = False
+        self._unit_non_spoken_end: Optional[str] = None
         self._resume_identity: Dict[str, Any] = {}
+        self._emit_debug_events = (
+            os.environ.get("FC_DUPLEX_DEBUG_EVENTS", "0") == "1"
+        )
         audio_dump_root = os.environ.get("FC_DUPLEX_AUDIO_DUMP_DIR")
         if audio_dump_root:
             self._audio_dump_session_dir = Path(audio_dump_root) / self.session_id
@@ -341,7 +346,12 @@ class FcDuplexSessionRuntime:
         if not internal_id:
             raise RuntimeError(f"unknown tool_call_id: {api_id}")
         self._pending_tool_responses.append(
-            FcToolResponse(call_id=internal_id, content=_contents_to_text(payload.get("contents")))
+            FcToolResponse(
+                call_id=internal_id,
+                content=_contents_to_text(
+                    payload.get("content", payload.get("contents"))
+                ),
+            )
         )
 
     async def queue_tool_result_delta(self, payload: Dict[str, Any]) -> None:
@@ -422,6 +432,7 @@ class FcDuplexSessionRuntime:
         unit_index = self._audio_dump_unit_seq
         self._audio_dump_unit_seq += 1
         self._unit_has_deferred_close = False
+        self._unit_non_spoken_end = None
 
         if self._audio_dump_session_dir is not None:
             self._maybe_dump_user_wav(
@@ -479,7 +490,7 @@ class FcDuplexSessionRuntime:
         if self._unit_has_deferred_close:
             resume_status = {
                 "status": "unavailable",
-                "reason": "unsupported_deferred_close",
+                "reason": "deferred_close",
             }
         pending_candidates = [
             (stream_id, step_indexes[0])
@@ -499,15 +510,10 @@ class FcDuplexSessionRuntime:
             }
         await self._send(
             "response.unit.committed",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            input_id=input_id,
-            event_index=self._generation_event_index,
             unit_index=unit_index,
-            last_step_index=self._generation_step_index - 1,
+            non_spoken_end=self._unit_non_spoken_end,
             resume=resume_status,
         )
-        self._generation_event_index += 1
 
     async def close(self) -> None:
         self._closed = True
@@ -718,6 +724,8 @@ class FcDuplexSessionRuntime:
         step_durations_ms: List[float],
         pre_non_spoken_elapsed_ms: float,
     ) -> None:
+        if not self._emit_debug_events:
+            return
         await self._send(
             "response.debug",
             session_id=self.session_id,
@@ -752,22 +760,20 @@ class FcDuplexSessionRuntime:
                     f"{internal_call_id!r}"
                 )
             public_event = {
-                "type": str(event.get("type") or "tool_response"),
+                "type": (
+                    "tool_result"
+                    if str(event.get("type") or "") == "tool_response"
+                    else str(event.get("type") or "tool_result")
+                ),
                 "tool_call_id": api_call_id,
             }
-            if "content" in event:
-                public_event["content"] = event["content"]
             public_events.append(public_event)
         await self._send(
-            "response.unit.input_events",
-            session_id=self.session_id,
-            response_id=self._response_id,
+            "response.unit.started",
             input_id=input_id,
-            event_index=self._generation_event_index,
             unit_index=unit_index,
-            events=public_events,
+            tool_events=public_events,
         )
-        self._generation_event_index += 1
 
     async def _record_generation_steps(
         self,
@@ -776,7 +782,7 @@ class FcDuplexSessionRuntime:
         unit_index: int,
         input_id: Optional[str],
     ) -> None:
-        """Convert View steps into canonical public steps and batch them."""
+        """Project View steps directly into minimal semantic API delta events."""
 
         for view_step in generation_steps:
             stream_id = str(getattr(view_step, "stream_id", "") or "")
@@ -785,24 +791,6 @@ class FcDuplexSessionRuntime:
                 raise RuntimeError(
                     f"invalid FC View generation step stream/track: {stream_id}/{track}"
                 )
-            if (
-                self._generation_batch_steps
-                and (
-                    stream_id != self._generation_batch_stream_id
-                    or track != self._generation_batch_track
-                    or input_id != self._generation_batch_input_id
-                )
-            ):
-                await self._flush_generation_batch()
-
-            if not self._generation_batch_steps:
-                self._generation_batch_stream_id = stream_id
-                self._generation_batch_track = track
-                self._generation_batch_input_id = input_id
-                self._generation_batch_started_at = time.perf_counter()
-
-            step_index = self._generation_step_index
-            self._generation_step_index += 1
             output_model = getattr(view_step, "output", None)
             if output_model is None:
                 output: Dict[str, Any] = {}
@@ -811,62 +799,94 @@ class FcDuplexSessionRuntime:
             else:
                 output = dict(output_model)
             kind = str(output.get("kind") or "")
-            if kind in {"text_pending", "text_delta"}:
+            if kind == "protocol":
+                await self._flush_generation_batch()
+                continue
+            if kind not in {"text_pending", "text_delta"}:
+                raise RuntimeError(
+                    f"unsupported FC View generation step kind: {kind}"
+                )
+            if (
+                self._generation_batch_steps
+                and (
+                    stream_id != self._generation_batch_stream_id
+                    or track != self._generation_batch_track
+                    or unit_index != self._generation_batch_unit_index
+                )
+            ):
+                await self._flush_generation_batch()
+            if not self._generation_batch_steps:
+                self._generation_batch_stream_id = stream_id
+                self._generation_batch_track = track
+                self._generation_batch_input_id = input_id
+                self._generation_batch_unit_index = unit_index
+                self._generation_batch_started_at = time.perf_counter()
+
+            self._generation_step_index += 1
+            public_step: Dict[str, Any]
+            if kind == "text_pending":
+                self._pending_text_steps_by_stream.setdefault(
+                    stream_id, []
+                ).append(self._generation_step_index)
+                public_step = {"kind": "pending"}
+            else:
+                source_steps = int(
+                    output.get("source_step_count", 0) or 0
+                )
                 pending_steps = self._pending_text_steps_by_stream.setdefault(
                     stream_id, []
                 )
-                pending_steps.append(step_index)
-                if kind == "text_delta":
-                    source_step_count = int(output.pop("source_step_count", 0) or 0)
-                    if source_step_count <= 0 or len(pending_steps) != source_step_count:
-                        raise RuntimeError(
-                            "FC View text delta source step count mismatch: "
-                            f"stream={stream_id}, pending={pending_steps}, "
-                            f"source_step_count={source_step_count}"
-                        )
-                    output["delta_index"] = self._delta_index_by_stream.get(stream_id, 0)
-                    self._delta_index_by_stream[stream_id] = output["delta_index"] + 1
-                    output["source_step_indices"] = list(pending_steps)
-                    pending_steps.clear()
-            elif kind != "protocol":
-                raise RuntimeError(f"unsupported FC View generation step kind: {kind}")
-
-            self._generation_batch_steps.append(
-                {
-                    "step_index": step_index,
-                    "unit_index": unit_index,
-                    "output": output,
+                pending_steps.append(self._generation_step_index)
+                if source_steps <= 0 or len(pending_steps) != source_steps:
+                    raise RuntimeError(
+                        "FC View text delta source step count mismatch: "
+                        f"stream={stream_id}, pending={len(pending_steps)}, "
+                        f"source_steps={source_steps}"
+                    )
+                pending_steps.clear()
+                public_step = {
+                    "kind": "text",
+                    "text": str(output.get("text") or ""),
+                    "source_steps": source_steps,
                 }
-            )
+            self._generation_batch_steps.append(public_step)
             elapsed = (
                 time.perf_counter() - self._generation_batch_started_at
                 if self._generation_batch_started_at is not None
                 else 0.0
             )
-            if kind == "protocol" or len(self._generation_batch_steps) >= 16 or elapsed >= 0.05:
+            if (
+                len(self._generation_batch_steps) >= 16
+                or elapsed >= 0.05
+            ):
                 await self._flush_generation_batch()
 
     async def _flush_generation_batch(self) -> None:
-        """Send the current canonical generation batch without changing step boundaries."""
+        """Send one semantic delta batch without redundant IDs or text copies."""
 
         if not self._generation_batch_steps:
             return
-        await self._send(
-            "response.generation.step_batch",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            input_id=self._generation_batch_input_id,
-            event_index=self._generation_event_index,
-            batch_index=self._generation_batch_index,
-            stream_id=self._generation_batch_stream_id,
-            track=self._generation_batch_track,
-            steps=list(self._generation_batch_steps),
-        )
-        self._generation_event_index += 1
+        fields: Dict[str, Any] = {
+            "unit_index": self._generation_batch_unit_index,
+            "steps": list(self._generation_batch_steps),
+        }
+        if self._generation_batch_track == "spoken":
+            event_type = "response.spoken.delta"
+        elif self._current_block_kind == "think":
+            event_type = "response.think.delta"
+        elif self._current_block_kind == "tool_call":
+            event_type = "response.tool_call.delta"
+            fields["tool_call_id"] = self._current_tool_call_id
+        else:
+            raise RuntimeError(
+                "non-spoken text delta has no active semantic message"
+            )
+        await self._send(event_type, **fields)
         self._generation_batch_index += 1
         self._generation_batch_stream_id = None
         self._generation_batch_track = None
         self._generation_batch_input_id = None
+        self._generation_batch_unit_index = None
         self._generation_batch_started_at = None
         self._generation_batch_steps = []
 
@@ -885,11 +905,9 @@ class FcDuplexSessionRuntime:
                 if hasattr(warning, "model_dump")
                 else dict(warning)
             )
+            fields.pop("stream_id", None)
             await self._send(
                 "response.warning",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
                 unit_index=unit_index,
                 **fields,
             )
@@ -904,8 +922,11 @@ class FcDuplexSessionRuntime:
         is_listen = bool(getattr(spoken, "is_listen", False))
         is_speaking = bool(getattr(spoken, "is_speaking", False))
         text = str(getattr(spoken, "spoken_text_delta", "") or "")
+        generation_steps = list(
+            getattr(spoken, "generation_steps", None) or []
+        )
         await self._record_generation_steps(
-            list(getattr(spoken, "generation_steps", None) or []),
+            generation_steps,
             unit_index=unit_index,
             input_id=input_id,
         )
@@ -914,12 +935,8 @@ class FcDuplexSessionRuntime:
             unit_index=unit_index,
             input_id=input_id,
         )
+        await self._flush_generation_batch()
         waveform = getattr(spoken, "audio_waveform", None)
-        metadata = _model_to_dict(spoken)
-        metadata.pop("audio_waveform", None)
-        metadata.pop("spoken_token_ids", None)
-        metadata.pop("generation_steps", None)
-        metadata.pop("warnings", None)
         logger.info(
             "fc_spoken input_id=%s listen=%s speaking=%s text=%r turn_eos=%s",
             input_id,
@@ -929,42 +946,47 @@ class FcDuplexSessionRuntime:
             bool(getattr(spoken, "spoken_turn_eos", False)),
         )
 
-        if is_listen:
-            await self._send_sp_token("listen", input_id=input_id)
-            await self._send(
-                "response.output.delta",
-                kind="listen",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                metrics=metadata,
-            )
-            return
-        if is_speaking:
-            await self._send_sp_token("speak", input_id=input_id)
-        if text:
-            await self._send(
-                "response.output.delta",
-                kind="text",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                text=text,
-                metrics=metadata,
-            )
         if is_speaking and waveform is not None:
             await self._send(
-                "response.output.delta",
-                kind="audio",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
+                "response.spoken.delta",
+                unit_index=unit_index,
                 audio=_audio_waveform_to_float32_base64(waveform),
-                sample_rate=int(getattr(spoken, "audio_sample_rate", None) or 24000),
-                metrics=metadata,
+                sample_rate=int(
+                    getattr(spoken, "audio_sample_rate", None) or 24000
+                ),
             )
-        if bool(getattr(spoken, "spoken_turn_eos", False)):
-            await self._send_sp_token("spoken_turn_eos", input_id=input_id)
+        elif is_speaking and not any(
+            getattr(getattr(step, "output", None), "kind", None)
+            in {"text_pending", "text_delta"}
+            for step in generation_steps
+        ):
+            await self._send(
+                "response.spoken.delta",
+                unit_index=unit_index,
+                steps=[],
+            )
+        spoken_ids = list(getattr(spoken, "spoken_token_ids", None) or [])
+        fc_capability = _resolve_fc_duplex_capability(self.backend)
+        protocol_ids = getattr(fc_capability, "ids", None) or {}
+        if is_listen:
+            reason = "listen"
+        elif bool(getattr(spoken, "spoken_turn_eos", False)):
+            reason = "turn_eos"
+        elif protocol_ids.get("tts_pad") in spoken_ids:
+            reason = "tts_pad"
+        elif protocol_ids.get("spoken_slot_eos") in spoken_ids:
+            reason = "slot_eos"
+        else:
+            reason = "slot_end"
+        end_fields: Dict[str, Any] = {
+            "unit_index": unit_index,
+            "reason": reason,
+        }
+        if reason == "turn_eos":
+            end_fields["full_text"] = str(
+                getattr(spoken, "spoken_full_text", "") or ""
+            )
+        await self._send("response.spoken.end", **end_fields)
 
     async def _emit_step_events(
         self,
@@ -983,6 +1005,13 @@ class FcDuplexSessionRuntime:
 
         token_ids = list(getattr(step, "token_ids", None) or [])
         step_text = str(getattr(step, "text_delta", "") or "")
+        close_reason = getattr(step, "close_reason", None)
+        span_started = getattr(step, "span_started", None)
+        if self._current_block_id is None and span_started:
+            await self._begin_block(
+                str(span_started),
+                unit_index=unit_index,
+            )
         await self._record_generation_steps(
             list(getattr(step, "generation_steps", None) or []),
             unit_index=unit_index,
@@ -994,7 +1023,6 @@ class FcDuplexSessionRuntime:
             unit_index=unit_index,
             input_id=input_id,
         )
-        close_reason = getattr(step, "close_reason", None)
 
         logger.info(
             "fc_non_spoken_step input_id=%s close=%s text=%r spans=%s",
@@ -1004,38 +1032,10 @@ class FcDuplexSessionRuntime:
             [getattr(span, "type", None) for span in list(getattr(step, "closed_spans", None) or [])],
         )
 
-        # Same exception as MVP: a lone no_action terminator is not content and
-        # should not open an unknown block.
-        is_no_action_marker = (
-            bool(getattr(step, "terminated", False)) and str(close_reason or "") == "no_action"
-        )
-        should_open = (
-            self._current_block_id is None
-            and (token_ids or step_text)
-            and not is_no_action_marker
-        )
-        if should_open:
-            tentative_kind = (
-                getattr(step, "span_started", None)
-                or _guess_block_kind_from_token_ids(token_ids, self.backend)
-            )
-            await self._begin_block(tentative_kind, input_id=input_id)
-
-        if (token_ids or step_text) and self._current_block_id is not None:
-            await self._send_block_delta(
-                token_ids=token_ids,
-                step_text=step_text,
-                input_id=input_id,
-            )
-
         if close_reason:
-            token = _non_spoken_close_reason_to_sp_token(str(close_reason))
-            if token:
-                await self._send_sp_token(token, input_id=input_id)
+            self._unit_non_spoken_end = str(close_reason)
             if str(close_reason) == "abort":
-                await self._abort_current_block(input_id=input_id)
-            elif str(close_reason) == "budget_reached":
-                self._clear_current_block()
+                await self._abort_current_block(unit_index=unit_index)
 
         suppress_fallback_text = any(
             getattr(warning, "code", None)
@@ -1045,62 +1045,11 @@ class FcDuplexSessionRuntime:
         for span in list(getattr(step, "closed_spans", None) or []):
             await self._emit_close_for_span(
                 span,
-                input_id=input_id,
+                unit_index=unit_index,
                 suppress_fallback_text=suppress_fallback_text,
             )
 
-    async def _send_block_delta(
-        self,
-        *,
-        token_ids: List[int],
-        step_text: str,
-        input_id: Optional[str],
-    ) -> None:
-        if self._current_block_kind is None:
-            kind = _guess_block_kind_from_token_ids(token_ids, self.backend)
-            if kind:
-                await self._upgrade_block_kind(kind, input_id=input_id)
-
-        if self._current_block_kind == "think":
-            if step_text:
-                self._current_block_streamed = True
-                await self._send(
-                    "response.think.delta",
-                    session_id=self.session_id,
-                    response_id=self._response_id,
-                    input_id=input_id,
-                block_id=self._current_block_id,
-                    delta=step_text,
-                )
-            return
-
-        if self._current_block_kind == "tool_call":
-            tool_call_id = self._current_tool_call_id or self._current_block_id
-            if step_text:
-                self._current_block_streamed = True
-                await self._send(
-                    "response.tool_call.args.delta",
-                    session_id=self.session_id,
-                    response_id=self._response_id,
-                    input_id=input_id,
-                    tool_call_id=tool_call_id,
-                    block_id=self._current_block_id,
-                    delta=step_text,
-                )
-            return
-
-        if step_text or token_ids:
-            await self._send(
-                "debug.fc_non_spoken.delta",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                text=step_text,
-                block_id=self._current_block_id,
-                block_kind=_kind_for_event(self._current_block_kind),
-            )
-
-    async def _begin_block(self, kind: Optional[str], *, input_id: Optional[str]) -> None:
+    async def _begin_block(self, kind: str, *, unit_index: int) -> None:
         self._block_seq += 1
         self._current_block_id = f"nsb_{self._block_seq:06d}"
         self._current_block_kind = kind
@@ -1111,52 +1060,26 @@ class FcDuplexSessionRuntime:
             self._block_started_sent = True
             await self._send(
                 "response.think.begin",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                block_id=self._current_block_id,
+                unit_index=unit_index,
             )
         elif kind == "tool_call":
             self._current_tool_call_id = self._api_id_for_internal(None)
             self._block_started_sent = True
             await self._send(
-                "response.tool_call.args.begin",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
+                "response.tool_call.begin",
                 tool_call_id=self._current_tool_call_id,
-                block_id=self._current_block_id,
+                unit_index=unit_index,
             )
+        else:
+            raise RuntimeError(f"unsupported semantic message kind: {kind}")
 
-    async def _upgrade_block_kind(self, kind: str, *, input_id: Optional[str]) -> None:
-        if kind == self._current_block_kind:
-            return
-        self._current_block_kind = kind
-        if kind == "think":
-            if not self._block_started_sent:
-                self._block_started_sent = True
-                await self._send("response.think.begin", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
-        elif kind == "tool_call":
-            self._current_tool_call_id = self._api_id_for_internal(None)
-            if not self._block_started_sent:
-                self._block_started_sent = True
-                await self._send(
-                    "response.tool_call.args.begin",
-                    session_id=self.session_id,
-                    response_id=self._response_id,
-                    input_id=input_id,
-                    tool_call_id=self._current_tool_call_id,
-                    block_id=self._current_block_id,
-                )
-
-    async def _abort_current_block(self, *, input_id: Optional[str]) -> None:
+    async def _abort_current_block(self, *, unit_index: int) -> None:
         if self._current_block_kind == "tool_call" and self._current_tool_call_id:
             await self._send(
-                "response.tool_call.abort",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
+                "response.tool_call.done",
                 tool_call_id=self._current_tool_call_id,
+                unit_index=unit_index,
+                error="aborted",
             )
         self._current_block_id = None
         self._current_block_kind = None
@@ -1164,20 +1087,11 @@ class FcDuplexSessionRuntime:
         self._current_block_streamed = False
         self._block_started_sent = False
 
-    async def _send_sp_token(self, token: str, *, input_id: Optional[str]) -> None:
-        await self._send(
-            "response.output.sp_tokens",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            input_id=input_id,
-            token=token,
-        )
-
     async def _emit_close_for_span(
         self,
         span: Any,
         *,
-        input_id: Optional[str],
+        unit_index: int,
         suppress_fallback_text: bool = False,
     ) -> None:
         """Close the current non-spoken block and emit final API events.
@@ -1188,37 +1102,20 @@ class FcDuplexSessionRuntime:
 
         span_type = getattr(span, "type", None)
         if span_type == "think":
-            if self._current_block_id is None:
-                await self._begin_block("think", input_id=input_id)
-            elif self._current_block_kind != "think":
-                await self._upgrade_block_kind("think", input_id=input_id)
+            if self._current_block_kind != "think":
+                raise RuntimeError("think end without active think")
             text = str(getattr(span, "text", "") or "")
-            block_id = self._current_block_id
-            if text and not self._current_block_streamed and not suppress_fallback_text:
-                await self._send(
-                    "response.think.delta",
-                    session_id=self.session_id,
-                    response_id=self._response_id,
-                    input_id=input_id,
-                    block_id=block_id,
-                    delta=text,
-                )
-            await self._send(
-                "response.think.end",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                block_id=block_id,
-            )
+            fields: Dict[str, Any] = {"unit_index": unit_index}
+            if not suppress_fallback_text:
+                fields["full_text"] = text
+            await self._send("response.think.end", **fields)
             self._clear_current_block()
             return
         if span_type != "tool_call":
             return
 
-        if self._current_block_id is None:
-            await self._begin_block("tool_call", input_id=input_id)
-        elif self._current_block_kind != "tool_call":
-            await self._upgrade_block_kind("tool_call", input_id=input_id)
+        if self._current_block_kind != "tool_call":
+            raise RuntimeError("tool-call end without active tool-call")
 
         internal_id = getattr(span, "tool_call_id", None)
         if self._current_tool_call_id:
@@ -1228,60 +1125,33 @@ class FcDuplexSessionRuntime:
                 self._api_to_internal[api_id] = str(internal_id)
         else:
             api_id = self._api_id_for_internal(str(internal_id) if internal_id else None)
-        block_id = self._current_block_id
         wire = getattr(span, "wire", None) or ""
         if not self._current_tool_call_id:
             self._current_tool_call_id = api_id
-        if not self._block_started_sent:
-            self._block_started_sent = True
-            await self._send(
-                "response.tool_call.args.begin",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                tool_call_id=api_id,
-                block_id=block_id,
-            )
+        done_fields: Dict[str, Any] = {
+            "tool_call_id": api_id,
+            "unit_index": unit_index,
+        }
         if suppress_fallback_text:
-            await self._send(
-                "response.tool_call.abort",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                tool_call_id=api_id,
-                block_id=block_id,
-                reason="incomplete_bpe_at_stream_end",
-            )
+            done_fields["error"] = "incomplete_bpe_at_stream_end"
+            await self._send("response.tool_call.done", **done_fields)
             self._clear_current_block()
             return
-        if wire and not self._current_block_streamed:
-            await self._send(
-                "response.tool_call.args.delta",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                tool_call_id=api_id,
-                block_id=block_id,
-                delta=wire,
-            )
-        await self._send(
-            "response.tool_call.args.end",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            input_id=input_id,
-            tool_call_id=api_id,
-            block_id=block_id,
-        )
         raw = _tool_call_raw(span)
-        await self._send(
-            "response.tool_call.args.raw",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            input_id=input_id,
-            tool_call_id=api_id,
-            block_id=block_id,
-            raw=raw,
-        )
+        done_fields["full_text"] = wire
+        if raw.get("error"):
+            done_fields["error"] = raw["error"]
+        else:
+            arguments = raw.get("arguments")
+            try:
+                arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+            except json.JSONDecodeError:
+                pass
+            done_fields["call"] = {
+                "name": raw.get("name"),
+                "arguments": arguments,
+            }
+        await self._send("response.tool_call.done", **done_fields)
         self._clear_current_block()
 
     def _clear_current_block(self) -> None:
@@ -1334,10 +1204,15 @@ def _tool_call_raw(span: Any) -> Dict[str, Any]:
     name = tool_call.get("name")
     if not name:
         return {"error": "missing tool call name"}
+    arguments = tool_call.get("arguments") or {}
     return {
         "type": "function_call",
         "name": name,
-        "arguments": json.dumps(tool_call.get("arguments") or {}, ensure_ascii=False),
+        "arguments": (
+            arguments
+            if isinstance(arguments, str)
+            else json.dumps(arguments, ensure_ascii=False)
+        ),
     }
 
 

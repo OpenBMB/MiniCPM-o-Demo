@@ -97,14 +97,11 @@ def summarize_event(event: dict[str, Any]) -> str:
             return f"{typ} audio={len(str(event.get('audio') or ''))}"
         return f"{typ} kind={kind} text={event.get('text') or ''}"
     if typ.startswith("response.tool_call"):
-        raw = event.get("raw")
-        return f"{typ} id={event.get('tool_call_id')} delta={event.get('delta') or ''} raw={raw or ''}"
+        return f"{typ} id={event.get('tool_call_id')} full={event.get('full_text') or ''} call={event.get('call') or ''} error={event.get('error') or ''}"
     if typ.startswith("response.think"):
-        return f"{typ} {event.get('delta') or ''}"
-    if typ == "response.output.sp_tokens":
-        return f"{typ} token={event.get('token')}"
-    if typ == "response.tool_result":
-        return f"{typ} id={event.get('tool_call_id')}"
+        return f"{typ} full={event.get('full_text') or ''} steps={len(event.get('steps') or [])}"
+    if typ.startswith("response.spoken"):
+        return f"{typ} unit={event.get('unit_index')} reason={event.get('reason') or ''} steps={len(event.get('steps') or [])}"
     return typ
 
 
@@ -116,11 +113,13 @@ async def _execute_board_tool(
 ) -> str:
     """Execute the same board tool endpoint used by the browser Demo."""
 
-    raw = dict(event.get("raw") or {})
-    arguments = json.loads(str(raw.get("arguments") or "{}"))
+    call = dict(event.get("call") or {})
+    arguments = call.get("arguments") or {}
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments)
     name = str(arguments.get("name") or "").strip()
-    if raw.get("name") != "display_object_on_board" or not name:
-        raise RuntimeError(f"unsupported auto tool call: {raw}")
+    if call.get("name") != "display_object_on_board" or not name:
+        raise RuntimeError(f"unsupported auto tool call: {call}")
     async with httpx.AsyncClient(verify=not insecure, timeout=30.0) as client:
         response = await client.post(
             f"{base_url.rstrip('/')}/api/fc_board/tools/display_object_on_board",
@@ -164,8 +163,8 @@ async def drain(
         print("RX", summarize_event(event)[:500], flush=True)
         if (
             auto_execute_board_tool
-            and event.get("type") == "response.tool_call.args.raw"
-            and not dict(event.get("raw") or {}).get("error")
+            and event.get("type") == "response.tool_call.done"
+            and not event.get("error")
         ):
             tool_call_id = str(event.get("tool_call_id") or "")
             if tool_call_id and tool_call_id not in auto_tool_result_ids:
@@ -177,7 +176,7 @@ async def drain(
                 tool_result = {
                     "type": "input.tool_result",
                     "tool_call_id": tool_call_id,
-                    "contents": [{"kind": "text", "text": content}],
+                    "content": json.loads(content),
                 }
                 await ws.send(json.dumps(tool_result, ensure_ascii=False))
                 out.write(json.dumps({

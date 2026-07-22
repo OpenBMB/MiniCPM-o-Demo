@@ -71,7 +71,7 @@ checkpoints = [
 ]
 deferred_positions = [
     index for index, event in enumerate(checkpoints)
-    if event.get("resume", {}).get("reason") == "unsupported_deferred_close"
+    if event.get("resume", {}).get("reason") == "deferred_close"
 ]
 if not deferred_positions:
     raise RuntimeError("recorded replay did not exercise deferred close")
@@ -91,12 +91,12 @@ if "\ufffd" in json.dumps(events, ensure_ascii=False):
     raise RuntimeError("public API leaked U+FFFD")
 raw_events = [
     event for event in events
-    if event.get("type") == "response.tool_call.args.raw"
+    if event.get("type") == "response.tool_call.done"
 ]
 if not raw_events:
     raise RuntimeError("recorded replay did not produce a tool call")
-if any(dict(event.get("raw") or {}).get("error") for event in raw_events):
-    raise RuntimeError("tool call raw contained parse error")
+if any(event.get("error") for event in raw_events):
+    raise RuntimeError("tool call done contained parse error")
 tool_result_positions = [
     index for index, record in enumerate(records)
     if record.get("dir") == "up"

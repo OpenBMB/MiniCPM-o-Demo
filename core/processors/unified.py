@@ -1376,6 +1376,7 @@ class FcDuplexView:
         self._non_spoken_aggregate_kind: Optional[str] = None
         self._non_spoken_aggregate_parts: List[str] = []
         self._non_spoken_aggregate_incomplete = False
+        self._last_closed_spoken_text: Optional[str] = None
         self._resume_text_roundtrip_valid = True
         self._resume_text_roundtrip_error: Optional[Dict[str, Any]] = None
         self._resume_ref_audio_sha256: Optional[str] = None
@@ -1456,6 +1457,8 @@ class FcDuplexView:
                 self._non_spoken_aggregate_kind = None
                 self._non_spoken_aggregate_parts = []
                 self._non_spoken_aggregate_incomplete = False
+        else:
+            self._last_closed_spoken_text = "".join(stream.emitted_parts)
         warning = None
         if has_pending:
             self._resume_text_roundtrip_valid = False
@@ -1778,6 +1781,11 @@ class FcDuplexView:
             spoken_token_ids=data.get("spoken_ids", []),
             spoken_text=data.get("spoken_text", data.get("text", "")),
             spoken_text_delta=spoken_text_delta,
+            spoken_full_text=(
+                self._last_closed_spoken_text
+                if bool(data.get("spoken_turn_eos", False))
+                else None
+            ),
             generation_steps=generation_steps,
             warnings=warnings,
             spoken_turn_eos=bool(data.get("spoken_turn_eos", False)),
@@ -1949,6 +1957,7 @@ class FcDuplexView:
         self._non_spoken_aggregate_kind = None
         self._non_spoken_aggregate_parts = []
         self._non_spoken_aggregate_incomplete = False
+        self._last_closed_spoken_text = None
         self._resume_text_roundtrip_valid = True
         self._resume_text_roundtrip_error = None
         self._ensure_protocol_tokenizer()
@@ -2126,7 +2135,7 @@ class FcDuplexView:
             or "unknown"
         )
         return {
-            "protocol_version": "fc-duplex-resume-v1",
+            "protocol_version": "fc-duplex-semantic-v2",
             "model": model_name,
             "tokenizer_target": tokenizer.target,
             "tokenizer_fingerprint": {
@@ -2204,6 +2213,7 @@ class FcDuplexView:
         self._non_spoken_aggregate_kind = None
         self._non_spoken_aggregate_parts = []
         self._non_spoken_aggregate_incomplete = False
+        self._last_closed_spoken_text = None
         self._resume_text_roundtrip_valid = True
         self._resume_text_roundtrip_error = None
         self._resume_ref_audio_sha256 = None

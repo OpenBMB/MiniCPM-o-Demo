@@ -320,3 +320,31 @@ tool result 后 checkpoint，属于验收遗漏。
 
 `response.unit.input_events` 必须连空 marker 都发送；否则 tool result 若在 prefill
 快照后、首个 generation step 前到达，public history 无法判断它属于当前还是下一 Unit。
+
+## 2026-07-23：Semantic Realtime API v2
+
+为消除冗余关联 ID 和前端伪造分组，public wire 收敛为
+[`semantic-realtime-api-v2.md`](./semantic-realtime-api-v2.md)：
+
+- 删除 `block_id/span_id/response_id`、旧 generation batch、SP token 和通用
+  `response.output.delta`。
+- Think 利用“同时最多一个 active think”的有序状态机，不发送 ID。
+- Tool-call 只保留异步结果必需的 `tool_call_id`，begin/delta/done 三类事件；done
+  同时携带 Full 与结构化 call，不再拆成 args.end/raw。
+- `response.unit.started` 明确 Unit→input/tool-events 归属；`response.unit.committed`
+  只携带 non-spoken end 与 resume 状态。
+- Delta 直接携带 `pending/text(source_steps)`，不再重复发送 semantic delta 与
+  canonical generation batch。
+- FC Board 一张卡对应完整 Think/Tool semantic message；Streaming 内按 unit_index
+  展示 segments，Full 使用 end/done 的 `full_text`，不再伪造 XML 标签。
+
+验证：
+
+- CPU 定向 + schema：83 passed；mypy、Python/JS/Bash 检查通过。
+- `tasks/608676` 真实 27-Unit 回放通过：
+  - Unit 5 deferred 后恢复 available；
+  - 1 个合法 tool-call done；
+  - 真实 board endpoint + `input.tool_result`；
+  - result 后 checkpoint available；
+  - 无 v1 冗余事件、raw error、unsupported tool state 或公共替换字符；
+  - stateless resume trace 252 output IDs / KV 322 / Unit 1 等价。

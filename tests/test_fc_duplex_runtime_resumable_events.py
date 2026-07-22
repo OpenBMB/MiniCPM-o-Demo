@@ -152,18 +152,19 @@ async def test_runtime_batches_safe_text_steps_without_exposing_token_ids() -> N
         ),
     ]
 
+    await runtime._begin_block("think", unit_index=0)
+    events.clear()
     await runtime._record_generation_steps(steps, unit_index=0, input_id="u0")
     await runtime._flush_generation_batch()
 
     assert len(events) == 1
     event = events[0]
-    assert event["type"] == "response.generation.step_batch"
-    assert event["event_index"] == 0
-    assert [step["output"]["kind"] for step in event["steps"]] == [
-        "text_pending",
-        "text_delta",
+    assert event["type"] == "response.think.delta"
+    assert event["unit_index"] == 0
+    assert event["steps"] == [
+        {"kind": "pending"},
+        {"kind": "text", "text": "龘", "source_steps": 2},
     ]
-    assert event["steps"][1]["output"]["source_step_indices"] == [0, 1]
     assert all("token_id" not in step for step in event["steps"])
 
 
@@ -189,22 +190,16 @@ async def test_runtime_emits_available_unit_checkpoint_after_canonical_steps() -
         }
     )
 
-    canonical_events = [
-        event
-        for event in events
-        if event["type"]
-        in {
-            "response.unit.input_events",
-            "response.generation.step_batch",
-            "response.unit.committed",
-        }
+    assert [event["type"] for event in events] == [
+        "response.unit.started",
+        "response.spoken.end",
+        "response.unit.committed",
     ]
-    assert [event["event_index"] for event in canonical_events] == [0, 1, 2, 3]
-    assert canonical_events[0]["events"] == []
-    checkpoint = canonical_events[-1]
+    assert events[0]["tool_events"] == []
+    checkpoint = events[-1]
     assert checkpoint["type"] == "response.unit.committed"
     assert checkpoint["unit_index"] == 0
-    assert checkpoint["last_step_index"] == 1
+    assert checkpoint["non_spoken_end"] == "no_action"
     assert checkpoint["resume"] == {"status": "available"}
 
 
@@ -342,17 +337,14 @@ async def test_runtime_emits_budget_protocol_step_and_incomplete_bpe_warning() -
     step = await runtime._build_deferred_budget_reached_step()
     await runtime._emit_step_events(step, input_id="u0", unit_index=0)
 
-    batch = next(
-        event
+    assert runtime._unit_non_spoken_end == "budget_reached"
+    assert not any(
+        event["type"] in {
+            "response.generation.step_batch",
+            "response.output.sp_tokens",
+        }
         for event in events
-        if event["type"] == "response.generation.step_batch"
     )
-    output = batch["steps"][0]["output"]
-    assert output == {
-        "kind": "protocol",
-        "semantic_key": "non_spoken_budget_reached",
-        "deferred_model_feed": True,
-    }
     warning = next(
         event for event in events if event["type"] == "response.warning"
     )
@@ -374,7 +366,7 @@ async def test_runtime_does_not_leak_replacement_text_after_incomplete_bpe_warni
         backend=_FakeRuntimeBackend(),
         send=send,
     )
-    await runtime._begin_block("think", input_id="u0")
+    await runtime._begin_block("think", unit_index=0)
     step = SimpleNamespace(
         token_ids=[],
         text_delta="",
@@ -398,8 +390,8 @@ async def test_runtime_does_not_leak_replacement_text_after_incomplete_bpe_warni
     assert any(event["type"] == "response.warning" for event in events)
     assert any(event["type"] == "response.think.end" for event in events)
     assert not any(
-        event["type"] == "response.think.delta"
-        and "\ufffd" in str(event.get("delta") or "")
+        event["type"] == "response.think.end"
+        and "\ufffd" in str(event.get("full_text") or "")
         for event in events
     )
 
@@ -477,21 +469,17 @@ async def test_runtime_emits_explicit_processed_unit_tool_event_attribution() ->
 
     assert events == [
         {
-            "type": "response.unit.input_events",
-            "session_id": "sess_tool_events",
-            "response_id": None,
+            "type": "response.unit.started",
             "input_id": "actual_processed_input",
-            "event_index": 0,
             "unit_index": 7,
-            "events": [
+            "tool_events": [
                 {
                     "type": "tool_started",
                     "tool_call_id": "tc_000002",
                 },
                 {
-                    "type": "tool_response",
+                    "type": "tool_result",
                     "tool_call_id": "tc_000002",
-                    "content": "displayed",
                 },
             ],
         }

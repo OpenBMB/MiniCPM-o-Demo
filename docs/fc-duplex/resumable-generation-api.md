@@ -1,5 +1,9 @@
 # FC Duplex Resumable Generation API
 
+> 本文记录 v1 实现与演进依据。当前目标协议是
+> [`semantic-realtime-api-v2.md`](./semantic-realtime-api-v2.md)；v2 删除冗余
+> generation batch/sp-token/block 字段，改用 semantic events 直接承载 resume steps。
+
 ## 1. 目的与范围
 
 本文定义 FC Duplex 公共 WebSocket API 的可恢复生成日志。协议允许客户端在不接收

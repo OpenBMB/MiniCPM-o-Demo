@@ -228,6 +228,10 @@ class FcSpokenGenerateResult(BaseModel):
     spoken_token_ids: List[int] = Field(default_factory=list, description="Spoken slot token ids")
     spoken_text: str = Field("", description="Decoded spoken text (BPE merged)")
     spoken_text_delta: str = Field("", description="Safe incremental spoken Unicode produced by View")
+    spoken_full_text: Optional[str] = Field(
+        None,
+        description="Complete spoken turn text emitted only at spoken_turn_eos",
+    )
     generation_steps: List[FcViewGenerationStep] = Field(
         default_factory=list,
         description="Per-token View steps used by resumable generation logging",

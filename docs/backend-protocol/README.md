@@ -6,7 +6,8 @@
 | [schema.md](./schema.md) | **消息 schema / 字段 / 编码。** 消息封套、契约字段 vs 透传字段、音频/图像编码、各消息的字段表、metrics 字段。用 RFC 2119 MUST/SHOULD/MAY。 | 实现具体收发与编解码时对照。 |
 | [sequences.md](./sequences.md) | **时序图 + 示例数据包。** full_duplex、turn_based 流式、turn_based 一次性三条交互的 mermaid 时序图与真实抓包示例。 | 想看一次完整交互长什么样时。 |
 | [duplex-tool-calling.md](./duplex-tool-calling.md) | **FC Duplex 工具调用扩展。** Tool definitions、tool result、think/tool-call 事件与协议 structural token 观测。 | 实现 FC Duplex 业务事件时。 |
-| [../fc-duplex/resumable-generation-api.md](../fc-duplex/resumable-generation-api.md) | **FC Duplex 可恢复生成日志。** Generation step batch、Unit checkpoint、stateless `session.resume`、失败边界。 | 实现无 token ID resume 或审查可恢复性时。 |
+| [../fc-duplex/semantic-realtime-api-v2.md](../fc-duplex/semantic-realtime-api-v2.md) | **FC Duplex semantic API v2。** 最小 Unit/Think/Tool/Spoken 事件、Streaming/Full、stateless resume。 | 当前 FC Duplex API 实现与客户端必须优先遵循。 |
+| [../fc-duplex/resumable-generation-api.md](../fc-duplex/resumable-generation-api.md) | **v1 演进记录。** Generation step batch 设计与历史决策。 | 仅在审计旧实现时参考。 |
 
 ## 参考实现
 

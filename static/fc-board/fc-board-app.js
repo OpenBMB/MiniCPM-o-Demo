@@ -396,55 +396,50 @@ function applyApiEvent(event) {
       releaseMicLive('closed');
       setStatus(`Session closed: ${event.reason || 'closed'}`);
       return;
-    case 'response.output.delta':
-      handleOutputDelta(event);
-      return;
-    case 'response.generation.step_batch':
-      generationStepCount += Array.isArray(event.steps) ? event.steps.length : 0;
-      updateStats();
+    case 'response.unit.started':
       return;
     case 'response.unit.committed':
       handleUnitCheckpoint(event);
       return;
+    case 'response.spoken.delta':
+      handleSpokenDelta(event);
+      return;
+    case 'response.spoken.end':
+      handleSpokenEnd(event);
+      return;
     case 'response.think.begin':
-      activeNonSpokenBlockId = blockIdFor(event, 'think');
+      activeNonSpokenBlockId = `think:${++blockSeq}`;
       beginNonSpokenBlock({ block_id: activeNonSpokenBlockId, block_kind: 'think' });
       return;
     case 'response.think.delta':
-      appendNonSpokenDelta({ block_id: blockIdFor(event, 'think'), step_text: event.delta || '' });
+      appendSemanticSteps({
+        block_id: activeNonSpokenBlockId,
+        unit_index: event.unit_index,
+        steps: event.steps,
+      });
       return;
     case 'response.think.end':
-      closeNonSpokenBlock({ block_id: blockIdFor(event, 'think'), block_kind: 'think' });
+      closeNonSpokenBlock({
+        block_id: activeNonSpokenBlockId,
+        block_kind: 'think',
+        full_text: event.full_text,
+      });
       activeNonSpokenBlockId = null;
       return;
-    case 'response.tool_call.args.begin':
-      toolCallBlocks.set(event.tool_call_id, blockIdFor(event, 'tool_call'));
+    case 'response.tool_call.begin':
+      toolCallBlocks.set(event.tool_call_id, `tool_call:${event.tool_call_id}`);
       activeNonSpokenBlockId = toolCallBlocks.get(event.tool_call_id);
       beginNonSpokenBlock({ block_id: activeNonSpokenBlockId, block_kind: 'tool_call' });
       return;
-    case 'response.tool_call.args.delta':
-      appendNonSpokenDelta({ block_id: blockIdFor(event, 'tool_call'), step_text: event.delta || '' });
-      return;
-    case 'response.tool_call.args.end':
-      closeNonSpokenBlock({ block_id: blockIdFor(event, 'tool_call'), block_kind: 'tool_call' });
-      activeNonSpokenBlockId = null;
-      return;
-    case 'response.tool_call.args.raw':
-      handleToolCallRaw(event);
-      return;
-    case 'response.tool_call.abort':
-      closeNonSpokenBlock({
-        block_id: blockIdFor(event, 'tool_call'),
-        block_kind: 'tool_call',
+    case 'response.tool_call.delta':
+      appendSemanticSteps({
+        block_id: toolCallBlocks.get(event.tool_call_id),
+        unit_index: event.unit_index,
+        steps: event.steps,
       });
-      activeNonSpokenBlockId = null;
-      setStatus(`Tool call aborted: ${event.reason || 'abort'}`);
       return;
-    case 'response.tool_result':
-      handleToolResult(event);
-      return;
-    case 'response.output.sp_tokens':
-      handleSpToken(event);
+    case 'response.tool_call.done':
+      handleToolCallDone(event);
       return;
     case 'response.debug':
       handleDebugEvent(event);
@@ -454,42 +449,32 @@ function applyApiEvent(event) {
   }
 }
 
-function handleOutputDelta(event) {
-  if (event.kind === 'listen') {
-    handleSpokenOutput({ isListen: true, isSpeaking: false });
-    closeActiveNonSpokenBlock();
-    return;
-  }
-  if (event.kind === 'text' && event.text) {
-    enqueueSpeech(event.text, 0);
-    return;
-  }
-  if (event.kind === 'audio' && event.audio) {
-    handleSpokenOutput({ isListen: false, isSpeaking: true, audioBase64: event.audio, sampleRate: event.sample_rate || 24000 });
-    return;
-  }
-  if (event.kind === 'non_spoken') {
-    if (!activeNonSpokenBlockId) {
-      activeNonSpokenBlockId = `non_spoken:${event.input_id || 'input'}:${++blockSeq}`;
-      beginNonSpokenBlock({ block_id: activeNonSpokenBlockId, block_kind: 'unknown' });
-    }
-    // event.text is the backend's step_text (proper BPE decode). token_strs
-    // has been removed protocol-wide: tokenizer.convert_ids_to_tokens reverse
-    // lookup is structurally unreliable for byte-level BPE (ordinary content
-    // tokens decode to byte-surrogate garbage). See
-    // docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md.
-    appendNonSpokenDelta({ block_id: activeNonSpokenBlockId, step_text: event.text || '' });
-  }
+function textFromSteps(steps) {
+  return (Array.isArray(steps) ? steps : [])
+    .filter((step) => step?.kind === 'text')
+    .map((step) => step.text || '')
+    .join('');
 }
 
-function handleSpToken(event) {
-  const token = String(event.token || '');
-  if (token === 'spoken_turn_eos') {
-    if (audioPlayerReady && audioPlayer.turnActive) audioPlayer.endTurn();
-    return;
+function handleSpokenDelta(event) {
+  const steps = Array.isArray(event.steps) ? event.steps : [];
+  generationStepCount += steps.length;
+  const text = textFromSteps(steps);
+  if (text) enqueueSpeech(text, 0);
+  if (event.audio) {
+    handleSpokenOutput({
+      isListen: false,
+      isSpeaking: true,
+      audioBase64: event.audio,
+      sampleRate: event.sample_rate || 24000,
+    });
   }
-  if (['no_action', 'non_spoken_eos', 'non_spoken_budget_reached', 'non_spoken_hold', 'non_spoken_abort'].includes(token)) {
-    closeActiveNonSpokenBlock();
+  updateStats();
+}
+
+function handleSpokenEnd(event) {
+  if (event.reason === 'listen' || event.reason === 'turn_eos') {
+    if (audioPlayerReady && audioPlayer.turnActive) audioPlayer.endTurn();
   }
 }
 
@@ -525,16 +510,17 @@ function handleDebugEvent(event) {
   }
 }
 
-function handleToolCallRaw(event) {
-  const blockId = blockIdFor(event, 'tool_call');
-  const raw = event.raw || {};
+function handleToolCallDone(event) {
+  const blockId = toolCallBlocks.get(event.tool_call_id);
+  const call = event.call || {};
   closeNonSpokenBlock({
     block_id: blockId,
     block_kind: 'tool_call',
-    full_text: formatToolCall(raw),
+    full_text: event.full_text || event.error || '',
   });
-  if (raw.name !== 'display_object_on_board' || raw.error) return;
-  const args = parseArguments(raw.arguments);
+  activeNonSpokenBlockId = null;
+  if (call.name !== 'display_object_on_board' || event.error) return;
+  const args = parseArguments(call.arguments);
   const query = String(args.name || '').trim();
   if (!query) return;
   state.upsert({
@@ -545,20 +531,6 @@ function handleToolCallRaw(event) {
   });
   renderBoard();
   executeDisplayObjectOnBoard({ query, toolCallId: event.tool_call_id });
-}
-
-function handleToolResult(event) {
-  const result = event.result || {};
-  const query = result.query || result.image?.query || event.name || event.tool_call_id;
-  state.upsert({
-    card_id: cardIdFor(event.tool_call_id),
-    tool_call_id: event.tool_call_id,
-    query,
-    status: result.error ? 'error' : 'ready',
-    image: result.image,
-    error: result.error,
-  });
-  renderBoard();
 }
 
 async function executeDisplayObjectOnBoard({ query, toolCallId }) {
@@ -609,35 +581,22 @@ async function executeDisplayObjectOnBoard({ query, toolCallId }) {
 
 function sendDisplayObjectToolResult({ toolCallId, query, content }) {
   if (!liveClient || !toolCallId) return;
-  const text = content || JSON.stringify({
+  let payload = content || {
     status: 'displayed',
     name: query,
     reason: '已在画板显示该对象。',
-  });
+  };
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch (_) { payload = { text: payload }; }
+  }
   liveClient.sendToolResult({
     toolCallId,
-    contents: [{ kind: 'text', text }],
+    content: payload,
   });
-}
-
-function blockIdFor(event, kind) {
-  if (event.block_id) return event.block_id;
-  if (kind === 'tool_call') {
-    const key = event.tool_call_id || 'pending';
-    if (!toolCallBlocks.has(key)) toolCallBlocks.set(key, `tool_call:${key}`);
-    return toolCallBlocks.get(key);
-  }
-  return `${kind}:${event.input_id || 'input'}:${event.response_id || 'resp'}`;
 }
 
 function cardIdFor(toolCallId) {
   return `card:${toolCallId || 'pending'}`;
-}
-
-function closeActiveNonSpokenBlock() {
-  if (!activeNonSpokenBlockId) return;
-  closeNonSpokenBlock({ block_id: activeNonSpokenBlockId, block_kind: 'unknown' });
-  activeNonSpokenBlockId = null;
 }
 
 function beginNonSpokenBlock(event) {
@@ -665,20 +624,48 @@ function beginNonSpokenBlock(event) {
     </section>
   `;
   el.nsStream.appendChild(wrap);
-  nonSpokenBlocks.set(blockId, { kind, streamingPieces: [], fullText: null, closed: false, node: wrap });
+  nonSpokenBlocks.set(blockId, {
+    kind,
+    streamingPieces: [],
+    segments: new Map(),
+    fullText: null,
+    closed: false,
+    node: wrap,
+  });
   scrollNsToBottom();
 }
 
-function appendNonSpokenDelta(event) {
-  const blockId = event.block_id;
+function appendSemanticSteps({ block_id: blockId, unit_index: unitIndex, steps }) {
   if (!blockId) return;
-  if (!nonSpokenBlocks.has(blockId)) beginNonSpokenBlock({ block_id: blockId, block_kind: 'unknown' });
+  if (!nonSpokenBlocks.has(blockId)) {
+    beginNonSpokenBlock({ block_id: blockId, block_kind: 'unknown' });
+  }
   const block = nonSpokenBlocks.get(blockId);
-  const piece = event.step_text || event.delta || '';
-  if (!piece) return;
-  block.streamingPieces.push(piece);
-  const target = block.node.querySelector('[data-role="streaming"]');
-  if (target) target.textContent = block.streamingPieces.join('');
+  const normalizedSteps = Array.isArray(steps) ? steps : [];
+  generationStepCount += normalizedSteps.length;
+  const text = textFromSteps(normalizedSteps);
+  const key = String(unitIndex);
+  let segment = block.segments.get(key);
+  if (!segment) {
+    const streamingTarget = block.node.querySelector('[data-role="streaming"]');
+    const node = document.createElement('div');
+    node.className = 'unit-segment';
+    node.dataset.unitIndex = key;
+    node.innerHTML = `
+      <div class="unit-segment-label">Unit ${escapeHtml(key)}</div>
+      <pre class="unit-segment-text"></pre>
+    `;
+    streamingTarget?.appendChild(node);
+    segment = { pieces: [], node };
+    block.segments.set(key, segment);
+  }
+  if (text) {
+    segment.pieces.push(text);
+    block.streamingPieces.push(text);
+    const textNode = segment.node.querySelector('.unit-segment-text');
+    if (textNode) textNode.textContent = segment.pieces.join('');
+  }
+  updateStats();
   scrollNsToBottom();
 }
 
@@ -700,10 +687,12 @@ function closeNonSpokenBlock(event) {
   block.node.classList.add('closed');
   const statusTag = block.node.querySelector('.status-tag');
   if (statusTag) statusTag.textContent = 'closed';
-  const streamingTarget = block.node.querySelector('[data-role="streaming"]');
-  if (streamingTarget && finalKind && finalKind !== 'unknown') {
-    const inner = block.streamingPieces.join('');
-    streamingTarget.textContent = `<${finalKind}>\n${inner}\n</${finalKind}>`;
+  if (
+    block.fullText !== null
+    && block.streamingPieces.join('') !== block.fullText
+  ) {
+    block.node.classList.add('stream-mismatch');
+    if (statusTag) statusTag.textContent = 'stream/full mismatch';
   }
   const full = block.node.querySelector('[data-role="full"]');
   if (full) {
@@ -1002,7 +991,7 @@ function renderStreamRowContent({ direction, event, type, timeText }) {
 function renderStreamEventMedia(event) {
   let audioBase64 = '';
   let sampleRate = 24000;
-  if (event.type === 'response.output.delta' && event.kind === 'audio' && event.audio) {
+  if (event.type === 'response.spoken.delta' && event.audio) {
     audioBase64 = event.audio;
     sampleRate = Number(event.sample_rate || 24000);
   } else if (event.type === 'input.append' && event.input?.audio_base64) {
@@ -1035,15 +1024,11 @@ function streamEventCategory(direction, event) {
   if (type === 'response.warning') return 'warning';
   if (type.startsWith('session.')) return 'session';
   if (type.startsWith('input.')) return 'input';
-  if (type === 'response.unit.input_events') return 'input';
-  if (type === 'response.generation.step_batch') return 'generation';
-  if (type === 'response.unit.committed') return 'checkpoint';
-  if (type === 'response.output.sp_tokens') return 'sp';
+  if (type.startsWith('response.unit.')) return 'unit';
+  if (type.startsWith('response.spoken.')) return 'spoken';
   if (type === 'response.debug') return 'debug';
-  if (type === 'response.output.delta') return 'output';
   if (type.startsWith('response.think')) return 'think';
   if (type.startsWith('response.tool_call')) return 'tool_call';
-  if (type === 'response.tool_result') return 'tool_result';
   return direction;
 }
 
@@ -1062,38 +1047,24 @@ function summarizeStreamEvent(event) {
       `generate_audio=${Boolean(payload.generate_audio)}`,
     ].join(' · ');
   }
-  if (type === 'response.output.delta') {
-    if (event.kind === 'audio') return `kind=audio · audio=${String(event.audio || '').length} chars · sample_rate=${event.sample_rate || '-'}`;
-    if (event.kind === 'text') return `kind=text · ${event.text || ''}`;
-    if (event.kind === 'non_spoken') return `kind=non_spoken · ${event.text || ''}`;
-    return `kind=${event.kind || '-'}`;
-  }
-  if (type === 'response.generation.step_batch') {
+  if (type.endsWith('.delta')) {
     const steps = Array.isArray(event.steps) ? event.steps : [];
-    const kinds = steps.map((step) => step.output?.kind || '?').join(',');
-    return `unit=${steps[0]?.unit_index ?? '-'} · track=${event.track || '-'} · steps=${steps.length} [${kinds}]`;
+    return `unit=${event.unit_index ?? '-'} · text=${textFromSteps(steps)} · steps=${steps.length} · audio=${String(event.audio || '').length}`;
+  }
+  if (type === 'response.unit.started') {
+    return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · tool_events=${(event.tool_events || []).length}`;
   }
   if (type === 'response.unit.committed') {
-    return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · resume=${event.resume?.status || '-'}${event.resume?.reason ? ` (${event.resume.reason})` : ''}`;
-  }
-  if (type === 'response.unit.input_events') {
-    return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · tool_events=${(event.events || []).length}`;
+    return `unit=${event.unit_index ?? '-'} · end=${event.non_spoken_end || '-'} · resume=${event.resume?.status || '-'}${event.resume?.reason ? ` (${event.resume.reason})` : ''}`;
   }
   if (type === 'response.warning') {
-    return `code=${event.code || '-'} · stream=${event.stream_id || '-'} · reason=${event.reason || '-'} · ${event.message || ''}`;
+    return `unit=${event.unit_index ?? '-'} · code=${event.code || '-'} · ${event.message || ''}`;
   }
   if (type.startsWith('response.tool_call')) {
-    return `tool_call_id=${event.tool_call_id || '-'} · ${event.delta || formatRawForSummary(event.raw) || ''}`;
-  }
-  if (type === 'response.tool_result') {
-    const result = event.result || {};
-    return `tool_call_id=${event.tool_call_id || '-'} · query=${result.query || '-'} · error=${result.error || '-'}`;
+    return `tool_call_id=${event.tool_call_id || '-'} · unit=${event.unit_index ?? '-'} · ${event.full_text || event.error || ''}`;
   }
   if (type.startsWith('response.think')) {
-    return event.delta || '';
-  }
-  if (type === 'response.output.sp_tokens') {
-    return `token=${event.token || '-'}`;
+    return `unit=${event.unit_index ?? '-'} · ${event.full_text || textFromSteps(event.steps)}`;
   }
   if (type === 'response.debug') {
     const debug = event.debug || {};
@@ -1115,12 +1086,6 @@ function summarizeStreamEvent(event) {
     return `reason=${event.reason || '-'}`;
   }
   return compactJson(event);
-}
-
-function formatRawForSummary(raw) {
-  if (!raw) return '';
-  if (raw.error) return `error=${raw.error}`;
-  return `${raw.name || ''} ${raw.arguments || ''}`.trim();
 }
 
 function compactJson(value) {
@@ -1146,11 +1111,6 @@ function parseArguments(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch (_) { return {}; }
-}
-
-function formatToolCall(raw) {
-  if (!raw || raw.error) return raw?.error || '';
-  return `<function name="${raw.name}">${raw.arguments || ''}</function>`;
 }
 
 function placeholderImageDataUrl(label) {

@@ -5,9 +5,11 @@
 本补充继续适用于原 full-duplex 输入里的两种模态：`audio` 与 `video`；tool-call
 能力是在同一条双工音视频流上新增的事件能力。
 
-FC Duplex 可恢复 generation step batch、Unit checkpoint 与 stateless
-`session.resume` 的权威规范见
-[`../fc-duplex/resumable-generation-api.md`](../fc-duplex/resumable-generation-api.md)。
+FC Duplex 当前最小 semantic event 与 stateless resume 权威规范见
+[`../fc-duplex/semantic-realtime-api-v2.md`](../fc-duplex/semantic-realtime-api-v2.md)。
+旧 generation step batch 设计保留在
+[`../fc-duplex/resumable-generation-api.md`](../fc-duplex/resumable-generation-api.md)
+作为演进记录。
 
 本文只定义最小必要协议面：
 

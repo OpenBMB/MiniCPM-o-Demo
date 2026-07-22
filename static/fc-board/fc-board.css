@@ -620,12 +620,40 @@ body {
 }
 .ns-block.kind-think .kind-tag { color: #1f51a6; }
 .ns-block.kind-tool_call .kind-tag { color: #b8860b; }
+.unit-segment {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-left: 3px solid #d8dee8;
+  border-radius: 4px;
+  background: #f8fafc;
+}
+.ns-block.kind-tool_call .unit-segment {
+  border-left-color: #e5c84f;
+  background: #fffdf3;
+}
+.unit-segment-label {
+  margin-bottom: 4px;
+  color: #888;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.unit-segment-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
 .ns-block .status-tag {
   margin-left: auto;
   font-weight: 500;
   color: #999;
 }
 .ns-block.closed .status-tag { color: #1a7f37; }
+.ns-block.stream-mismatch {
+  border-color: #cf222e;
+}
+.ns-block.stream-mismatch .status-tag {
+  color: #cf222e;
+}
 
 .ns-layer { padding: 6px 10px; }
 .ns-layer + .ns-layer { border-top: 1px dashed #e5e5e0; }

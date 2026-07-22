@@ -105,11 +105,11 @@ export class FcRealtimeClient {
     });
   }
 
-  sendToolResult({ toolCallId, contents }) {
+  sendToolResult({ toolCallId, content }) {
     this._send({
       type: 'input.tool_result',
       tool_call_id: toolCallId,
-      contents,
+      content,
     });
   }
 
@@ -143,13 +143,11 @@ export class FcRealtimeClient {
     const event = JSON.parse(message.data);
     if (
       event.type === 'session.created'
-      || event.type === 'response.generation.step_batch'
       || event.type === 'response.unit.committed'
-      || event.type === 'response.unit.input_events'
+      || event.type === 'response.unit.started'
       || event.type.startsWith('response.think.')
       || event.type.startsWith('response.tool_call.')
-      || event.type === 'response.output.delta'
-      || event.type === 'response.output.sp_tokens'
+      || event.type.startsWith('response.spoken.')
       || event.type === 'response.warning'
     ) {
       this.history.push({

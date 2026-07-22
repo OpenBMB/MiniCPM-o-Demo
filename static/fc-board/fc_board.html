@@ -114,14 +114,11 @@
             <option value="rx">RX only</option>
             <option value="session">Session</option>
             <option value="input">Input</option>
-            <option value="output">Output delta</option>
-            <option value="generation">Generation steps</option>
-            <option value="checkpoint">Unit checkpoints</option>
-            <option value="sp">SP tokens</option>
+            <option value="unit">Units</option>
+            <option value="spoken">Spoken</option>
             <option value="debug">Debug</option>
             <option value="think">Think</option>
             <option value="tool_call">Tool call</option>
-            <option value="tool_result">Tool result</option>
             <option value="warning">Warnings</option>
             <option value="error">Errors</option>
           </select>
@@ -164,7 +161,7 @@
         <section class="panel ns-panel">
           <div class="panel-title">
             Think / Tool-Call
-            <span class="hint">safe Unicode delta · canonical steps available in stream</span>
+            <span class="hint">Streaming by Unit · Full on semantic end</span>
           </div>
           <div class="scroll-body">
             <div id="nonSpokenStream" class="ns-stream">
