@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import ssl
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -74,6 +75,8 @@ async def run_smoke(args: argparse.Namespace) -> None:
     history: list[dict[str, Any]] = []
     resume_identity: dict[str, Any] | None = None
     checkpoint: dict[str, Any] | None = None
+    live_session_id: str | None = None
+    resumed_session_id: str | None = None
 
     async with websockets.connect(
         ws_url,
@@ -106,6 +109,7 @@ async def run_smoke(args: argparse.Namespace) -> None:
             event = json.loads(await asyncio.wait_for(ws.recv(), timeout=180))
             history.append(event)
             if event.get("type") == "session.created":
+                live_session_id = str(event.get("session_id") or "")
                 resume_identity = dict(event.get("resume") or {})
             elif event.get("type") == "session.closed":
                 raise RuntimeError(f"session closed during init: {event}")
@@ -162,7 +166,47 @@ async def run_smoke(args: argparse.Namespace) -> None:
             raise RuntimeError(f"resume failed: {event}")
         if event.get("through_unit_index") != through_unit_index:
             raise RuntimeError(f"resume returned wrong checkpoint: {event}")
+        resumed_session_id = str(event.get("session_id") or "")
         print(json.dumps(event, ensure_ascii=False), flush=True)
+
+    if args.trace_dir:
+        await asyncio.sleep(1.0)
+        if not live_session_id or not resumed_session_id:
+            raise RuntimeError("missing live/resumed session ids for trace comparison")
+        trace_dir = Path(args.trace_dir)
+
+        def load_trace(session_id: str) -> dict[str, Any]:
+            matches = sorted(
+                trace_dir.glob(f"fc_trace_{session_id}_*.json"),
+                key=lambda path: path.stat().st_mtime,
+            )
+            if not matches:
+                raise RuntimeError(
+                    f"missing model trace for {session_id} under {trace_dir}"
+                )
+            return json.loads(matches[-1].read_text(encoding="utf-8"))
+
+        live_trace = load_trace(live_session_id)
+        resumed_trace = load_trace(resumed_session_id)
+        for field in ("output_ids", "kv_cache_length", "current_unit_idx"):
+            if live_trace.get(field) != resumed_trace.get(field):
+                raise RuntimeError(
+                    f"trace mismatch for {field}: "
+                    f"live={live_trace.get(field)!r}, "
+                    f"resumed={resumed_trace.get(field)!r}"
+                )
+        print(
+            json.dumps(
+                {
+                    "trace_equivalent": True,
+                    "output_id_count": len(live_trace.get("output_ids") or []),
+                    "kv_cache_length": live_trace.get("kv_cache_length"),
+                    "current_unit_idx": live_trace.get("current_unit_idx"),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
 
 def main() -> None:
@@ -172,6 +216,11 @@ def main() -> None:
     parser.add_argument("--base-url", default="https://127.0.0.1:8009")
     parser.add_argument("--max-units", type=int, default=8)
     parser.add_argument("--insecure", action="store_true")
+    parser.add_argument(
+        "--trace-dir",
+        default=None,
+        help="Optional shared FC trace directory for live/replay equivalence checks.",
+    )
     args = parser.parse_args()
     asyncio.run(run_smoke(args))
 

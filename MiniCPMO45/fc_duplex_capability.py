@@ -481,6 +481,7 @@ class FcDuplexCapability:
             "tool_format": self.tool_format,
             "generate_audio": self.generate_audio,
             "current_unit_idx": self._current_unit_idx,
+            "kv_cache_length": self.decoder.get_cache_length(),
             "current_non_spoken_mode": self._non_spoken_mode,
             "open_think_token_ids": list(self._think_buf),
             "open_tool_call_token_ids": list(self._tool_call_buf),

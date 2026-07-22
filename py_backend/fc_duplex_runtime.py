@@ -577,7 +577,10 @@ class FcDuplexSessionRuntime:
         dump = getattr(self.backend, "fc_duplex_dump_trace", None)
         if dump is None:
             return
-        trace_dir = os.environ.get("FC_DUPLEX_TRACE_DIR", "/user/weihongliang/fc_trace_logs")
+        trace_dir = os.environ.get(
+            "FC_DUPLEX_TRACE_DIR",
+            "/tmp/minicpmo45_fc_trace_logs",
+        )
         session = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.session_id or "session")
         stamp = time.strftime("%Y%m%d_%H%M%S")
         path = os.path.join(trace_dir, f"fc_trace_{session}_{stamp}.json")

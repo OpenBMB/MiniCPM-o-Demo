@@ -224,6 +224,13 @@ piece = stream.step(backend_tokenizer, token_id)   # backend_tokenizer = fc_dupl
   `git diff --check` 通过。
 - 仓库全量测试在当前 worktree 无 `.venv/base` 且历史 case 使用
   `/path/to/MiniCPM-o-4_5` 的环境下无法作为有效全绿 gate；本轮新增测试全部通过。
-- 真实 GPU E2E 已提交 `tasks/144802`，但 `agent-dev` A100 capacity=0，任务持续
-  Queued 后主动取消。可复用 `scripts/fc_duplex_resume_smoke.py` 在下次有卡时完成
-  live→disconnect→resume 验证。
+- 旧任务 `144802` 因错误使用历史 `thunlp/agent-dev` 入口且无容量已取消。
+- `modelbest/langfang_train/deploy` 任务 `606905` 完成真实
+  live→Unit 0 available checkpoint→disconnect→`session.resumed` E2E。
+- 首轮 E2E 发现 trace 默认写入只读的 `/user/weihongliang/fc_trace_logs`；已将 runtime
+  默认改为 `/tmp/minicpmo45_fc_trace_logs`，启动脚本显式使用
+  `${LOG_DIR}/fc_traces`。
+- 修复后任务 `606931` 通过 trace 等价验证：
+  `output_ids` 完全一致（252 IDs）、`kv_cache_length=322`、
+  `current_unit_idx=1`，证明 public-history replay 在该真实 Unit 上恢复了同一 LLM
+  token/KV 边界。

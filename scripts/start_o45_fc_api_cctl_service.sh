@@ -17,12 +17,13 @@ GATEWAY_HOST="${GATEWAY_HOST:-0.0.0.0}"
 GATEWAY_PORT="${GATEWAY_PORT:-8009}"
 GPU_ID="${GPU_ID:-0}"
 
-LOG_DIR="${LOG_DIR:-/user/weihongliang/o45_fc_api_cctl_logs}"
+LOG_DIR="${LOG_DIR:-/tmp/minicpmo45_fc_api_cctl_logs}"
+FC_DUPLEX_TRACE_DIR="${FC_DUPLEX_TRACE_DIR:-${LOG_DIR}/fc_traces}"
 ENABLE_FRP="${ENABLE_FRP:-1}"
 FRPC_BIN="${FRPC_BIN:-/user/weihongliang/frp_0.65.0_linux_amd64/frpc}"
 FRPC_CONFIG="${FRPC_CONFIG:-/user/weihongliang/frp_0.65.0_linux_amd64/frpc_o5_cctl_8009_8444.toml}"
 
-mkdir -p "${LOG_DIR}"
+mkdir -p "${LOG_DIR}" "${FC_DUPLEX_TRACE_DIR}"
 cd "${PROJECT_DIR}"
 
 export PYTHONPATH="${PROJECT_DIR}:${SDK_SRC}:${PYTHONPATH:-}"
@@ -30,6 +31,7 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export FC_DUPLEX_TRACE_DIR
 
 BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
 WORKER_ENDPOINT="${WORKER_HOST}:${WORKER_PORT}"
