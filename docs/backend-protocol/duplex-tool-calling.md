@@ -278,7 +278,8 @@ unit_k:
 - `non_spoken_eos`：表示 non-spoken lane 正常结束。它不是某个 `think.end` 或
   `tool_call.args.end` 的简单同义词；span 可以闭合，但 lane 还需要自己的结束状态。
 - `non_spoken_budget_reached`：表示当前 Unit 因预算耗尽而中断，并终止当前
-  think/tool-call text stream。模型 token、slot end 与 Unit end 可以延迟到下一 Unit
+  think/tool-call BPE decoder stream。Capability 的完整 think/tool-call 语义聚合 buffer
+  必须继续保留到 matching end。模型 token、slot end 与 Unit end 可以延迟到下一 Unit
   prefill 前进入 KV；canonical history 必须记录该 deferred feed 时序。
 - `non_spoken_hold`：表示模型要求 non-spoken lane 暂停/保持。它是显式状态，不等价于没有新 delta。
 - `non_spoken_abort`：表示模型中止当前 non-spoken 动作。它和 parser error、runtime cancel、

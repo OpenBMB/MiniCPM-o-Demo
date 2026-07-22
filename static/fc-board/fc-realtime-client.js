@@ -145,6 +145,7 @@ export class FcRealtimeClient {
       event.type === 'session.created'
       || event.type === 'response.generation.step_batch'
       || event.type === 'response.unit.committed'
+      || event.type === 'response.unit.input_events'
       || event.type.startsWith('response.think.')
       || event.type.startsWith('response.tool_call.')
       || event.type === 'response.output.delta'

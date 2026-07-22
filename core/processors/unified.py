@@ -1263,9 +1263,17 @@ class ToolCallStateManager:
 
     @property
     def has_state(self) -> bool:
-        """Whether this Session has tool-call state that resume MVP cannot rebuild yet."""
+        """Whether a valid tool call is still waiting for its external result."""
 
-        return bool(self._states)
+        return bool(
+            self._pending_started
+            or self._pending_error_responses
+        ) or any(
+            state.tool_call is not None
+            and not state.parse_error
+            and not state.response_received
+            for state in self._states.values()
+        )
 
     def _next_unique_id(self) -> str:
         call_id = self.id_generator.next_id()
@@ -1328,6 +1336,16 @@ class ToolCallStateManager:
             converted.append(item)
         return converted
 
+    def restore_completed_sequence(self, tool_call_count: int) -> None:
+        """Advance deterministic internal IDs after replayed completed calls."""
+
+        if tool_call_count < 0:
+            raise ValueError(f"tool_call_count 必须 >= 0: {tool_call_count}")
+        if self._states:
+            raise RuntimeError("cannot restore tool-call sequence with active states")
+        for _ in range(tool_call_count):
+            self.id_generator.next_id()
+
 
 @dataclass
 class _FcTextStreamState:
@@ -1355,6 +1373,9 @@ class FcDuplexView:
         self._spoken_text_stream: Optional[_FcTextStreamState] = None
         self._closed_non_spoken_texts: List[tuple[str, str, bool]] = []
         self._next_non_spoken_continuation_kind: Optional[str] = None
+        self._non_spoken_aggregate_kind: Optional[str] = None
+        self._non_spoken_aggregate_parts: List[str] = []
+        self._non_spoken_aggregate_incomplete = False
         self._resume_text_roundtrip_valid = True
         self._resume_text_roundtrip_error: Optional[Dict[str, Any]] = None
         self._resume_ref_audio_sha256: Optional[str] = None
@@ -1420,10 +1441,21 @@ class FcDuplexView:
         if stream is None:
             return None
         has_pending = bool(stream.pending_token_count)
-        if track == "non_spoken" and record_closed_span:
-            self._closed_non_spoken_texts.append(
-                (stream.kind, "".join(stream.emitted_parts), has_pending)
+        if track == "non_spoken":
+            self._non_spoken_aggregate_incomplete = (
+                self._non_spoken_aggregate_incomplete or has_pending
             )
+            if record_closed_span:
+                self._closed_non_spoken_texts.append(
+                    (
+                        self._non_spoken_aggregate_kind or stream.kind,
+                        "".join(self._non_spoken_aggregate_parts),
+                        self._non_spoken_aggregate_incomplete,
+                    )
+                )
+                self._non_spoken_aggregate_kind = None
+                self._non_spoken_aggregate_parts = []
+                self._non_spoken_aggregate_incomplete = False
         warning = None
         if has_pending:
             self._resume_text_roundtrip_valid = False
@@ -1497,6 +1529,15 @@ class FcDuplexView:
                             self._next_non_spoken_continuation_kind
                         )
                         span_started = stream.kind
+                        if self._non_spoken_aggregate_kind not in {
+                            None,
+                            stream.kind,
+                        }:
+                            raise RuntimeError(
+                                "non-spoken continuation changed aggregate kind: "
+                                f"{self._non_spoken_aggregate_kind} -> {stream.kind}"
+                            )
+                        self._non_spoken_aggregate_kind = stream.kind
                         self._next_non_spoken_continuation_kind = None
                         setattr(self, stream_attr, stream)
                     else:
@@ -1525,6 +1566,8 @@ class FcDuplexView:
                     stream.pending_token_count = 0
                     stream.pending_token_ids.clear()
                     stream.emitted_parts.append(text_delta)
+                    if track == "non_spoken":
+                        self._non_spoken_aggregate_parts.append(text_delta)
                     emitted_parts.append(text_delta)
                 steps.append(
                     FcViewGenerationStep(
@@ -1553,6 +1596,15 @@ class FcDuplexView:
                     stream = self._new_text_stream(stream_kind)
                     if track == "non_spoken":
                         span_started = stream_kind
+                        if self._non_spoken_aggregate_kind not in {
+                            None,
+                            stream_kind,
+                        }:
+                            raise RuntimeError(
+                                "non-spoken opener changed aggregate kind: "
+                                f"{self._non_spoken_aggregate_kind} -> {stream_kind}"
+                            )
+                        self._non_spoken_aggregate_kind = stream_kind
                         self._next_non_spoken_continuation_kind = None
                     setattr(self, stream_attr, stream)
             if semantic_key == "listen" and self._spoken_text_stream is not None:
@@ -1599,6 +1651,9 @@ class FcDuplexView:
                 }
             ):
                 self._next_non_spoken_continuation_kind = None
+                self._non_spoken_aggregate_kind = None
+                self._non_spoken_aggregate_parts = []
+                self._non_spoken_aggregate_incomplete = False
 
         return steps, "".join(emitted_parts), warnings, span_started
 
@@ -1684,6 +1739,7 @@ class FcDuplexView:
             is_listen=data.get("is_listen"),
             is_speaking=data.get("is_speaking", False),
             inserted_token_ids=data.get("inserted_token_ids", []),
+            tool_events=list(data.get("tool_events") or []),
         )
 
     def _spoken_result(self, data: dict) -> FcSpokenGenerateResult:
@@ -1890,6 +1946,9 @@ class FcDuplexView:
         self._spoken_text_stream = None
         self._closed_non_spoken_texts = []
         self._next_non_spoken_continuation_kind = None
+        self._non_spoken_aggregate_kind = None
+        self._non_spoken_aggregate_parts = []
+        self._non_spoken_aggregate_incomplete = False
         self._resume_text_roundtrip_valid = True
         self._resume_text_roundtrip_error = None
         self._ensure_protocol_tokenizer()
@@ -1911,6 +1970,8 @@ class FcDuplexView:
             tool_responses=tool_events or None,
             sample_rate=request.sample_rate,
         )
+        result = dict(result)
+        result["tool_events"] = list(tool_events)
         return self._prefill_result(result)
 
     def streaming_spoken_generate(self, request: FcSpokenGenerateRequest) -> FcSpokenGenerateResult:
@@ -2013,7 +2074,7 @@ class FcDuplexView:
         if self.tool_call_manager.has_state:
             return {
                 "status": "unavailable",
-                "reason": "unsupported_tool_state",
+                "reason": "pending_tool_result",
             }
         if not self._resume_text_roundtrip_valid:
             return dict(
@@ -2081,7 +2142,7 @@ class FcDuplexView:
         *,
         audio_data: Optional[str],
         frame_list: Optional[List[Any]],
-        tool_responses: Optional[List[FcToolResponse]],
+        tool_responses: Optional[List[Any]],
         sample_rate: int,
         spoken_token_ids: List[int],
         non_spoken_token_ids: List[int],
@@ -2110,6 +2171,11 @@ class FcDuplexView:
             )
         self._stream_seq = next_stream_sequence - 1
 
+    def restore_tool_call_sequence(self, tool_call_count: int) -> None:
+        """Advance internal tool-call IDs after stateless history replay."""
+
+        self.tool_call_manager.restore_completed_sequence(tool_call_count)
+
     def decode_output(
         self,
         request: Optional[FcDecodeOutputRequest] = None,
@@ -2135,6 +2201,9 @@ class FcDuplexView:
         self._spoken_text_stream = None
         self._closed_non_spoken_texts = []
         self._next_non_spoken_continuation_kind = None
+        self._non_spoken_aggregate_kind = None
+        self._non_spoken_aggregate_parts = []
+        self._non_spoken_aggregate_incomplete = False
         self._resume_text_roundtrip_valid = True
         self._resume_text_roundtrip_error = None
         self._resume_ref_audio_sha256 = None

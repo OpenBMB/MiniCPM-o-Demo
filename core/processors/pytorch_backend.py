@@ -395,7 +395,7 @@ class PyTorchBackend:
         *,
         audio_data: Optional[str],
         frame_list: Optional[List[Any]],
-        tool_responses: Optional[List[FcToolResponse]],
+        tool_responses: Optional[List[Any]],
         sample_rate: int,
         spoken_token_ids: List[int],
         non_spoken_token_ids: List[int],
@@ -423,6 +423,16 @@ class PyTorchBackend:
 
         fc_view = self.processor.set_fc_duplex_mode()
         fc_view.restore_generation_stream_sequence(next_stream_sequence)
+
+    def fc_duplex_restore_tool_call_sequence(
+        self,
+        *,
+        tool_call_count: int,
+    ) -> None:
+        """Advance View/internal tool-call IDs after stateless replay."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        fc_view.restore_tool_call_sequence(tool_call_count)
 
     def fc_duplex_dump_trace(self, *, path: str, session_id: Optional[str] = None, reason: Optional[str] = None) -> Any:
         if self.processor is None:

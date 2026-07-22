@@ -415,7 +415,6 @@ class FcDuplexCapability:
         self._spoken_logits = None
         self._non_spoken_logits = None
         self._non_spoken_mode = None
-        self._pending_non_spoken_continuation_mode = None
         self._think_buf = []
         self._tool_call_buf = []
         self.tts_text_start_pos = 0
@@ -484,9 +483,6 @@ class FcDuplexCapability:
             "current_unit_idx": self._current_unit_idx,
             "kv_cache_length": self.decoder.get_cache_length(),
             "current_non_spoken_mode": self._non_spoken_mode,
-            "pending_non_spoken_continuation_mode": (
-                self._pending_non_spoken_continuation_mode
-            ),
             "open_think_token_ids": list(self._think_buf),
             "open_tool_call_token_ids": list(self._tool_call_buf),
             "output_ids": ids,
@@ -952,14 +948,6 @@ class FcDuplexCapability:
         if self._current_unit_info is not None:
             self._current_unit_info["non_spoken_ids"].append(tid)
             self._current_unit_info["non_spoken_terminator"] = reason
-        if reason == "budget_reached":
-            if self._non_spoken_mode is not None:
-                self._pending_non_spoken_continuation_mode = (
-                    self._non_spoken_mode
-                )
-            self._non_spoken_mode = None
-            self._think_buf = []
-            self._tool_call_buf = []
         self._record_trace(
             "streaming_non_spoken_close",
             token_ids=[tid],
@@ -975,34 +963,23 @@ class FcDuplexCapability:
     def _track_non_spoken_token(self, nid: int) -> list:
         closed_spans = []
         K = self.K
+        if nid in {
+            self.sid(K.NO_ACTION),
+            self.sid(K.NON_SPOKEN_EOS),
+            self.sid(K.NON_SPOKEN_HOLD),
+            self.sid(K.NON_SPOKEN_ABORT),
+        }:
+            self._non_spoken_mode = None
+            self._think_buf = []
+            self._tool_call_buf = []
+            return closed_spans
         if self._non_spoken_mode is None:
             if nid == self.sid(K.THINK_START):
                 self._non_spoken_mode = "think"
-                self._pending_non_spoken_continuation_mode = None
                 self._think_buf = []
             elif nid == self.sid(K.TOOL_CALL_START):
                 self._non_spoken_mode = "tool_call"
-                self._pending_non_spoken_continuation_mode = None
                 self._tool_call_buf = []
-            elif (
-                not self.is_special(nid)
-                and self._pending_non_spoken_continuation_mode is not None
-            ):
-                self._non_spoken_mode = (
-                    self._pending_non_spoken_continuation_mode
-                )
-                self._pending_non_spoken_continuation_mode = None
-                if self._non_spoken_mode == "think":
-                    self._think_buf = [nid]
-                else:
-                    self._tool_call_buf = [nid]
-            elif nid in {
-                self.sid(K.NO_ACTION),
-                self.sid(K.NON_SPOKEN_EOS),
-                self.sid(K.NON_SPOKEN_HOLD),
-                self.sid(K.NON_SPOKEN_ABORT),
-            }:
-                self._pending_non_spoken_continuation_mode = None
         elif self._non_spoken_mode == "think":
             if nid == self.sid(K.THINK_END):
                 text = self._flush(self._think_buf) if self._think_buf else ""
@@ -1199,13 +1176,6 @@ class FcDuplexCapability:
             self._pending_prefill_unit_info = dict(
                 self._current_unit_info or {"unit": self._current_unit_idx}
             )
-            if self._non_spoken_mode is not None:
-                self._pending_non_spoken_continuation_mode = (
-                    self._non_spoken_mode
-                )
-            self._non_spoken_mode = None
-            self._think_buf = []
-            self._tool_call_buf = []
         else:
             self._feed_ids(
                 [
@@ -1235,17 +1205,11 @@ class FcDuplexCapability:
                 "status": "unavailable",
                 "reason": "unsupported_deferred_close",
             }
-        if (
-            self._non_spoken_mode is not None
-            or self._pending_non_spoken_continuation_mode is not None
-        ):
+        if self._non_spoken_mode is not None:
             return {
                 "status": "unavailable",
                 "reason": "unsupported_open_span",
-                "stream_kind": (
-                    self._non_spoken_mode
-                    or self._pending_non_spoken_continuation_mode
-                ),
+                "stream_kind": self._non_spoken_mode,
             }
         if (
             self.tts_past_key_values is not None

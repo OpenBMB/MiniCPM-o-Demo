@@ -114,3 +114,72 @@ def test_replay_completed_unit_feeds_expected_slot_skeleton_without_sampling() -
         token_ids["unit_end"],
     ]
     assert capability.output_ids == capability._pending_prefill_close_ids
+
+
+def test_tool_call_semantic_buffer_survives_budget_boundary() -> None:
+    """Budget 只终止 View decoder，不能丢失 capability 的完整 tool XML。"""
+
+    capability = object.__new__(FcDuplexCapability)
+    capability.tool_format = "minicpm4_xml"
+    capability._registry = None
+    capability._serializer = None
+    capability._sdk_tokenizer = None
+    capability._normalize_tool_response_content = None
+    capability._tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "display_object_on_board",
+                "description": "Display an object.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+            },
+        }
+    ]
+    capability._non_spoken_mode = None
+    capability._think_buf = []
+    capability._tool_call_buf = []
+    capability._non_spoken_slot_open = True
+    capability._pending_prefill_close_ids = []
+    capability._current_unit_info = {
+        "non_spoken_ids": [],
+        "closed_spans": [],
+    }
+    capability.output_ids = []
+    capability._record_trace = MethodType(
+        lambda self, *args, **kwargs: None,
+        capability,
+    )
+    capability._ensure_protocol()
+
+    wire = (
+        '<function name="display_object_on_board">'
+        '<param name="name">小白兔</param>'
+        "</function>"
+    )
+    wire_ids = capability.encode_text(wire)
+    split_at = len(wire_ids) // 2
+    capability._track_non_spoken_token(
+        capability.sid(capability.K.TOOL_CALL_START)
+    )
+    for token_id in wire_ids[:split_at]:
+        capability._track_non_spoken_token(token_id)
+
+    capability._close_non_spoken_slot(
+        "budget_reached",
+        defer_feed=True,
+    )
+    capability._non_spoken_slot_open = True
+    for token_id in wire_ids[split_at:]:
+        capability._track_non_spoken_token(token_id)
+    closed = capability._track_non_spoken_token(
+        capability.sid(capability.K.TOOL_CALL_END)
+    )
+
+    assert len(closed) == 1
+    assert closed[0]["wire"] == wire
+    assert closed[0]["tool_call"]["error"] is None
+    assert closed[0]["tool_call"]["name"] == "display_object_on_board"

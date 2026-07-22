@@ -22,6 +22,7 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
+import httpx
 import websockets
 
 
@@ -107,7 +108,46 @@ def summarize_event(event: dict[str, Any]) -> str:
     return typ
 
 
-async def drain(ws: websockets.WebSocketClientProtocol, out, *, idle_timeout: float, max_idle: int) -> bool:
+async def _execute_board_tool(
+    event: dict[str, Any],
+    *,
+    base_url: str,
+    insecure: bool,
+) -> str:
+    """Execute the same board tool endpoint used by the browser Demo."""
+
+    raw = dict(event.get("raw") or {})
+    arguments = json.loads(str(raw.get("arguments") or "{}"))
+    name = str(arguments.get("name") or "").strip()
+    if raw.get("name") != "display_object_on_board" or not name:
+        raise RuntimeError(f"unsupported auto tool call: {raw}")
+    async with httpx.AsyncClient(verify=not insecure, timeout=30.0) as client:
+        response = await client.post(
+            f"{base_url.rstrip('/')}/api/fc_board/tools/display_object_on_board",
+            json={
+                "name": name,
+                "tool_call_id": event.get("tool_call_id"),
+            },
+        )
+        response.raise_for_status()
+        result = response.json()
+    return str(
+        result.get("tool_response_content")
+        or json.dumps(result, ensure_ascii=False)
+    )
+
+
+async def drain(
+    ws: websockets.WebSocketClientProtocol,
+    out,
+    *,
+    idle_timeout: float,
+    max_idle: int,
+    auto_execute_board_tool: bool,
+    auto_tool_result_ids: set[str],
+    base_url: str,
+    insecure: bool,
+) -> bool:
     idle = 0
     closed = False
     while idle < max_idle:
@@ -122,6 +162,32 @@ async def drain(ws: websockets.WebSocketClientProtocol, out, *, idle_timeout: fl
         out.write(json.dumps({"ts": time.time(), "frame": event}, ensure_ascii=False) + "\n")
         out.flush()
         print("RX", summarize_event(event)[:500], flush=True)
+        if (
+            auto_execute_board_tool
+            and event.get("type") == "response.tool_call.args.raw"
+            and not dict(event.get("raw") or {}).get("error")
+        ):
+            tool_call_id = str(event.get("tool_call_id") or "")
+            if tool_call_id and tool_call_id not in auto_tool_result_ids:
+                content = await _execute_board_tool(
+                    event,
+                    base_url=base_url,
+                    insecure=insecure,
+                )
+                tool_result = {
+                    "type": "input.tool_result",
+                    "tool_call_id": tool_call_id,
+                    "contents": [{"kind": "text", "text": content}],
+                }
+                await ws.send(json.dumps(tool_result, ensure_ascii=False))
+                out.write(json.dumps({
+                    "ts": time.time(),
+                    "dir": "up",
+                    "frame": tool_result,
+                }, ensure_ascii=False) + "\n")
+                out.flush()
+                auto_tool_result_ids.add(tool_call_id)
+                print("TX auto input.tool_result", tool_call_id, flush=True)
         if event.get("type") == "session.closed":
             closed = True
             break
@@ -143,6 +209,7 @@ async def replay(args: argparse.Namespace) -> None:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     ssl_context = ssl._create_unverified_context() if args.insecure else None
+    auto_tool_result_ids: set[str] = set()
     async with websockets.connect(ws_url(args.base_url), ssl=ssl_context, max_size=128 * 1024 * 1024) as ws:
         with output.open("w") as out:
             previous_ts: float | None = None
@@ -156,12 +223,48 @@ async def replay(args: argparse.Namespace) -> None:
                 await ws.send(json.dumps(frame, ensure_ascii=False))
                 print("TX", index, frame.get("type"), flush=True)
                 if frame.get("type") == "session.init":
-                    await drain(ws, out, idle_timeout=args.idle_timeout, max_idle=1)
+                    await drain(
+                        ws,
+                        out,
+                        idle_timeout=args.idle_timeout,
+                        max_idle=1,
+                        auto_execute_board_tool=args.auto_execute_board_tool,
+                        auto_tool_result_ids=auto_tool_result_ids,
+                        base_url=args.base_url,
+                        insecure=args.insecure,
+                    )
                 elif frame.get("type") == "session.close":
-                    await drain(ws, out, idle_timeout=args.idle_timeout, max_idle=args.close_idle_rounds)
+                    await drain(
+                        ws,
+                        out,
+                        idle_timeout=args.idle_timeout,
+                        max_idle=args.close_idle_rounds,
+                        auto_execute_board_tool=args.auto_execute_board_tool,
+                        auto_tool_result_ids=auto_tool_result_ids,
+                        base_url=args.base_url,
+                        insecure=args.insecure,
+                    )
                 else:
-                    await drain(ws, out, idle_timeout=args.idle_timeout, max_idle=args.between_idle_rounds)
-            await drain(ws, out, idle_timeout=args.idle_timeout, max_idle=args.close_idle_rounds)
+                    await drain(
+                        ws,
+                        out,
+                        idle_timeout=args.idle_timeout,
+                        max_idle=args.between_idle_rounds,
+                        auto_execute_board_tool=args.auto_execute_board_tool,
+                        auto_tool_result_ids=auto_tool_result_ids,
+                        base_url=args.base_url,
+                        insecure=args.insecure,
+                    )
+            await drain(
+                ws,
+                out,
+                idle_timeout=args.idle_timeout,
+                max_idle=args.close_idle_rounds,
+                auto_execute_board_tool=args.auto_execute_board_tool,
+                auto_tool_result_ids=auto_tool_result_ids,
+                base_url=args.base_url,
+                insecure=args.insecure,
+            )
     print(f"wrote={output}")
 
 
@@ -179,6 +282,11 @@ def main() -> None:
     parser.add_argument("--between-idle-rounds", type=int, default=1)
     parser.add_argument("--close-idle-rounds", type=int, default=6)
     parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification")
+    parser.add_argument(
+        "--auto-execute-board-tool",
+        action="store_true",
+        help="Execute valid display_object_on_board calls and send input.tool_result.",
+    )
     parser.add_argument(
         "--skip-recorded-tool-results",
         action="store_true",

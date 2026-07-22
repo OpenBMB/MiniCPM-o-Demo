@@ -59,6 +59,8 @@ Think / tool-call：
 - Budget 后模型可能在下一 Unit 直接继续 ordinary token、而不重复 opener。此时 View
   继承上一个 stream kind，但创建新的 `stream_id` 与 decoder；这不是跨 Unit 复用旧
   decoder。
+- View 的 BPE decoder 在 budget 处终止，但 Capability 的 think/tool-call 语义聚合
+  buffer 必须保留到 matching end；否则跨 Unit tool XML 会只剩后半段而无法解析。
 - Unit 边界本身不影响 stream。
 - active stream 内再次出现任意 opener 是非法嵌套，View MUST 抛出 `RuntimeError`。
 
@@ -273,6 +275,33 @@ Stream 在 incomplete BPE 状态结束时发送：
 
 Warning 不终止 live Session，但对应 history 不再满足 exact resume 条件。
 
+### 5.2 response.unit.input_events
+
+Backend 在实际完成某 Unit 的 prefill 后，显式记录该 Unit 真正注入模型的 tool events：
+
+```json
+{
+  "type": "response.unit.input_events",
+  "event_index": 117,
+  "unit_index": 25,
+  "input_id": "input_000027",
+  "events": [
+    {"type": "tool_started", "tool_call_id": "tc_000002"},
+    {
+      "type": "tool_response",
+      "tool_call_id": "tc_000002",
+      "content": "displayed"
+    }
+  ]
+}
+```
+
+该事件是 tool event→Unit 归属的唯一事实来源。Canonicalizer MUST NOT 根据
+`input.tool_result` 与 `input.append` 的 WebSocket 相邻关系推断归属，因为 latency queue
+可能丢弃中间 input，tool result 也可能在 GPU prefill 后、首个 generation step 前到达。
+Backend MUST 为每个实际处理 Unit 发送该事件，包括 `events=[]`；空事件也是“prefill
+已完成快照”的必要边界。
+
 ## 6. Unit checkpoint
 
 每个 Unit 完成后发送：
@@ -320,7 +349,8 @@ Unit checkpoint 只有同时满足以下条件才可标为 `available`：
 4. 目标 Unit 没有 deferred non-spoken close 等待下一次 prefill 才进入 KV；历史中
    更早的 deferred close 已按 canonical timing 在后续 prefill 前完成 feed。
 5. 本 Unit 所需上行输入已完整记录。
-6. 当前 Session 尚未产生需要恢复 tool-call ID 映射的工具调用或 tool result。
+6. 当前没有合法 tool call 等待外部结果，也没有尚未注入下一 Unit 的内部 tool events。
+   已完成 tool result 和 parse-error 的 deterministic call-id 序列可以 replay。
 7. 模型、tokenizer fingerprint、LLM reference audio 与 TTS prompt wav 的内容 hash
    与原 Session 完全一致。
 
@@ -330,8 +360,8 @@ Unit checkpoint 只有同时满足以下条件才可标为 `available`：
 
 条件不满足时标记 `unavailable`。Deferred close 只影响其所在 Unit；下一 Unit prefill
 完成 deferred feed 后，后续 checkpoint 可以重新变为 `available`。Incomplete BPE
-warning 与当前不支持的 tool-call/tool-result state 会使后续 checkpoint 保持
-`unavailable`。
+warning 会使后续 checkpoint 保持 `unavailable`；合法 tool call 只在等待结果或等待
+下一 Unit 注入 events 时暂时 unavailable。
 
 ## 7. Resume 请求
 
@@ -366,6 +396,8 @@ Resume 使用新 WebSocket 连接，第一帧发送 `session.resume`：
 - `session.init`
 - 全部 `input.append` 原始输入（包含音频/图像或可读取引用）
 - 全部 `input.tool_result*`
+- 全部 `response.tool_call.args.raw`
+- 每个实际处理 Unit 的 `response.unit.input_events`（包括空 events）
 - 全部 canonical generation step batches
 - 全部 Unit checkpoints
 
@@ -390,8 +422,11 @@ Resume 使用新 WebSocket 连接，第一帧发送 `session.resume`：
 5. 对每个 safe text delta 独立调用 `encode_ordinary(text)`。
 6. 校验 re-encode token 数等于其 source step 数，并按 step 顺序恢复 ordinary token ID。
 7. 按 Unit 模板重建未显式发送的结构骨架。
-8. 以 deterministic feed（不重新采样）恢复历史输出 token 到模型/KV。
-9. 从 `next_unit_index` 继续实时推理。
+8. 按 `response.tool_call.args.raw` 顺序重建 deterministic internal call ID；
+   使用 `response.unit.input_events` 的显式归属 replay `tool_started`、parse-error
+   自动 response 与完整 `input.tool_result`。
+9. 以 deterministic feed（不重新采样）恢复历史输出 token 到模型/KV。
+10. 从 `next_unit_index` 继续实时推理。
 
 ## 9. Resume 失败
 
@@ -407,6 +442,10 @@ unsupported_spoken_turn_state
 unsupported_deferred_close
 unsupported_tool_state
 ```
+
+`unsupported_tool_state` 当前只用于 streaming tool result、未知/重复 tool result 或
+目标 checkpoint 仍有 pending tool events；已完成的完整 tool result 不再永久阻止
+resume。
 
 ```json
 {
@@ -474,4 +513,4 @@ unsupported_tool_state
 - spoken turn/TTS 中途恢复；
 - open think/tool-call span 中途恢复；
 - deferred close 边界恢复。
-- 包含 tool-call/tool-result 状态的 Session 恢复。
+- streaming `input.tool_result.delta/done` 的 stateless replay。

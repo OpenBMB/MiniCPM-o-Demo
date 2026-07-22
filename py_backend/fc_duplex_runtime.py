@@ -252,7 +252,7 @@ class FcDuplexSessionRuntime:
                 self.backend.fc_duplex_replay_completed_unit,
                 audio_data=audio_base64,
                 frame_list=frame_list,
-                tool_responses=None,
+                tool_responses=list(unit.tool_events) or None,
                 sample_rate=sample_rate,
                 spoken_token_ids=unit.spoken_token_ids,
                 non_spoken_token_ids=unit.non_spoken_token_ids,
@@ -268,6 +268,17 @@ class FcDuplexSessionRuntime:
                 restore_stream_sequence,
                 next_stream_sequence=plan.next_stream_sequence,
             )
+        restore_tool_call_sequence = getattr(
+            self.backend,
+            "fc_duplex_restore_tool_call_sequence",
+            None,
+        )
+        if restore_tool_call_sequence is not None:
+            await asyncio.to_thread(
+                restore_tool_call_sequence,
+                tool_call_count=plan.tool_call_count,
+            )
+        self._tool_seq = plan.api_tool_call_sequence
 
         boundary_status_fn = getattr(
             self.backend,
@@ -419,12 +430,17 @@ class FcDuplexSessionRuntime:
                 sample_rate=sample_rate,
             )
 
-        await asyncio.to_thread(
+        prefill = await asyncio.to_thread(
             self.backend.fc_duplex_prefill,
             audio_data=audio_base64,
             frame_list=frame_list,
             tool_responses=tool_responses or None,
             sample_rate=sample_rate,
+        )
+        await self._emit_unit_input_events(
+            prefill,
+            unit_index=unit_index,
+            input_id=input_id,
         )
 
         spoken = await asyncio.to_thread(
@@ -715,6 +731,43 @@ class FcDuplexSessionRuntime:
                 "used": int(used),
             },
         )
+
+    async def _emit_unit_input_events(
+        self,
+        prefill: Any,
+        *,
+        unit_index: int,
+        input_id: Optional[str],
+    ) -> None:
+        """Expose the exact processed-Unit attribution of internal tool events."""
+
+        public_events: List[Dict[str, Any]] = []
+        for raw_event in list(getattr(prefill, "tool_events", None) or []):
+            event = dict(raw_event)
+            internal_call_id = str(event.get("call_id") or "")
+            api_call_id = self._internal_to_api.get(internal_call_id)
+            if not api_call_id:
+                raise RuntimeError(
+                    "processed tool event has no API id mapping: "
+                    f"{internal_call_id!r}"
+                )
+            public_event = {
+                "type": str(event.get("type") or "tool_response"),
+                "tool_call_id": api_call_id,
+            }
+            if "content" in event:
+                public_event["content"] = event["content"]
+            public_events.append(public_event)
+        await self._send(
+            "response.unit.input_events",
+            session_id=self.session_id,
+            response_id=self._response_id,
+            input_id=input_id,
+            event_index=self._generation_event_index,
+            unit_index=unit_index,
+            events=public_events,
+        )
+        self._generation_event_index += 1
 
     async def _record_generation_steps(
         self,

@@ -534,8 +534,9 @@ backend runtime 只把 `contents[*].text` 拼成模型输入文本，不理解/�
 - `latency` / 性能模式：下一 audio chunk 到来时，当前 unit 应尽快以
   `budget_reached` 收束，优先处理新输入。`budget_reached` 终止当前 View text
   stream 和 decoder，但不伪造 `</think>` / `</tool_call>`，也不能发业务层
-  tool-call done；后续 Unit 出现新 opener 时创建新 stream。若模型直接继续 ordinary
-  token 而省略 opener，View 继承前一 stream kind，但仍创建新的 decoder/stream_id。
+  tool-call done；Capability 的完整 semantic aggregate buffer 保留到 matching end。
+  后续 Unit 出现新 opener 时创建新 stream。若模型直接继续 ordinary token 而省略
+  opener，View 继承前一 stream kind，但仍创建新的 decoder/stream_id。
 - `quality` / 质量模式：audio chunk 进入队列，当前 unit 跑完固定 `non_spoken_budget_per_unit` 或自然 terminated 后再处理下一个 chunk。这样更容易让 think/tool-call 在当前 unit 内自然闭合，但会积压延迟。
 
 这属于 view 之上的 session/runtime 节奏控制；token 合法性、special token 插入和 `budget_reached` 如何进入模型上下文仍属于 `FcDuplexCapability` / modeling 层。

@@ -571,3 +571,230 @@ def test_resume_plan_accepts_turn_eos_followed_by_synthetic_slot_eos() -> None:
     )
 
     assert plan.through_unit_index == 0
+
+
+def test_resume_plan_replays_completed_tool_result_with_internal_call_id() -> None:
+    """Public API tool_call_id 必须映射回 deterministic internal call_id。"""
+
+    history = [
+        {
+            "type": "session.init",
+            "payload": {
+                "mode": "full_duplex",
+                "fc_duplex": True,
+                "tokenizer_target": "o45_fc",
+            },
+        },
+        {
+            "type": "input.append",
+            "input": {"input_id": "u0", "audio_base64": "AAAAAA=="},
+        },
+    ]
+    unit0_steps = [
+        ("spoken", "spoken_protocol", "listen"),
+        ("non_spoken", "tool_call_1", "tool_call_start"),
+        ("non_spoken", "tool_call_1", "tool_call_end"),
+    ]
+    for index, (track, stream_id, semantic_key) in enumerate(unit0_steps):
+        history.append(
+            {
+                "type": "response.generation.step_batch",
+                "event_index": index,
+                "batch_index": index,
+                "stream_id": stream_id,
+                "track": track,
+                "steps": [
+                    {
+                        "step_index": index,
+                        "unit_index": 0,
+                        "output": {
+                            "kind": "protocol",
+                            "semantic_key": semantic_key,
+                        },
+                    }
+                ],
+            }
+        )
+    history.extend(
+        [
+            {
+                "type": "response.tool_call.args.raw",
+                "tool_call_id": "tc_000001",
+                "raw": {
+                    "type": "function_call",
+                    "name": "display_object_on_board",
+                    "arguments": '{"name":"小白兔"}',
+                },
+            },
+            {
+                "type": "response.unit.committed",
+                "event_index": 3,
+                "unit_index": 0,
+                "input_id": "u0",
+                "last_step_index": 2,
+                "resume": {
+                    "status": "unavailable",
+                    "reason": "pending_tool_result",
+                },
+            },
+            {
+                "type": "input.append",
+                "input": {"input_id": "u1", "audio_base64": "AAAAAA=="},
+            },
+            {
+                "type": "response.unit.input_events",
+                "event_index": 4,
+                "unit_index": 1,
+                "input_id": "u1",
+                "events": [
+                    {
+                        "type": "tool_started",
+                        "tool_call_id": "tc_000001",
+                    }
+                ],
+            },
+            {
+                "type": "input.tool_result",
+                "tool_call_id": "tc_000001",
+                "contents": [{"kind": "text", "text": "displayed"}],
+            },
+            {
+                "type": "response.tool_call.abort",
+                "tool_call_id": "tc_000002",
+                "reason": "budget_reached",
+            },
+            {
+                "type": "response.generation.step_batch",
+                "event_index": 5,
+                "batch_index": 3,
+                "stream_id": "spoken_protocol",
+                "track": "spoken",
+                "steps": [
+                    {
+                        "step_index": 3,
+                        "unit_index": 1,
+                        "output": {
+                            "kind": "protocol",
+                            "semantic_key": "listen",
+                        },
+                    }
+                ],
+            },
+            {
+                "type": "response.generation.step_batch",
+                "event_index": 6,
+                "batch_index": 4,
+                "stream_id": "non_spoken_protocol",
+                "track": "non_spoken",
+                "steps": [
+                    {
+                        "step_index": 4,
+                        "unit_index": 1,
+                        "output": {
+                            "kind": "protocol",
+                            "semantic_key": "no_action",
+                        },
+                    }
+                ],
+            },
+            {
+                "type": "response.unit.committed",
+                "event_index": 7,
+                "unit_index": 1,
+                "input_id": "u1",
+                "last_step_index": 4,
+                "resume": {
+                    "status": "unavailable",
+                    "reason": "pending_tool_result",
+                },
+            },
+            {
+                "type": "input.append",
+                "input": {
+                    "input_id": "dropped_after_tool_result",
+                    "audio_base64": "AQAAAA==",
+                },
+            },
+            {
+                "type": "input.append",
+                "input": {"input_id": "u2", "audio_base64": "AAAAAA=="},
+            },
+            {
+                "type": "response.unit.input_events",
+                "event_index": 8,
+                "unit_index": 2,
+                "input_id": "u2",
+                "events": [
+                    {
+                        "type": "tool_response",
+                        "tool_call_id": "tc_000001",
+                        "content": "displayed",
+                    }
+                ],
+            },
+            {
+                "type": "response.generation.step_batch",
+                "event_index": 9,
+                "batch_index": 5,
+                "stream_id": "spoken_protocol",
+                "track": "spoken",
+                "steps": [
+                    {
+                        "step_index": 5,
+                        "unit_index": 2,
+                        "output": {
+                            "kind": "protocol",
+                            "semantic_key": "listen",
+                        },
+                    }
+                ],
+            },
+            {
+                "type": "response.generation.step_batch",
+                "event_index": 10,
+                "batch_index": 6,
+                "stream_id": "non_spoken_protocol",
+                "track": "non_spoken",
+                "steps": [
+                    {
+                        "step_index": 6,
+                        "unit_index": 2,
+                        "output": {
+                            "kind": "protocol",
+                            "semantic_key": "no_action",
+                        },
+                    }
+                ],
+            },
+            {
+                "type": "response.unit.committed",
+                "event_index": 11,
+                "unit_index": 2,
+                "input_id": "u2",
+                "last_step_index": 6,
+                "resume": {"status": "available"},
+            },
+        ]
+    )
+
+    plan = build_fc_duplex_resume_plan(
+        protocol_version="fc-duplex-resume-v1",
+        model="minicpm-o-4.5",
+        tokenizer_target="o45_fc",
+        tokenizer_fingerprint=_fingerprint("o45_fc"),
+        through_unit_index=2,
+        history=history,
+    )
+
+    assert plan.tool_call_count == 1
+    assert plan.api_tool_call_sequence == 2
+    assert plan.units[1].tool_events == [
+        {"type": "tool_started", "call_id": "fc_call_000001"},
+    ]
+    assert plan.units[2].tool_events == [
+        {
+            "type": "tool_response",
+            "call_id": "fc_call_000001",
+            "content": "displayed",
+        },
+    ]

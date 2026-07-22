@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from core.processors.unified import FcDuplexView
+from core.processors.unified import FcDuplexView, ToolCallStateManager
 from core.schemas.fc_duplex import (
     FcDuplexPrepareRequest,
     FcNonSpokenGenerateRequest,
@@ -213,9 +213,13 @@ def test_budget_reached_terminates_think_stream_and_next_opener_is_new_stream() 
     model = _FakeFcModel()
     tokenizer = model.fc_duplex.protocol_tokenizer
     think_start = tokenizer.token_to_id("<think>")
+    think_end = tokenizer.token_to_id("</think>")
     model.non_spoken_results = [
         {"token_ids": [think_start, *tokenizer.encode_ordinary("完整")]},
-        {"token_ids": tokenizer.encode_ordinary("后续")},
+        {
+            "token_ids": [*tokenizer.encode_ordinary("后续"), think_end],
+            "closed_spans": [{"type": "think", "text": "完整后续"}],
+        },
     ]
     view = FcDuplexView(model)  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest())
@@ -278,3 +282,32 @@ def test_pending_bpe_at_explicit_end_emits_warning_instead_of_runtime_error() ->
 
     assert len(closed.warnings) == 1
     assert closed.warnings[0].reason == "think_end"
+
+
+def test_tool_state_blocks_resume_only_while_valid_call_waits_for_result() -> None:
+    """Parse error 和已回填调用不应永久触发 unsupported_tool_state。"""
+
+    manager = ToolCallStateManager()
+    manager.register_parse_error("malformed")
+    assert manager.has_state is True
+    manager.consume_pending_started_events()
+    manager.consume_pending_error_responses()
+    assert manager.has_state is False
+
+    call_id = manager.register_tool_call(
+        {
+            "name": "display_object_on_board",
+            "arguments": '{"name":"小白兔"}',
+        }
+    )
+    assert manager.has_state is True
+    manager.consume_pending_started_events()
+
+    manager.validate_and_mark_responses(
+        [{"call_id": call_id, "content": "displayed"}]
+    )
+    assert manager.has_state is False
+
+    replayed_manager = ToolCallStateManager()
+    replayed_manager.restore_completed_sequence(1)
+    assert replayed_manager.register_tool_call({"name": "next"}) == "fc_call_000002"

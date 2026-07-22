@@ -51,6 +51,7 @@ PYTHONPATH=".:${SDK_SRC}" "${PYTHON}" scripts/fc_duplex_replay_session.py \
     --close-idle-rounds 8 \
     --insecure \
     --skip-recorded-tool-results \
+    --auto-execute-board-tool \
     >"${OUT}/recorded_replay.log" 2>&1
 
 "${PYTHON}" - "${OUT}/recorded_replay.jsonl" <<'PY'
@@ -58,11 +59,12 @@ from pathlib import Path
 import json
 import sys
 
-events = [
-    json.loads(line)["frame"]
+records = [
+    json.loads(line)
     for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
     if line.strip()
 ]
+events = [record["frame"] for record in records]
 checkpoints = [
     event for event in events
     if event.get("type") == "response.unit.committed"
@@ -87,11 +89,41 @@ if any(
     raise RuntimeError("recorded replay hit backend_error")
 if "\ufffd" in json.dumps(events, ensure_ascii=False):
     raise RuntimeError("public API leaked U+FFFD")
+raw_events = [
+    event for event in events
+    if event.get("type") == "response.tool_call.args.raw"
+]
+if not raw_events:
+    raise RuntimeError("recorded replay did not produce a tool call")
+if any(dict(event.get("raw") or {}).get("error") for event in raw_events):
+    raise RuntimeError("tool call raw contained parse error")
+tool_result_positions = [
+    index for index, record in enumerate(records)
+    if record.get("dir") == "up"
+    and record.get("frame", {}).get("type") == "input.tool_result"
+]
+if not tool_result_positions:
+    raise RuntimeError("tool endpoint was not executed / no input.tool_result sent")
+first_tool_result_position = tool_result_positions[0]
+if not any(
+    record.get("frame", {}).get("type") == "response.unit.committed"
+    and record.get("frame", {}).get("resume", {}).get("status") == "available"
+    for record in records[first_tool_result_position + 1:]
+):
+    raise RuntimeError("checkpoint never recovered after tool result")
+if any(
+    event.get("type") == "response.unit.committed"
+    and event.get("resume", {}).get("reason") == "unsupported_tool_state"
+    for event in events
+):
+    raise RuntimeError("checkpoint leaked unsupported_tool_state")
 print(json.dumps({
     "recorded_replay_ok": True,
     "checkpoint_count": len(checkpoints),
     "first_deferred_unit": checkpoints[first_deferred].get("unit_index"),
     "later_available": True,
+    "valid_tool_calls": len(raw_events),
+    "tool_results_sent": len(tool_result_positions),
 }, ensure_ascii=False))
 PY
 

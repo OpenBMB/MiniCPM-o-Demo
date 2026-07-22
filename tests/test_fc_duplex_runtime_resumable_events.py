@@ -193,9 +193,14 @@ async def test_runtime_emits_available_unit_checkpoint_after_canonical_steps() -
         event
         for event in events
         if event["type"]
-        in {"response.generation.step_batch", "response.unit.committed"}
+        in {
+            "response.unit.input_events",
+            "response.generation.step_batch",
+            "response.unit.committed",
+        }
     ]
-    assert [event["event_index"] for event in canonical_events] == [0, 1, 2]
+    assert [event["event_index"] for event in canonical_events] == [0, 1, 2, 3]
+    assert canonical_events[0]["events"] == []
     checkpoint = canonical_events[-1]
     assert checkpoint["type"] == "response.unit.committed"
     assert checkpoint["unit_index"] == 0
@@ -436,3 +441,58 @@ async def test_detached_queue_runtime_error_invokes_session_fatal_callback() -> 
     assert len(fatal_errors) == 1
     assert "listen before spoken_turn_eos" in str(fatal_errors[0])
     assert runtime._closed is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_explicit_processed_unit_tool_event_attribution() -> None:
+    """Tool events 必须由 backend 显式绑定到实际处理 Unit，不能靠时序推断。"""
+
+    events: list[dict[str, Any]] = []
+
+    async def send(event_type: str, **fields: Any) -> None:
+        events.append({"type": event_type, **fields})
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_tool_events",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+    runtime._internal_to_api["fc_call_000001"] = "tc_000002"
+    prefill = SimpleNamespace(
+        tool_events=[
+            {"type": "tool_started", "call_id": "fc_call_000001"},
+            {
+                "type": "tool_response",
+                "call_id": "fc_call_000001",
+                "content": "displayed",
+            },
+        ]
+    )
+
+    await runtime._emit_unit_input_events(
+        prefill,
+        unit_index=7,
+        input_id="actual_processed_input",
+    )
+
+    assert events == [
+        {
+            "type": "response.unit.input_events",
+            "session_id": "sess_tool_events",
+            "response_id": None,
+            "input_id": "actual_processed_input",
+            "event_index": 0,
+            "unit_index": 7,
+            "events": [
+                {
+                    "type": "tool_started",
+                    "tool_call_id": "tc_000002",
+                },
+                {
+                    "type": "tool_response",
+                    "tool_call_id": "tc_000002",
+                    "content": "displayed",
+                },
+            ],
+        }
+    ]

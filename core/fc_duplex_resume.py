@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import re
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -62,7 +63,7 @@ class FcDuplexResumeUnitPlan(BaseModel):
 
     unit_index: int = Field(..., ge=0)
     input_payload: dict[str, Any]
-    tool_result_payloads: list[dict[str, Any]] = Field(default_factory=list)
+    tool_events: list[dict[str, Any]] = Field(default_factory=list)
     spoken_token_ids: list[int] = Field(default_factory=list)
     non_spoken_token_ids: list[int] = Field(default_factory=list)
     deferred_non_spoken_close: bool = False
@@ -81,6 +82,8 @@ class FcDuplexResumePlan(BaseModel):
     next_stream_sequence: int
     next_delta_index_by_stream: dict[str, int]
     seen_input_ids: list[str]
+    tool_call_count: int = 0
+    api_tool_call_sequence: int = 0
     session_init_payload: dict[str, Any]
     units: list[FcDuplexResumeUnitPlan]
 
@@ -161,6 +164,23 @@ def _validate_replay_audio(input_payload: dict[str, Any], *, input_id: str) -> N
         )
 
 
+def _tool_result_content(contents: Any) -> str:
+    """Normalize public tool-result contents exactly like the live runtime."""
+
+    if not isinstance(contents, list):
+        return json.dumps(contents, ensure_ascii=False)
+    parts: list[str] = []
+    for item in contents:
+        if isinstance(item, dict):
+            if item.get("kind") == "text" or "text" in item:
+                parts.append(str(item.get("text") or ""))
+            else:
+                parts.append(json.dumps(item, ensure_ascii=False))
+        else:
+            parts.append(str(item))
+    return "".join(parts)
+
+
 def build_fc_duplex_resume_plan(
     *,
     protocol_version: str,
@@ -234,8 +254,15 @@ def build_fc_duplex_resume_plan(
     input_payload_by_id: dict[str, dict[str, Any]] = {}
     checkpoint_by_unit: dict[int, dict[str, Any]] = {}
     track_phase_by_unit: dict[int, Literal["spoken", "non_spoken"]] = {}
-    tool_results_by_input_id: dict[str, list[dict[str, Any]]] = {}
-    pending_tool_results: list[dict[str, Any]] = []
+    tool_events_by_unit: dict[int, list[dict[str, Any]]] = {}
+    pending_tool_started_events: list[dict[str, Any]] = []
+    pending_tool_error_events: list[dict[str, Any]] = []
+    pending_tool_response_events: list[dict[str, Any]] = []
+    api_to_internal_tool_call_id: dict[str, str] = {}
+    pending_valid_tool_call_ids: set[str] = set()
+    completed_tool_result_ids: set[str] = set()
+    tool_call_count = 0
+    maximum_api_tool_call_sequence = 0
     expected_event_index = 0
     expected_batch_index = 0
     expected_step_index = 0
@@ -255,12 +282,85 @@ def build_fc_duplex_resume_plan(
                 f"resume history event 必须是 object: {event!r}",
             )
         event_type = str(event.get("type") or "")
+        if event_type.startswith("response.tool_call"):
+            api_sequence_match = re.fullmatch(
+                r"tc_(\d+)",
+                str(event.get("tool_call_id") or ""),
+            )
+            if api_sequence_match is not None:
+                maximum_api_tool_call_sequence = max(
+                    maximum_api_tool_call_sequence,
+                    int(api_sequence_match.group(1)),
+                )
+        if event_type == "response.tool_call.args.raw":
+            api_call_id = str(event.get("tool_call_id") or "")
+            if (
+                not api_call_id
+                or api_call_id in api_to_internal_tool_call_id
+            ):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"tool_call raw 缺少唯一 id: {api_call_id!r}",
+                )
+            tool_call_count += 1
+            internal_call_id = (
+                f"fc_call_{tool_call_count:06d}"
+            )
+            api_to_internal_tool_call_id[api_call_id] = internal_call_id
+            pending_tool_started_events.append(
+                {
+                    "type": "tool_started",
+                    "call_id": internal_call_id,
+                }
+            )
+            raw = dict(event.get("raw") or {})
+            if raw.get("error"):
+                pending_tool_error_events.append(
+                    {
+                        "type": "tool_response",
+                        "call_id": internal_call_id,
+                        "content": (
+                            "工具调用解析失败，无法执行该工具调用。错误信息："
+                            + str(raw["error"])
+                        ),
+                    }
+                )
+            else:
+                pending_valid_tool_call_ids.add(api_call_id)
+            continue
         if event_type in {
             "input.tool_result",
             "input.tool_result.delta",
             "input.tool_result.done",
         }:
-            pending_tool_results.append(dict(event))
+            if event_type != "input.tool_result":
+                raise _resume_error(
+                    "unsupported_tool_state",
+                    "当前 resume 仅支持完整 input.tool_result，"
+                    "不支持 streaming tool result",
+                )
+            api_call_id = str(event.get("tool_call_id") or "")
+            response_internal_call_id = api_to_internal_tool_call_id.get(
+                api_call_id
+            )
+            if (
+                response_internal_call_id is None
+                or api_call_id not in pending_valid_tool_call_ids
+                or api_call_id in completed_tool_result_ids
+            ):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"tool result 无匹配 pending call: {api_call_id!r}",
+                )
+            pending_tool_response_events.append(
+                {
+                    "type": "tool_response",
+                    "call_id": response_internal_call_id,
+                    "content": _tool_result_content(event.get("contents")),
+                }
+            )
+            pending_valid_tool_call_ids.remove(api_call_id)
+            completed_tool_result_ids.add(api_call_id)
             continue
         if event_type == "input.append":
             input_payload = dict(event.get("input") or {})
@@ -272,10 +372,9 @@ def build_fc_duplex_resume_plan(
                 )
             _validate_replay_audio(input_payload, input_id=input_id)
             input_payload_by_id[input_id] = input_payload
-            tool_results_by_input_id[input_id] = pending_tool_results
-            pending_tool_results = []
             continue
         if event_type not in {
+            "response.unit.input_events",
             "response.generation.step_batch",
             "response.unit.committed",
         }:
@@ -288,6 +387,54 @@ def build_fc_duplex_resume_plan(
                 f"event_index 不连续: expected={expected_event_index}, actual={event_index}",
             )
         expected_event_index += 1
+
+        if event_type == "response.unit.input_events":
+            unit_index = int(event.get("unit_index", -1))
+            if unit_index in tool_events_by_unit:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"重复 response.unit.input_events: unit={unit_index}",
+                )
+            canonical_events: list[dict[str, Any]] = []
+            for public_event in list(event.get("events") or []):
+                if not isinstance(public_event, dict):
+                    raise _resume_error(
+                        "incomplete_event_history",
+                        f"unit input event 必须是 object: {public_event!r}",
+                    )
+                api_call_id = str(public_event.get("tool_call_id") or "")
+                attributed_internal_call_id = api_to_internal_tool_call_id.get(
+                    api_call_id
+                )
+                if attributed_internal_call_id is None:
+                    raise _resume_error(
+                        "incomplete_event_history",
+                        f"unit input event 引用未知 tool_call_id: {api_call_id}",
+                    )
+                canonical_event = {
+                    "type": str(
+                        public_event.get("type") or "tool_response"
+                    ),
+                    "call_id": attributed_internal_call_id,
+                }
+                if "content" in public_event:
+                    canonical_event["content"] = public_event["content"]
+                canonical_events.append(canonical_event)
+            expected_tool_events = [
+                *pending_tool_started_events,
+                *pending_tool_error_events,
+                *pending_tool_response_events,
+            ]
+            if canonical_events != expected_tool_events:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    "response.unit.input_events 与 public tool history 不一致",
+                )
+            tool_events_by_unit[unit_index] = canonical_events
+            pending_tool_started_events = []
+            pending_tool_error_events = []
+            pending_tool_response_events = []
+            continue
 
         if event_type == "response.unit.committed":
             unit_index = int(event.get("unit_index", -1))
@@ -344,6 +491,18 @@ def build_fc_duplex_resume_plan(
                 )
             step_index = int(raw_step.get("step_index", -1))
             unit_index = int(raw_step.get("unit_index", -1))
+            if (
+                unit_index not in tool_events_by_unit
+                and (
+                    pending_tool_started_events
+                    or pending_tool_error_events
+                    or pending_tool_response_events
+                )
+            ):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"Unit {unit_index} 缺少 response.unit.input_events",
+                )
             if (
                 step_index != expected_step_index
                 or unit_index != len(checkpoint_by_unit)
@@ -613,6 +772,21 @@ def build_fc_duplex_resume_plan(
             f"缺少目标 Unit checkpoint: {through_unit_index}",
             unit_index=through_unit_index,
         )
+    if pending_valid_tool_call_ids:
+        raise _resume_error(
+            "unsupported_tool_state",
+            "目标 checkpoint 仍有 pending tool result: "
+            + ", ".join(sorted(pending_valid_tool_call_ids)),
+        )
+    if (
+        pending_tool_started_events
+        or pending_tool_error_events
+        or pending_tool_response_events
+    ):
+        raise _resume_error(
+            "unsupported_tool_state",
+            "目标 checkpoint 仍有尚未注入下一 Unit 的 tool events",
+        )
     resume_info = dict(target_checkpoint.get("resume") or {})
     if resume_info.get("status") != "available":
         raise _resume_error(
@@ -652,7 +826,7 @@ def build_fc_duplex_resume_plan(
 
     expected_unit_count = through_unit_index + 1
     ordered_input_payloads: list[dict[str, Any]] = []
-    ordered_tool_results: list[list[dict[str, Any]]] = []
+    ordered_tool_events: list[list[dict[str, Any]]] = []
     used_checkpoint_input_ids: set[str] = set()
     for unit_index in range(expected_unit_count):
         checkpoint = checkpoint_by_unit.get(unit_index)
@@ -677,20 +851,12 @@ def build_fc_duplex_resume_plan(
                 f"unit={unit_index}, input_id={checkpoint_input_id!r}",
             )
         ordered_input_payloads.append(checkpoint_input_payload)
-        ordered_tool_results.append(
-            tool_results_by_input_id.get(checkpoint_input_id, [])
-        )
-    if any(ordered_tool_results):
-        raise _resume_error(
-            "unsupported_tool_state",
-            "当前 resume MVP 不支持包含 tool result 的历史",
-        )
-
+        ordered_tool_events.append(tool_events_by_unit.get(unit_index, []))
     units = [
         FcDuplexResumeUnitPlan(
             unit_index=unit_index,
             input_payload=ordered_input_payloads[unit_index],
-            tool_result_payloads=ordered_tool_results[unit_index],
+            tool_events=ordered_tool_events[unit_index],
             spoken_token_ids=[
                 int(slot.token_id)
                 for slot in sorted(step_slots.values(), key=lambda item: item.step_index)
@@ -725,6 +891,8 @@ def build_fc_duplex_resume_plan(
         next_stream_sequence=maximum_stream_sequence + 1,
         next_delta_index_by_stream=dict(delta_index_by_stream),
         seen_input_ids=list(input_payload_by_id),
+        tool_call_count=tool_call_count,
+        api_tool_call_sequence=maximum_api_tool_call_sequence,
         session_init_payload=session_init_payload,
         units=units,
     )

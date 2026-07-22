@@ -151,6 +151,10 @@ class FcDuplexPrefillResult(BaseModel):
     is_listen: Optional[bool] = Field(None, description="Current unit listen state if already known")
     is_speaking: bool = Field(False, description="Current unit speaking state if already known")
     inserted_token_ids: List[int] = Field(default_factory=list, description="Token ids inserted by this prefill, if tracked")
+    tool_events: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Actual internal tool events attributed to this processed Unit",
+    )
 
 
 class FcSpokenGenerateRequest(BaseModel):

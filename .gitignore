@@ -26,6 +26,7 @@ mobile_gateway_*.log
 
 # 运行时数据
 data/
+demos/fc_board/tools/display_object_on_board/live_image_downloads/
 
 # 临时文件
 tmp/

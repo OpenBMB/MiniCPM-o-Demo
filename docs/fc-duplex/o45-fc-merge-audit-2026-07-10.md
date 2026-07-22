@@ -285,3 +285,38 @@ piece = stream.step(backend_tokenizer, token_id)   # backend_tokenizer = fc_dupl
   - 后续 checkpoint 重新 available；
   - 无 backend_error、无公共 `U+FFFD`；
   - 基础 live→resume trace 仍满足 252 output IDs、KV length 322、Unit index 1 等价。
+
+## 2026-07-22：跨 budget Tool-call 聚合与 Resume
+
+后续公网测试发现 `unsupported_tool_state`。根因不是前端未执行工具，而是 Capability
+在 budget close 时错误清空 `_tool_call_buf`，最终 parser 只看到 XML 后半段并返回
+`O5ToolDeserializeError`。此前 `607812` 的 gate 没有检查 `raw.error`、真实工具执行和
+tool result 后 checkpoint，属于验收遗漏。
+
+最终分层：
+
+- View BPE decoder 在 budget 处销毁；下一段使用新 decoder/stream_id。
+- Capability think/tool-call semantic aggregate buffer 跨 budget 保留到 matching end。
+- Backend 为每个实际处理 Unit 发送 `response.unit.input_events`（包括空 events），
+  显式记录 prefill 真正注入的 `tool_started/tool_response`，消除 latency 丢帧和
+  result-during-prefill 的归属歧义。
+- Valid tool call 等待 result 时 checkpoint 暂时 `pending_tool_result`；parse error 的
+  自动 response、完整 tool result 注入后不再永久阻止 resume。
+- Stateless replay 根据 raw 顺序恢复 internal call ID，根据历史最大 `tc_N` 恢复 API
+  计数器，并只按 `response.unit.input_events` 归属 replay tool events。
+
+验证：
+
+- CPU 定向 + schema：76 passed；核心 mypy、Python/JS/Bash 编译检查通过。
+- `608333` 暴露 View 仅比较最后一个 budget segment 与 Capability 完整 aggregate 的
+  mismatch；已增加跨 segment View aggregate。
+- `608349` 最终通过收紧 gate：
+  - 27 checkpoints，Unit 5 deferred 后恢复 available；
+  - 1 个合法 `display_object_on_board` raw，无 parse error；
+  - 实际调用 board tool endpoint，并发送 1 个 `input.tool_result`；
+  - tool result 后 checkpoint 恢复 available；
+  - 无 `unsupported_tool_state`、backend_error、公共 `U+FFFD`；
+  - 基础 stateless resume trace 等价继续通过。
+
+`response.unit.input_events` 必须连空 marker 都发送；否则 tool result 若在 prefill
+快照后、首个 generation step 前到达，public history 无法判断它属于当前还是下一 Unit。

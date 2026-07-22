@@ -1035,6 +1035,7 @@ function streamEventCategory(direction, event) {
   if (type === 'response.warning') return 'warning';
   if (type.startsWith('session.')) return 'session';
   if (type.startsWith('input.')) return 'input';
+  if (type === 'response.unit.input_events') return 'input';
   if (type === 'response.generation.step_batch') return 'generation';
   if (type === 'response.unit.committed') return 'checkpoint';
   if (type === 'response.output.sp_tokens') return 'sp';
@@ -1074,6 +1075,9 @@ function summarizeStreamEvent(event) {
   }
   if (type === 'response.unit.committed') {
     return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · resume=${event.resume?.status || '-'}${event.resume?.reason ? ` (${event.resume.reason})` : ''}`;
+  }
+  if (type === 'response.unit.input_events') {
+    return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · tool_events=${(event.events || []).length}`;
   }
   if (type === 'response.warning') {
     return `code=${event.code || '-'} · stream=${event.stream_id || '-'} · reason=${event.reason || '-'} · ${event.message || ''}`;
