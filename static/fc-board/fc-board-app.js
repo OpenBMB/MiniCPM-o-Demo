@@ -648,12 +648,14 @@ function appendSemanticSteps({ block_id: blockId, unit_index: unitIndex, steps }
   let segment = block.segments.get(key);
   if (!segment) {
     const streamingTarget = block.node.querySelector('[data-role="streaming"]');
-    const node = document.createElement('div');
-    node.className = 'unit-segment';
+    const node = document.createElement('span');
+    const tone = Math.abs(Number(unitIndex) || 0) % 4;
+    node.className = `unit-segment tone-${tone}`;
     node.dataset.unitIndex = key;
+    node.title = `Unit ${key}`;
     node.innerHTML = `
-      <div class="unit-segment-label">Unit ${escapeHtml(key)}</div>
-      <pre class="unit-segment-text"></pre>
+      <span class="unit-segment-label">U${escapeHtml(key)}</span>
+      <span class="unit-segment-text"></span>
     `;
     streamingTarget?.appendChild(node);
     segment = { pieces: [], node };

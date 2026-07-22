@@ -621,27 +621,37 @@ body {
 .ns-block.kind-think .kind-tag { color: #1f51a6; }
 .ns-block.kind-tool_call .kind-tag { color: #b8860b; }
 .unit-segment {
-  margin: 0 0 8px;
-  padding: 8px 10px;
-  border-left: 3px solid #d8dee8;
-  border-radius: 4px;
-  background: #f8fafc;
+  display: inline;
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
-.ns-block.kind-tool_call .unit-segment {
-  border-left-color: #e5c84f;
-  background: #fffdf3;
+.unit-segment + .unit-segment::before {
+  content: " ";
 }
 .unit-segment-label {
-  margin-bottom: 4px;
-  color: #888;
+  display: inline-block;
+  margin: 0 4px 0 3px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  color: #8190a5;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  text-transform: uppercase;
+  font-size: 9px;
+  line-height: 1.45;
+  opacity: 0.72;
+  vertical-align: 0.08em;
 }
 .unit-segment-text {
-  margin: 0;
+  display: inline;
+  padding: 1px 0;
   white-space: pre-wrap;
 }
+.unit-segment.tone-0 .unit-segment-text { background: linear-gradient(transparent 72%, #dce9ff 72%); }
+.unit-segment.tone-1 .unit-segment-text { background: linear-gradient(transparent 72%, #e8e0ff 72%); }
+.unit-segment.tone-2 .unit-segment-text { background: linear-gradient(transparent 72%, #dff3e4 72%); }
+.unit-segment.tone-3 .unit-segment-text { background: linear-gradient(transparent 72%, #fff0cf 72%); }
+.ns-block.kind-tool_call .unit-segment-label { color: #a87a00; }
 .ns-block .status-tag {
   margin-left: auto;
   font-weight: 500;
