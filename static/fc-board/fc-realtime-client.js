@@ -37,6 +37,26 @@ export class FcRealtimeClient {
   }
 
   resumeSession(payload) {
+    const priorHistory = Array.isArray(payload?.history) ? payload.history : [];
+    this.history = priorHistory.map((frame) => ({
+      dir: (
+        frame?.type === 'session.init'
+        || frame?.type === 'input.append'
+        || String(frame?.type || '').startsWith('input.')
+      ) ? 'up' : 'down',
+      frame: JSON.parse(JSON.stringify(frame)),
+    }));
+    this.resumeIdentity = {
+      protocol_version: payload.protocol_version,
+      model: payload.model,
+      tokenizer_target: payload.tokenizer_target,
+      tokenizer_fingerprint: payload.tokenizer_fingerprint,
+      ref_audio_sha256: payload.ref_audio_sha256,
+      prompt_wav_sha256: payload.prompt_wav_sha256,
+    };
+    this._inputSeq = priorHistory.filter(
+      (frame) => frame?.type === 'input.append',
+    ).length;
     const frame = { type: 'session.resume', payload };
     if (this.queued) {
       this._send(frame);
@@ -100,6 +120,11 @@ export class FcRealtimeClient {
     } else {
       this.ws.close();
     }
+  }
+
+  disconnect(reason = 'network_reconnect') {
+    if (!this.ws) return;
+    this.ws.close(1000, reason);
   }
 
   _send(message) {

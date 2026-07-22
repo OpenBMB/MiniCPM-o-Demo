@@ -115,6 +115,8 @@
             <option value="session">Session</option>
             <option value="input">Input</option>
             <option value="output">Output delta</option>
+            <option value="generation">Generation steps</option>
+            <option value="checkpoint">Unit checkpoints</option>
             <option value="sp">SP tokens</option>
             <option value="debug">Debug</option>
             <option value="think">Think</option>
@@ -161,7 +163,7 @@
         <section class="panel ns-panel">
           <div class="panel-title">
             Think / Tool-Call
-            <span class="hint">streaming = id-to-token · full = BPE merged</span>
+            <span class="hint">safe Unicode delta · canonical steps available in stream</span>
           </div>
           <div class="scroll-body">
             <div id="nonSpokenStream" class="ns-stream">
@@ -177,10 +179,13 @@
     <div class="controls-bar">
       <button id="startMicLive" class="ctrl-btn primary">Start mic live</button>
       <button id="stopMicLive" class="ctrl-btn danger">Stop</button>
+      <button id="resumeCheckpoint" class="ctrl-btn" disabled>Reconnect &amp; Resume</button>
+      <span id="resumeSummary" class="resume-summary">No resumable checkpoint</span>
       <span class="ctrl-divider"></span>
       <div class="ctrl-stats">
         <span>Chunks <b id="sentChunks">0</b></span>
         <span>AI audio <b id="aiAudioCount">0</b></span>
+        <span>Generation steps <b id="generationSteps">0</b></span>
       </div>
     </div>
 

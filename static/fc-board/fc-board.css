@@ -689,6 +689,14 @@ body {
 }
 .ctrl-btn.danger:hover { background: #fff5f5; }
 .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.resume-summary {
+  max-width: 260px;
+  color: #777;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.resume-summary.available { color: #1a7f37; }
+.resume-summary.failed { color: #cf222e; }
 .ctrl-divider {
   width: 1px;
   height: 20px;

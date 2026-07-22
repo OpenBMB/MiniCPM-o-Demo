@@ -234,3 +234,19 @@ piece = stream.step(backend_tokenizer, token_id)   # backend_tokenizer = fc_dupl
   `output_ids` 完全一致（252 IDs）、`kv_cache_length=322`、
   `current_unit_idx=1`，证明 public-history replay 在该真实 Unit 上恢复了同一 LLM
   token/KV 边界。
+
+## 2026-07-22：可交互公网 Demo
+
+- 长期部署使用 `modelbest/langfang_train/swy-o5-deploy/deploy`，当前 Job：
+  `tasks/607184`。
+- 公网地址：`https://47.95.219.248:7001/fc_board`。Gateway 使用自签名 HTTPS
+  证书，首次访问需要在浏览器确认继续访问。
+- 公网 FRP API E2E 已验证：Unit 0 checkpoint available，断连后成功
+  `session.resumed`。
+- FC Board 新增：
+  - generation step 数量和 `response.generation.step_batch` 过滤器；
+  - Unit checkpoint available/unavailable 与原因展示；
+  - available checkpoint 后启用 `Reconnect & Resume`；
+  - 点击后模拟网络断连，使用浏览器保存的 public history 重建 Session，并继续麦克风输入。
+- 部署脚本 `scripts/start_fc_resume_demo_deploy.sh` 从本机已认证 frpc 配置派生单一
+  proxy，不把 auth token 写入仓库；当前 remote port 为 `7001`。

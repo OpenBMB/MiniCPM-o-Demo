@@ -32,6 +32,9 @@ let micProvider = null;
 let audioPlayerReady = false;
 let sentChunkCount = 0;
 let aiAudioCount = 0;
+let generationStepCount = 0;
+let latestCheckpoint = null;
+let resumeInProgress = false;
 // Mic level display uses a LUFS-like unit (dBFS) instead of raw RMS.
 //
 // 换算依据（`scripts/diagnostics/lufs_survey.py` 采样训练数据，见 o45-fc 分支）：
@@ -71,6 +74,9 @@ const el = {
   wsState: document.getElementById('wsState'),
   sentChunks: document.getElementById('sentChunks'),
   aiAudioCount: document.getElementById('aiAudioCount'),
+  generationSteps: document.getElementById('generationSteps'),
+  resumeCheckpoint: document.getElementById('resumeCheckpoint'),
+  resumeSummary: document.getElementById('resumeSummary'),
   liveHint: document.getElementById('liveHint'),
   audioFileInput: document.getElementById('audioFileInput'),
   runFileReplay: document.getElementById('runFileReplay'),
@@ -112,7 +118,7 @@ function initPage() {
   el.modeBadge.textContent = 'Realtime API';
   el.modeBadge.className = 'mode-tag mode-real';
   el.kvMode.textContent = '/v1/realtime?mode=audio';
-  el.kvCkpt.textContent = 'backend selected';
+  el.kvCkpt.textContent = 'No checkpoint';
   el.kvTools.textContent = DISPLAY_OBJECT_TOOL.function.name;
   applyDefaults({});
   setWsState('idle');
@@ -157,22 +163,7 @@ el.startMicLive.addEventListener('click', async () => {
   }
   try {
     liveClient = await createRealtimeSession();
-    micProvider = new LiveMicProvider({
-      onChunk: (chunk) => {
-        liveClient.appendAudio({ audioBase64: float32ToBase64(chunk), sampleRate: 16000 });
-        sentChunkCount += 1;
-        updateStats();
-      },
-      onLevel: updateMicLevel,
-      onPermissionHint: (text) => {
-        if (el.liveHint) {
-          el.liveHint.textContent = text;
-          el.liveHint.classList.add('warning');
-        }
-      },
-      onState: setMicState,
-      onStatus: setStatus,
-    });
+    micProvider = createMicProvider(liveClient);
     await micProvider.start();
     setMicLiveState('live');
     setStatus('Listening via /v1/realtime · mention concrete objects for the board');
@@ -186,6 +177,47 @@ el.stopMicLive.addEventListener('click', () => {
   if (micLiveState === 'idle' || micLiveState === 'stopped' || micLiveState === 'closed') return;
   stopMicLive();
   setStatus('Stopped');
+});
+
+el.resumeCheckpoint?.addEventListener('click', async () => {
+  if (
+    resumeInProgress
+    || !liveClient
+    || latestCheckpoint?.resume?.status !== 'available'
+  ) return;
+
+  resumeInProgress = true;
+  updateControlState();
+  const throughUnitIndex = Number(latestCheckpoint.unit_index);
+  try {
+    const resumePayload = liveClient.buildResumePayload(throughUnitIndex);
+    if (micProvider) {
+      micProvider.stop();
+      micProvider = null;
+    }
+    const disconnectedClient = liveClient;
+    liveClient = null;
+    disconnectedClient.disconnect('demo_resume_test');
+    setMicLiveState('starting');
+    setWsState('reconnecting');
+    setStatus(`Reconnecting from Unit ${throughUnitIndex} checkpoint…`);
+    await sleep(600);
+
+    liveClient = await resumeRealtimeSession(resumePayload);
+    micProvider = createMicProvider(liveClient);
+    await micProvider.start();
+    setMicLiveState('live');
+    setWsState('connected');
+    setStatus(`Resume succeeded · continuing after Unit ${throughUnitIndex}`);
+  } catch (err) {
+    console.error('[FC resume]', err);
+    setMicLiveState('error');
+    setWsState('closed');
+    setStatus(`Resume failed: ${err.message}`);
+  } finally {
+    resumeInProgress = false;
+    updateControlState();
+  }
 });
 
 el.audioFileInput.addEventListener('change', () => {
@@ -223,16 +255,64 @@ el.runFileReplay.addEventListener('click', async () => {
 });
 
 async function createRealtimeSession() {
+  const client = await createConnectedClient();
+  client.initSession(buildSessionInitPayload());
+  return client;
+}
+
+async function createConnectedClient(onControlEvent = null) {
   const client = new FcRealtimeClient({
-    onEvent: applyApiEvent,
+    onEvent: (event) => {
+      applyApiEvent(event);
+      onControlEvent?.(event);
+    },
     onSend: (message) => appendStreamEvent('tx', message),
     onStatus: setStatus,
   });
   setStatus('Connecting to /v1/realtime...');
   await client.connect();
   setWsState('connected');
-  client.initSession(buildSessionInitPayload());
   return client;
+}
+
+async function resumeRealtimeSession(payload) {
+  let resolveResume;
+  let rejectResume;
+  const resumed = new Promise((resolve, reject) => {
+    resolveResume = resolve;
+    rejectResume = reject;
+  });
+  const client = await createConnectedClient((event) => {
+    if (event.type === 'session.resumed') resolveResume(event);
+    if (event.type === 'session.resume.failed') {
+      rejectResume(new Error(`${event.code || 'resume_failed'}: ${event.message || ''}`));
+    }
+  });
+  client.resumeSession(payload);
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('session.resume timed out')), 120000);
+  });
+  await Promise.race([resumed, timeout]);
+  return client;
+}
+
+function createMicProvider(client) {
+  return new LiveMicProvider({
+    onChunk: (chunk) => {
+      client.appendAudio({ audioBase64: float32ToBase64(chunk), sampleRate: 16000 });
+      sentChunkCount += 1;
+      updateStats();
+    },
+    onLevel: updateMicLevel,
+    onPermissionHint: (text) => {
+      if (el.liveHint) {
+        el.liveHint.textContent = text;
+        el.liveHint.classList.add('warning');
+      }
+    },
+    onState: setMicState,
+    onStatus: setStatus,
+  });
 }
 
 function buildSessionInitPayload() {
@@ -302,6 +382,12 @@ function applyApiEvent(event) {
     case 'session.created':
       setStatus('Session created');
       return;
+    case 'session.resumed':
+      setStatus(`Session resumed after Unit ${event.through_unit_index}`);
+      return;
+    case 'session.resume.failed':
+      setStatus(`Resume failed: ${event.code || 'unknown'}`);
+      return;
     case 'session.closed':
       setWsState('closed');
       releaseMicLive('closed');
@@ -309,6 +395,13 @@ function applyApiEvent(event) {
       return;
     case 'response.output.delta':
       handleOutputDelta(event);
+      return;
+    case 'response.generation.step_batch':
+      generationStepCount += Array.isArray(event.steps) ? event.steps.length : 0;
+      updateStats();
+      return;
+    case 'response.unit.committed':
+      handleUnitCheckpoint(event);
       return;
     case 'response.think.begin':
       beginNonSpokenBlock({ block_id: blockIdFor(event, 'think'), block_kind: 'think' });
@@ -379,6 +472,25 @@ function handleSpToken(event) {
   if (['no_action', 'non_spoken_eos', 'non_spoken_budget_reached', 'non_spoken_hold', 'non_spoken_abort'].includes(token)) {
     closeActiveNonSpokenBlock();
   }
+}
+
+function handleUnitCheckpoint(event) {
+  latestCheckpoint = event;
+  const unitIndex = Number(event.unit_index);
+  const resume = event.resume || {};
+  const available = resume.status === 'available';
+  const detail = available
+    ? `Unit ${unitIndex} · available`
+    : `Unit ${unitIndex} · unavailable (${resume.reason || 'unknown'})`;
+  if (el.kvCkpt) el.kvCkpt.textContent = detail;
+  if (el.resumeSummary) {
+    el.resumeSummary.textContent = available
+      ? `Unit ${unitIndex} can reconnect without server state`
+      : detail;
+    el.resumeSummary.classList.toggle('available', available);
+    el.resumeSummary.classList.toggle('failed', !available);
+  }
+  updateControlState();
 }
 
 function handleDebugEvent(event) {
@@ -724,6 +836,13 @@ function clearViews() {
   el.aiAudioList.innerHTML = '';
   sentChunkCount = 0;
   aiAudioCount = 0;
+  generationStepCount = 0;
+  latestCheckpoint = null;
+  if (el.kvCkpt) el.kvCkpt.textContent = 'No checkpoint';
+  if (el.resumeSummary) {
+    el.resumeSummary.textContent = 'No resumable checkpoint';
+    el.resumeSummary.classList.remove('available', 'failed');
+  }
   updateStats();
   updateMicLevel(0);
 }
@@ -750,6 +869,14 @@ function updateControlState() {
   const active = micLiveState === 'starting' || micLiveState === 'live' || micLiveState === 'stopping';
   if (el.startMicLive) el.startMicLive.disabled = active;
   if (el.stopMicLive) el.stopMicLive.disabled = !active || micLiveState === 'stopping';
+  if (el.resumeCheckpoint) {
+    el.resumeCheckpoint.disabled = (
+      resumeInProgress
+      || micLiveState !== 'live'
+      || !liveClient
+      || latestCheckpoint?.resume?.status !== 'available'
+    );
+  }
 }
 
 function setWsState(state) {
@@ -782,6 +909,9 @@ function resetMicPeak() {
 function updateStats() {
   el.sentChunks.textContent = String(sentChunkCount);
   el.aiAudioCount.textContent = String(aiAudioCount);
+  if (el.generationSteps) {
+    el.generationSteps.textContent = String(generationStepCount);
+  }
 }
 
 function setStatus(text) {
@@ -884,6 +1014,8 @@ function streamEventCategory(direction, event) {
   if (type === 'error' || type.endsWith('.error')) return 'error';
   if (type.startsWith('session.')) return 'session';
   if (type.startsWith('input.')) return 'input';
+  if (type === 'response.generation.step_batch') return 'generation';
+  if (type === 'response.unit.committed') return 'checkpoint';
   if (type === 'response.output.sp_tokens') return 'sp';
   if (type === 'response.debug') return 'debug';
   if (type === 'response.output.delta') return 'output';
@@ -914,6 +1046,14 @@ function summarizeStreamEvent(event) {
     if (event.kind === 'non_spoken') return `kind=non_spoken · ${event.text || ''}`;
     return `kind=${event.kind || '-'}`;
   }
+  if (type === 'response.generation.step_batch') {
+    const steps = Array.isArray(event.steps) ? event.steps : [];
+    const kinds = steps.map((step) => step.output?.kind || '?').join(',');
+    return `unit=${steps[0]?.unit_index ?? '-'} · track=${event.track || '-'} · steps=${steps.length} [${kinds}]`;
+  }
+  if (type === 'response.unit.committed') {
+    return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · resume=${event.resume?.status || '-'}${event.resume?.reason ? ` (${event.resume.reason})` : ''}`;
+  }
   if (type.startsWith('response.tool_call')) {
     return `tool_call_id=${event.tool_call_id || '-'} · ${event.delta || formatRawForSummary(event.raw) || ''}`;
   }
@@ -933,6 +1073,12 @@ function summarizeStreamEvent(event) {
   }
   if (type === 'session.created') {
     return `session_id=${event.session_id || '-'} · mode=${event.mode || '-'}`;
+  }
+  if (type === 'session.resumed') {
+    return `session_id=${event.session_id || '-'} · through_unit=${event.through_unit_index ?? '-'} · next_unit=${event.next_unit_index ?? '-'}`;
+  }
+  if (type === 'session.resume.failed') {
+    return `code=${event.code || '-'} · unit=${event.unit_index ?? '-'} · ${event.message || ''}`;
   }
   if (type === 'session.queued' || type === 'session.queue_update') {
     return `position=${event.position ?? '-'} · eta=${event.estimated_wait_s ?? '-'}s`;
