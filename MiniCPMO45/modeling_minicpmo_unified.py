@@ -2409,6 +2409,27 @@ class MiniCPMO(BaseMiniCPMO):
     def fc_duplex_finalize_unit(self) -> dict:
         return self._require_fc_duplex().finalize_unit()
 
+    def fc_duplex_replay_completed_unit(
+        self,
+        *,
+        audio_waveform: Optional[np.ndarray] = None,
+        frame_list: Optional[List] = None,
+        tool_responses=None,
+        sample_rate: int = 16000,
+        spoken_token_ids: list[int],
+        non_spoken_token_ids: list[int],
+    ) -> dict:
+        """Deterministically replay one safe completed FC Duplex Unit."""
+
+        return self._require_fc_duplex().replay_completed_unit(
+            audio_waveform=audio_waveform,
+            frame_list=frame_list,
+            tool_responses=tool_responses,
+            sample_rate=sample_rate,
+            spoken_token_ids=spoken_token_ids,
+            non_spoken_token_ids=non_spoken_token_ids,
+        )
+
     def fc_duplex_decode_output_ids(self, output_ids=None, tools=None) -> dict:
         return self._require_fc_duplex().decode_output_ids(output_ids=output_ids, tools=tools)
 

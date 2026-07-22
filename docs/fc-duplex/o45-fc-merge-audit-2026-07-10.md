@@ -164,11 +164,16 @@ piece = stream.step(backend_tokenizer, token_id)   # backend_tokenizer = fc_dupl
 # piece is str    -> 攒够了，这次吐出的完整文本（可能包含好几个 step 之前攒的内容）
 ```
 
-**已经详细验证过的性质**（`/tmp/demo_decode_stream_vs_naive.py`、`/tmp/verify_stream_chunk_reencode.py`，以及两个 subagent 大规模跑过的"安全点"恒等关系）：
-- `DecodeStream` 每次吐出的 chunk，重新 encode 回去，精确等于"从上次吐出之后累积到这次为止"的那些 token id（在真实生成的 15-token 句子上逐步验证过，全部一致）。
+**当时样本上验证过、但后来确认不能当作全局不变量的性质**（`/tmp/demo_decode_stream_vs_naive.py`、`/tmp/verify_stream_chunk_reencode.py`）：
+- 早期样本中，`DecodeStream` chunk 重新 encode 恰好等于原 token ids；2026-07-22
+  在真实 O45_FC token 序列上发现同长度但不同 ID 的反例。因此实现必须逐 delta
+  显式验证 exact token round-trip，不成立时只允许 live 展示，checkpoint 必须
+  unavailable。
 - 内部状态**不会无限增长**：一旦确认吐出一个 chunk，源码（`tokenizers/src/tokenizer/mod.rs::step_decode_stream`，`*ids = ids.drain(*prefix_index..).collect()` 这一行）会把已经消费掉的 token id 从缓冲区里丢弃，只留下"还在等下一个 token 才能凑齐"的那一小段。
 - 算法本身是"整体重新 decode + 跟上次比长度 + 看结尾是不是 `U+FFFD`"（vLLM/SGLang 抄的也是同一套，只是有的用字节级缓冲、有的用这种字符串级 diff），不是按字节精确切分——比如"空格+半个展"这个 token，`DecodeStream` 会把空格也留在缓冲区里一起等，不会提前把空格吐出来；这个粒度上的"不够精确"对我们的场景没有实际影响（最多晚一步吐出一个空格，不会看到 `U+FFFD`，不会丢字）。
-- 三个前提性质都已经用真实训练数据 + 边缘场景做过大规模实测（不是靠理论推断）：安全点定义（"decode 出来的字符串不以 `U+FFFD` 结尾"）下，round-trip 恒等（9894/9894 个安全点验证通过）和分段拼接恒等（290360/290360 对安全点全量枚举验证通过）都成立，这是 `DecodeStream` 这类方案能正确工作的数学基础。
+- 早期 corpus 上的 round-trip（9894/9894）与分段拼接（290360/290360）只说明
+  该 corpus 没触发 tokenizer 非规范编码反例，不能证明任意生成 token 序列都可
+  re-encode。最终实现以运行时 exact ID 比较作为安全条件。
 
 **修复方案设计（分层，还没写代码）**：
 
@@ -181,3 +186,44 @@ piece = stream.step(backend_tokenizer, token_id)   # backend_tokenizer = fc_dupl
   4. 验证方式：这个改动改变了对外协议 `response.think.delta`/`response.tool_call.args.delta`/`response.output.delta(kind=text)` 的吐出时机（可能某个 delta 会因为在等字节而"迟一步"才出现，具体内容不受影响），需要一次真实 GPU 端到端验证（复用之前验证 block-kind 检测用的同一套 cctl job + WS 脚本流程），确认没有引入新的乱序/丢字问题，再合入。
 
 **执行顺序**：`_token_observations` 的低风险修正已落地并用真实 tokenizer + mock backend 验证；`DecodeStream` 流式修法涉及的细节多、需要真实 GPU 验证，留到下一轮专门做，不在同一个 commit 里混着改。
+
+## 2026-07-22：安全增量文本、canonical step batch 与 stateless resume 落地
+
+本轮先新增规范
+[`resumable-generation-api.md`](./resumable-generation-api.md)，再按规范实现：
+
+- SDK tokenizer bundle 的 `create_ordinary_text_decode_stream()` 由 View 持有；
+  non-spoken 每个 think/tool-call span 独立，spoken 每个 turn 独立并跨 Unit。
+- View 把 capability token IDs 展开为逐 token `text_pending` / `text_delta` /
+  `protocol` step；safe delta 在内部验证
+  `encode_ordinary(text_delta) == original_pending_token_ids`，失败则后续 checkpoint
+  永久标为 `text_delta_roundtrip_mismatch`。
+- API runtime 以 50ms / 16 steps / protocol / Unit 边界为 flush 条件发送
+  `response.generation.step_batch`，公共 step 不包含 token ID。
+- 每个实际处理 Unit 发送 `response.unit.committed`，checkpoint 用唯一
+  `input_id` 绑定实际处理输入；latency queue 丢弃但未处理的 input 不会错配到 Unit。
+- 新 `session.resume` 使用客户端提交的完整双向历史；canonicalizer 校验
+  event/batch/step/checkpoint 连续性、Unit 内 spoken→non_spoken 顺序、媒体
+  base64/float32 形状、模型/tokenizer/reference-audio identity 与 safe delta
+  round-trip，再构造 Unit replay plan。
+- Capability 新增 deterministic `replay_completed_unit()`，按 live skeleton
+  `prefill → spoken IDs → spoken slot end → non-spoken IDs → slot/unit end`
+  feed 历史输出，不重新采样、不重新生成 TTS。
+- 当前 resume MVP 对 pending text、open span、跨 Unit spoken turn、deferred close、
+  tool-call/tool-result 状态明确返回 unavailable/failure，不做 fallback。
+- FC Board client 自动保存双向 history、Unit checkpoint 和 resume identity，并可
+  构造 `session.resume` payload。
+
+验证：
+
+- 新增 4 个测试文件，覆盖 capability replay skeleton、跨 Unit/跨 track safe delta
+  恢复、媒体与 input 绑定、View decoder 生命周期、round-trip 不变量、runtime
+  batching/checkpoint/resume。
+- 定向 + schema 回归：61 passed。
+- 核心 resume 模块 mypy 通过；Python 编译、ES module 语法、Bash 语法和
+  `git diff --check` 通过。
+- 仓库全量测试在当前 worktree 无 `.venv/base` 且历史 case 使用
+  `/path/to/MiniCPM-o-4_5` 的环境下无法作为有效全绿 gate；本轮新增测试全部通过。
+- 真实 GPU E2E 已提交 `tasks/144802`，但 `agent-dev` A100 capacity=0，任务持续
+  Queued 后主动取消。可复用 `scripts/fc_duplex_resume_smoke.py` 在下次有卡时完成
+  live→disconnect→resume 验证。

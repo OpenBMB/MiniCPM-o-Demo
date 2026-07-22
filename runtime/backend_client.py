@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-import websockets
+import websockets  # type: ignore[import-not-found]
 
 
 def _join_url(base_url: str, path: str) -> str:
@@ -73,6 +73,34 @@ class RemoteBackendSession:
         event = await self.pull()
         if event.get("type") not in {"session.created", "initialized"}:
             raise RuntimeError(f"backend init returned unexpected event: {event.get('type')}")
+        if event.get("session_id"):
+            self.session_id = str(event["session_id"])
+        return event
+
+    async def resume(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Open a new backend connection and request stateless FC Duplex resume."""
+
+        if self._ws is not None:
+            raise RuntimeError("backend session is already initialized")
+        self._ws = await websockets.connect(
+            _ws_url_for(self.base_url, self.ws_path),
+            max_size=self.max_ws_size,
+        )
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "session.resume",
+                    "payload": dict(params),
+                }
+            )
+        )
+        event = await self.pull()
+        if event.get("type") == "session.resume.failed":
+            return event
+        if event.get("type") != "session.resumed":
+            raise RuntimeError(
+                f"backend resume returned unexpected event: {event.get('type')}"
+            )
         if event.get("session_id"):
             self.session_id = str(event["session_id"])
         return event

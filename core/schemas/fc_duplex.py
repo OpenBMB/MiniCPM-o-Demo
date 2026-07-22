@@ -6,12 +6,57 @@ execution logic.
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
 
 FcNonSpokenCloseReason = Literal["eos", "no_action", "budget_reached", "hold", "abort"]
+FcGenerationTrack = Literal["spoken", "non_spoken"]
+
+
+class FcGenerationTextPendingOutput(BaseModel):
+    """一个 ordinary generation step 尚未产生安全 Unicode。"""
+
+    kind: Literal["text_pending"] = "text_pending"
+
+
+class FcGenerationTextDeltaOutput(BaseModel):
+    """一个 safe text delta 及其覆盖的 stream-local token step 数量。"""
+
+    kind: Literal["text_delta"] = "text_delta"
+    text: str = Field(..., min_length=1)
+    source_step_count: int = Field(..., ge=1)
+
+
+class FcGenerationProtocolOutput(BaseModel):
+    """一个 protocol structural token 的稳定语义 key。"""
+
+    kind: Literal["protocol"] = "protocol"
+    semantic_key: str = Field(..., min_length=1)
+
+
+FcGenerationStepOutput = Annotated[
+    Union[
+        FcGenerationTextPendingOutput,
+        FcGenerationTextDeltaOutput,
+        FcGenerationProtocolOutput,
+    ],
+    Field(discriminator="kind"),
+]
+
+
+class FcViewGenerationStep(BaseModel):
+    """View 输出的逐 token generation step。
+
+    ``token_id`` 只供内部测试、诊断与 runtime 组装 canonical 日志，公共 API
+    step 不得包含该字段。
+    """
+
+    token_id: int
+    stream_id: str
+    track: FcGenerationTrack
+    output: FcGenerationStepOutput
 
 
 class NonSpokenStepGenerationFlag(str, Enum):
@@ -134,6 +179,11 @@ class FcDuplexStepResult(BaseModel):
     close_reason: Optional[str] = Field(None, description="Close reason if the slot was closed")
     closed_spans: List[FcClosedSpan] = Field(default_factory=list, description="Spans closed by this step")
     text: str = Field("", description="BPE-merged decode of token_ids")
+    text_delta: str = Field("", description="Safe incremental Unicode produced by View")
+    generation_steps: List[FcViewGenerationStep] = Field(
+        default_factory=list,
+        description="Per-token View steps used by resumable generation logging",
+    )
     audio_waveform: Optional[Any] = Field(None, description="Generated 24kHz audio waveform, if requested")
     audio_sample_rate: Optional[int] = Field(None, description="Sample rate of audio_waveform")
     n_tts_tokens: int = Field(0, description="Number of generated TTS audio tokens")
@@ -147,6 +197,11 @@ class FcSpokenGenerateResult(BaseModel):
     is_speaking: bool = Field(False, description="Whether the model chose speak")
     spoken_token_ids: List[int] = Field(default_factory=list, description="Spoken slot token ids")
     spoken_text: str = Field("", description="Decoded spoken text (BPE merged)")
+    spoken_text_delta: str = Field("", description="Safe incremental spoken Unicode produced by View")
+    generation_steps: List[FcViewGenerationStep] = Field(
+        default_factory=list,
+        description="Per-token View steps used by resumable generation logging",
+    )
     spoken_turn_eos: bool = Field(False, description="Whether this unit ended the spoken turn")
     audio_waveform: Optional[Any] = Field(None, description="Generated 24kHz waveform, if requested")
     audio_sample_rate: Optional[int] = Field(None, description="Sample rate of audio_waveform")

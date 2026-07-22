@@ -19,16 +19,19 @@ import uuid
 from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Dict, List, Optional, Protocol, cast
 
 import numpy as np
-import soundfile as sf
+import soundfile as sf  # type: ignore[import-untyped]
 
+from core.fc_duplex_resume import (
+    FcDuplexResumeError,
+    FcResumeFailureCode,
+    build_fc_duplex_resume_plan,
+)
 from core.schemas.fc_duplex import FcToolResponse, NonSpokenStepGenerationFlag
 from py_backend.media import decode_audio_base64, decode_frame_base64_list
 
-
-SendEvent = Callable[[str], Awaitable[None]]
 logger = logging.getLogger(__name__)
 
 
@@ -62,6 +65,13 @@ DEFAULT_DISPLAY_OBJECT_TOOL: Dict[str, Any] = {
 }
 
 
+class _SendCallable(Protocol):
+    """Async backend event sender accepting arbitrary public event fields."""
+
+    def __call__(self, event_type: str, **fields: Any) -> Awaitable[None]:
+        """Send one public backend event."""
+
+
 class FcDuplexSessionRuntime:
     """Small per-session scheduler for FC duplex protocol input/output."""
 
@@ -70,7 +80,7 @@ class FcDuplexSessionRuntime:
         *,
         session_id: str,
         backend: Any,
-        send: Callable[[str, Any], Awaitable[None]],
+        send: _SendCallable,
     ) -> None:
         self.session_id = session_id
         self.backend = backend
@@ -88,6 +98,7 @@ class FcDuplexSessionRuntime:
         self._decode_mode = "greedy"
         self._sample_rate = 16000
         self._input_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        self._seen_input_ids: set[str] = set()
         self._queue_worker: Optional[asyncio.Task[None]] = None
         self._next_input_event = asyncio.Event()
         self._closed = False
@@ -100,6 +111,19 @@ class FcDuplexSessionRuntime:
         self._audio_dump_unit_seq = 0
         self._audio_dump_session_dir: Optional[Path] = None
         self._audio_dump_manifest_path: Optional[Path] = None
+        self._generation_step_index = 0
+        self._generation_batch_index = 0
+        self._generation_event_index = 0
+        self._delta_index_by_stream: Dict[str, int] = {}
+        self._pending_text_steps_by_stream: Dict[str, List[int]] = {}
+        self._generation_batch_stream_id: Optional[str] = None
+        self._generation_batch_track: Optional[str] = None
+        self._generation_batch_input_id: Optional[str] = None
+        self._generation_batch_started_at: Optional[float] = None
+        self._generation_batch_steps: List[Dict[str, Any]] = []
+        self._unit_has_deferred_close = False
+        self._resume_history_valid = True
+        self._resume_identity: Dict[str, Any] = {}
         audio_dump_root = os.environ.get("FC_DUPLEX_AUDIO_DUMP_DIR")
         if audio_dump_root:
             self._audio_dump_session_dir = Path(audio_dump_root) / self.session_id
@@ -137,6 +161,136 @@ class FcDuplexSessionRuntime:
             ref_audio_path=ref_audio_path,
             prompt_wav_path=prompt_wav_path,
             generate_audio=bool(params.get("generate_audio", True)),
+        )
+        resume_identity_fn = getattr(self.backend, "fc_duplex_resume_identity", None)
+        self._resume_identity = (
+            await asyncio.to_thread(resume_identity_fn)
+            if resume_identity_fn is not None
+            else {}
+        )
+
+    @property
+    def resume_identity(self) -> Dict[str, Any]:
+        """Return a copy of the current public resume identity metadata."""
+
+        return dict(self._resume_identity)
+
+    async def resume(self, params: Dict[str, Any]) -> None:
+        """Rebuild a safe Unit checkpoint exclusively from client-provided history."""
+
+        try:
+            plan = build_fc_duplex_resume_plan(
+                protocol_version=str(params.get("protocol_version") or ""),
+                model=str(params.get("model") or ""),
+                tokenizer_target=str(params.get("tokenizer_target") or ""),  # type: ignore[arg-type]
+                tokenizer_fingerprint=dict(
+                    params.get("tokenizer_fingerprint") or {}
+                ),
+                through_unit_index=int(params.get("through_unit_index", -1)),
+                history=list(params.get("history") or []),
+            )
+        except FcDuplexResumeError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise FcDuplexResumeError(
+                "incomplete_event_history",
+                f"invalid session.resume payload: {exc}",
+            ) from exc
+        await self.prepare(plan.session_init_payload)
+        if self._resume_identity:
+            requested_fingerprint = dict(params.get("tokenizer_fingerprint") or {})
+            current_fingerprint = dict(
+                self._resume_identity.get("tokenizer_fingerprint") or {}
+            )
+            current_model = str(self._resume_identity.get("model") or "")
+            requested_model = str(params.get("model") or "")
+            identity_mismatch = (
+                str(params.get("tokenizer_target") or "")
+                != str(self._resume_identity.get("tokenizer_target") or "")
+                or (
+                    current_model not in {"", "unknown"}
+                    and requested_model != current_model
+                )
+                or (
+                    requested_fingerprint
+                    and requested_fingerprint != current_fingerprint
+                )
+                or params.get("ref_audio_sha256")
+                != self._resume_identity.get("ref_audio_sha256")
+                or params.get("prompt_wav_sha256")
+                != self._resume_identity.get("prompt_wav_sha256")
+            )
+            if identity_mismatch:
+                raise FcDuplexResumeError(
+                    "model_or_tokenizer_mismatch",
+                    "resume request does not match current model/tokenizer identity",
+                    unit_index=plan.through_unit_index,
+                )
+        for unit in plan.units:
+            payload = unit.input_payload
+            audio_base64 = _extract_audio_base64(payload)
+            frame_list = decode_frame_base64_list(
+                _extract_frame_base64_list(payload)
+            ).frame_list
+            sample_rate = int(payload.get("sample_rate") or self._sample_rate)
+            await asyncio.to_thread(
+                self.backend.fc_duplex_replay_completed_unit,
+                audio_data=audio_base64,
+                frame_list=frame_list,
+                tool_responses=None,
+                sample_rate=sample_rate,
+                spoken_token_ids=unit.spoken_token_ids,
+                non_spoken_token_ids=unit.non_spoken_token_ids,
+            )
+        restore_stream_sequence = getattr(
+            self.backend,
+            "fc_duplex_restore_generation_stream_sequence",
+            None,
+        )
+        if restore_stream_sequence is not None:
+            await asyncio.to_thread(
+                restore_stream_sequence,
+                next_stream_sequence=plan.next_stream_sequence,
+            )
+
+        boundary_status_fn = getattr(
+            self.backend,
+            "fc_duplex_resume_boundary_status",
+            None,
+        )
+        boundary_status = (
+            await asyncio.to_thread(boundary_status_fn)
+            if boundary_status_fn is not None
+            else {"status": "unavailable", "reason": "unsupported_open_span"}
+        )
+        if boundary_status.get("status") != "available":
+            raise FcDuplexResumeError(
+                cast(
+                    FcResumeFailureCode,
+                    str(
+                        boundary_status.get(
+                            "reason",
+                            "unsupported_open_span",
+                        )
+                    ),
+                ),
+                "replayed View state is not resumable",
+                unit_index=plan.through_unit_index,
+                stream_id=boundary_status.get("stream_id"),
+            )
+
+        self._audio_dump_unit_seq = plan.through_unit_index + 1
+        self._generation_event_index = plan.next_event_index
+        self._generation_step_index = plan.next_step_index
+        self._generation_batch_index = plan.next_batch_index
+        self._delta_index_by_stream = dict(plan.next_delta_index_by_stream)
+        self._pending_text_steps_by_stream = {}
+        self._seen_input_ids = set(plan.seen_input_ids)
+        await self._send(
+            "session.resumed",
+            session_id=self.session_id,
+            through_unit_index=plan.through_unit_index,
+            next_unit_index=plan.through_unit_index + 1,
         )
 
     async def push(self, payload: Dict[str, Any]) -> None:
@@ -189,6 +343,12 @@ class FcDuplexSessionRuntime:
         audio_base64 = _extract_audio_base64(payload)
         if not audio_base64:
             raise RuntimeError("fc_duplex input requires audio")
+        input_id = str(payload.get("input_id") or "")
+        if not input_id:
+            raise RuntimeError("fc_duplex input requires input_id")
+        if input_id in self._seen_input_ids:
+            raise RuntimeError(f"duplicate fc_duplex input_id: {input_id}")
+        self._seen_input_ids.add(input_id)
         worker_running = self._queue_worker is not None and not self._queue_worker.done()
         if self._non_spoken_scheduling == "latency":
             while not self._input_queue.empty():
@@ -228,6 +388,7 @@ class FcDuplexSessionRuntime:
         sample_rate = int(payload.get("sample_rate") or self._sample_rate)
         unit_index = self._audio_dump_unit_seq
         self._audio_dump_unit_seq += 1
+        self._unit_has_deferred_close = False
 
         if self._audio_dump_session_dir is not None:
             self._maybe_dump_user_wav(
@@ -249,17 +410,71 @@ class FcDuplexSessionRuntime:
             max_tokens=self._max_spoken_tokens,
             decode_mode=self._decode_mode,
         )
-        await self._emit_spoken(spoken, input_id=input_id)
+        await self._emit_spoken(
+            spoken,
+            input_id=input_id,
+            unit_index=unit_index,
+        )
         if self._audio_dump_session_dir is not None:
             self._maybe_dump_speak_wav(unit_index=unit_index, spoken=spoken)
         spoken_done_elapsed_ms = (time.perf_counter() - unit_t0) * 1000
 
         await self._run_non_spoken_loop(
             input_id=input_id,
+            unit_index=unit_index,
             pre_non_spoken_elapsed_ms=spoken_done_elapsed_ms,
         )
 
         await asyncio.to_thread(self.backend.fc_duplex_finalize)
+        await self._flush_generation_batch()
+        resume_status_fn = getattr(
+            self.backend, "fc_duplex_resume_boundary_status", None
+        )
+        resume_status = (
+            await asyncio.to_thread(resume_status_fn)
+            if resume_status_fn is not None
+            else {
+                "status": "unavailable",
+                "reason": "unsupported_open_span",
+            }
+        )
+        if self._unit_has_deferred_close:
+            resume_status = {
+                "status": "unavailable",
+                "reason": "unsupported_deferred_close",
+            }
+        if not self._resume_history_valid:
+            resume_status = {
+                "status": "unavailable",
+                "reason": "unsupported_deferred_close",
+            }
+        pending_candidates = [
+            (stream_id, step_indexes[0])
+            for stream_id, step_indexes in self._pending_text_steps_by_stream.items()
+            if step_indexes
+        ]
+        if pending_candidates:
+            stream_id, pending_from_step = min(
+                pending_candidates,
+                key=lambda item: item[1],
+            )
+            resume_status = {
+                "status": "unavailable",
+                "reason": "pending_text_delta",
+                "stream_id": stream_id,
+                "pending_from_step": pending_from_step,
+            }
+        await self._send(
+            "response.unit.committed",
+            session_id=self.session_id,
+            response_id=self._response_id,
+            input_id=input_id,
+            event_index=self._generation_event_index,
+            unit_index=unit_index,
+            last_step_index=self._generation_step_index - 1,
+            resume=resume_status,
+        )
+        self._generation_event_index += 1
 
     async def close(self) -> None:
         self._closed = True
@@ -372,13 +587,25 @@ class FcDuplexSessionRuntime:
         except Exception:
             logger.exception("failed to dump fc model trace: session=%s path=%s", self.session_id, path)
 
-    async def _run_non_spoken_loop(self, *, input_id: Optional[str], pre_non_spoken_elapsed_ms: float) -> None:
+    async def _run_non_spoken_loop(
+        self,
+        *,
+        input_id: Optional[str],
+        unit_index: int,
+        pre_non_spoken_elapsed_ms: float,
+    ) -> None:
         used = 0
         step_durations_ms: List[float] = []
         for _ in range(max(0, self._non_spoken_budget_per_unit)):
             if self._non_spoken_scheduling == "latency" and self._next_input_event.is_set():
                 step = _deferred_budget_reached_step()
-                await self._emit_step_events(step, input_id=input_id)
+                self._unit_has_deferred_close = True
+                self._resume_history_valid = False
+                await self._emit_step_events(
+                    step,
+                    input_id=input_id,
+                    unit_index=unit_index,
+                )
                 await self._emit_budget_debug(
                     input_id=input_id,
                     used=used,
@@ -394,7 +621,11 @@ class FcDuplexSessionRuntime:
             )
             step_durations_ms.append((time.perf_counter() - step_t0) * 1000)
             used += 1
-            await self._emit_step_events(step, input_id=input_id)
+            await self._emit_step_events(
+                step,
+                input_id=input_id,
+                unit_index=unit_index,
+            )
             raw_flag = getattr(step, "generation_flag", "") or ""
             flag = str(getattr(raw_flag, "value", raw_flag))
             terminated = bool(getattr(step, "terminated", False))
@@ -410,7 +641,13 @@ class FcDuplexSessionRuntime:
                 )
                 return
         step = _deferred_budget_reached_step()
-        await self._emit_step_events(step, input_id=input_id)
+        self._unit_has_deferred_close = True
+        self._resume_history_valid = False
+        await self._emit_step_events(
+            step,
+            input_id=input_id,
+            unit_index=unit_index,
+        )
         await self._emit_budget_debug(
             input_id=input_id,
             used=used,
@@ -440,13 +677,127 @@ class FcDuplexSessionRuntime:
             },
         )
 
-    async def _emit_spoken(self, spoken: Any, *, input_id: Optional[str]) -> None:
+    async def _record_generation_steps(
+        self,
+        generation_steps: List[Any],
+        *,
+        unit_index: int,
+        input_id: Optional[str],
+    ) -> None:
+        """Convert View steps into canonical public steps and batch them."""
+
+        for view_step in generation_steps:
+            stream_id = str(getattr(view_step, "stream_id", "") or "")
+            track = str(getattr(view_step, "track", "") or "")
+            if not stream_id or track not in {"spoken", "non_spoken"}:
+                raise RuntimeError(
+                    f"invalid FC View generation step stream/track: {stream_id}/{track}"
+                )
+            if (
+                self._generation_batch_steps
+                and (
+                    stream_id != self._generation_batch_stream_id
+                    or track != self._generation_batch_track
+                    or input_id != self._generation_batch_input_id
+                )
+            ):
+                await self._flush_generation_batch()
+
+            if not self._generation_batch_steps:
+                self._generation_batch_stream_id = stream_id
+                self._generation_batch_track = track
+                self._generation_batch_input_id = input_id
+                self._generation_batch_started_at = time.perf_counter()
+
+            step_index = self._generation_step_index
+            self._generation_step_index += 1
+            output_model = getattr(view_step, "output", None)
+            if output_model is None:
+                output: Dict[str, Any] = {}
+            elif hasattr(output_model, "model_dump"):
+                output = dict(output_model.model_dump())
+            else:
+                output = dict(output_model)
+            kind = str(output.get("kind") or "")
+            if kind in {"text_pending", "text_delta"}:
+                pending_steps = self._pending_text_steps_by_stream.setdefault(
+                    stream_id, []
+                )
+                pending_steps.append(step_index)
+                if kind == "text_delta":
+                    source_step_count = int(output.pop("source_step_count", 0) or 0)
+                    if source_step_count <= 0 or len(pending_steps) != source_step_count:
+                        raise RuntimeError(
+                            "FC View text delta source step count mismatch: "
+                            f"stream={stream_id}, pending={pending_steps}, "
+                            f"source_step_count={source_step_count}"
+                        )
+                    output["delta_index"] = self._delta_index_by_stream.get(stream_id, 0)
+                    self._delta_index_by_stream[stream_id] = output["delta_index"] + 1
+                    output["source_step_indices"] = list(pending_steps)
+                    pending_steps.clear()
+            elif kind != "protocol":
+                raise RuntimeError(f"unsupported FC View generation step kind: {kind}")
+
+            self._generation_batch_steps.append(
+                {
+                    "step_index": step_index,
+                    "unit_index": unit_index,
+                    "output": output,
+                }
+            )
+            elapsed = (
+                time.perf_counter() - self._generation_batch_started_at
+                if self._generation_batch_started_at is not None
+                else 0.0
+            )
+            if kind == "protocol" or len(self._generation_batch_steps) >= 16 or elapsed >= 0.05:
+                await self._flush_generation_batch()
+
+    async def _flush_generation_batch(self) -> None:
+        """Send the current canonical generation batch without changing step boundaries."""
+
+        if not self._generation_batch_steps:
+            return
+        await self._send(
+            "response.generation.step_batch",
+            session_id=self.session_id,
+            response_id=self._response_id,
+            input_id=self._generation_batch_input_id,
+            event_index=self._generation_event_index,
+            batch_index=self._generation_batch_index,
+            stream_id=self._generation_batch_stream_id,
+            track=self._generation_batch_track,
+            steps=list(self._generation_batch_steps),
+        )
+        self._generation_event_index += 1
+        self._generation_batch_index += 1
+        self._generation_batch_stream_id = None
+        self._generation_batch_track = None
+        self._generation_batch_input_id = None
+        self._generation_batch_started_at = None
+        self._generation_batch_steps = []
+
+    async def _emit_spoken(
+        self,
+        spoken: Any,
+        *,
+        input_id: Optional[str],
+        unit_index: int,
+    ) -> None:
         is_listen = bool(getattr(spoken, "is_listen", False))
         is_speaking = bool(getattr(spoken, "is_speaking", False))
-        text = str(getattr(spoken, "spoken_text", "") or "")
+        text = str(getattr(spoken, "spoken_text_delta", "") or "")
+        await self._record_generation_steps(
+            list(getattr(spoken, "generation_steps", None) or []),
+            unit_index=unit_index,
+            input_id=input_id,
+        )
         waveform = getattr(spoken, "audio_waveform", None)
         metadata = _model_to_dict(spoken)
         metadata.pop("audio_waveform", None)
+        metadata.pop("spoken_token_ids", None)
+        metadata.pop("generation_steps", None)
         logger.info(
             "fc_spoken input_id=%s listen=%s speaking=%s text=%r turn_eos=%s",
             input_id,
@@ -493,7 +844,13 @@ class FcDuplexSessionRuntime:
         if bool(getattr(spoken, "spoken_turn_eos", False)):
             await self._send_sp_token("spoken_turn_eos", input_id=input_id)
 
-    async def _emit_step_events(self, step: Any, *, input_id: Optional[str]) -> None:
+    async def _emit_step_events(
+        self,
+        step: Any,
+        *,
+        input_id: Optional[str],
+        unit_index: int,
+    ) -> None:
         """Convert one FcNonSpokenGenerateResult into API events.
 
         This intentionally mirrors audio_duplex_board.session._emit_step_events:
@@ -503,7 +860,12 @@ class FcDuplexSessionRuntime:
         """
 
         token_ids = list(getattr(step, "token_ids", None) or [])
-        step_text = str(getattr(step, "text", "") or "")
+        step_text = str(getattr(step, "text_delta", "") or "")
+        await self._record_generation_steps(
+            list(getattr(step, "generation_steps", None) or []),
+            unit_index=unit_index,
+            input_id=input_id,
+        )
         close_reason = getattr(step, "close_reason", None)
 
         logger.info(
@@ -566,7 +928,6 @@ class FcDuplexSessionRuntime:
                     response_id=self._response_id,
                     input_id=input_id,
                     delta=step_text,
-                    token_observations=_token_observations(token_ids, self.backend),
                 )
             return
 
@@ -581,7 +942,6 @@ class FcDuplexSessionRuntime:
                     input_id=input_id,
                     tool_call_id=tool_call_id,
                     delta=step_text,
-                    token_observations=_token_observations(token_ids, self.backend),
                 )
             return
 
@@ -592,8 +952,6 @@ class FcDuplexSessionRuntime:
                 response_id=self._response_id,
                 input_id=input_id,
                 text=step_text,
-                token_ids=token_ids,
-                token_observations=_token_observations(token_ids, self.backend),
                 block_id=self._current_block_id,
                 block_kind=_kind_for_event(self._current_block_kind),
             )
@@ -838,8 +1196,7 @@ def _resolve_fc_duplex_capability(backend: Any) -> Optional[Any]:
     ``backend.processor.model.fc_duplex``, not directly on ``backend``. Any
     other backend implementation (e.g. a C++ backend without this Python
     model layer) simply won't have this attribute chain, in which case this
-    returns None and callers degrade gracefully (no exact-match kind
-    detection / no token_observations, never a crash).
+    returns None and callers degrade gracefully for exact-match kind detection.
     """
 
     processor = getattr(backend, "processor", None)
@@ -887,91 +1244,6 @@ def _kind_for_event(kind: Optional[str]) -> str:
     if kind in ("think", "tool_call"):
         return kind
     return "unknown"
-
-
-_BYTE_DECODER: Dict[str, int] = {}
-
-
-def _byte_decoder() -> Dict[str, int]:
-    """惰性构造 GPT2 风格 byte<->unicode 反查表（``convert_ids_to_tokens`` 用的编码约定）。
-
-    见 ``transformers.models.gpt2.tokenization_gpt2.bytes_to_unicode``：byte-level BPE
-    把每个原始字节映射到一个固定的、可逆的 unicode 码点，跟这个字节是否构成合法
-    UTF-8 字符完全无关。这里只是把这张表反过来，用于从 vocab piece 还原原始字节。
-    """
-
-    if not _BYTE_DECODER:
-        from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
-
-        _BYTE_DECODER.update({v: k for k, v in bytes_to_unicode().items()})
-    return _BYTE_DECODER
-
-
-def _token_raw_bytes(piece: str) -> bytes:
-    """把 ``convert_ids_to_tokens`` 反查出的 vocab piece 还原成该 token 的原始字节。
-
-    这一步只是字节级映射表反查，从不尝试判断这些字节是否构成合法字符，所以对
-    任何 token（无论是完整字符还是被切断的半个多字节字符）都精确、可逆，没有
-    fallback、不丢信息。
-    """
-
-    decoder = _byte_decoder()
-    return bytes(decoder[ch] for ch in piece)
-
-
-def _token_observations(token_ids: List[int], backend: Any) -> Optional[List[Dict[str, Any]]]:
-    """Per-token ``{id, text, bytes_hex}`` observations for protocol §8 ``token_observations``.
-
-    ``text`` 曾经先后用过两种不可靠的来源：
-    1. ``token_strs``（``tokenizer.convert_ids_to_tokens`` 的展示层，byte-level BPE 的
-       字节代理编码，本身就不是文本，看起来像乱码）；
-    2. ``FcDuplexCapability.decode_text``（即 ``decode_ordinary``）逐 token 调用——这个
-       方法的契约是"输入字节能构成合法字符"，对被 token 边界切断的多字节字符会
-       静默 fallback 成 ``U+FFFD``，而 ``U+FFFD`` 不携带任何原字符信息（不同的字被
-       切断后解码结果完全相同，实测验证过），观测字段里出现这种"假占位符"比
-       "没有值"更容易误导排查问题的人。
-
-    正确做法：只用 ``convert_ids_to_tokens`` 反查 vocab piece 再反查字节表还原原始
-    字节（``_token_raw_bytes``，无 fallback、逐 token 精确可逆），然后**显式**尝试
-    strict UTF-8 decode——能解出来就是完整字符，解不出来就诚实地把 ``text`` 设为
-    ``None``（不是伪造的 ``U+FFFD`` 占位符），同时始终提供 ``bytes_hex``（原始字节
-    的十六进制）作为无损兜底，方便排查问题的人自己拼接多个 token 的字节还原文本。
-    Special tokens（``is_special``）继续用协议的 ``id2name`` 展示名。
-
-    见 docs/fc-duplex/o45-fc-merge-audit-2026-07-10.md 的完整推导和实证记录。
-
-    Returns None (omit the field) when the model's FcDuplexCapability isn't
-    reachable through ``backend`` (e.g. a non-Python backend) -- per protocol
-    §8 this field is optional ("backend MAY"), so omitting it entirely is
-    protocol-compliant when there is no reliable source.
-    """
-
-    if not token_ids:
-        return None
-    fc_duplex = _resolve_fc_duplex_capability(backend)
-    if fc_duplex is None:
-        return None
-    tokenizer = getattr(fc_duplex, "tokenizer", None)
-    if tokenizer is None:
-        return None
-    observations = []
-    for tid in token_ids:
-        tid_int = int(tid)
-        if fc_duplex.is_special(tid_int):
-            observations.append({"id": tid_int, "text": fc_duplex.id2name.get(tid_int), "bytes_hex": None})
-            continue
-        try:
-            piece = tokenizer.convert_ids_to_tokens([tid_int])[0]
-            raw = _token_raw_bytes(piece)
-        except Exception:  # noqa: BLE001 - vocab 反查在极端情况下也不能挂主流程
-            observations.append({"id": tid_int, "text": None, "bytes_hex": None})
-            continue
-        try:
-            text: Optional[str] = raw.decode("utf-8")  # strict：解不出来就抛异常，不用 errors='replace'
-        except UnicodeDecodeError:
-            text = None  # 诚实信号"这个 token 单独不构成合法字符"，不是伪造的占位符
-        observations.append({"id": tid_int, "text": text, "bytes_hex": raw.hex()})
-    return observations
 
 
 def _estimate_remaining_budget_1s(

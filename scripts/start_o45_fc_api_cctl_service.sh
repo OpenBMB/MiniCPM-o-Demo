@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-duplex-tool-api-2026-07-02}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${PROJECT_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 MODEL_PATH="${MODEL_PATH:-/user/weihongliang/autoshow_omni/models/MiniCPM-o-4_5}"
 PT_PATH="${PT_PATH:-/user/weihongliang/o45_fc_assets/checkpoints/minicpm-v_100.pt}"
 REF_AUDIO_PATH="${REF_AUDIO_PATH:-/user/weihongliang/o45_fc_assets/training/delivery_train_data/media/system_reference/HTRef06.wav}"
-SDK_SRC="${SDK_SRC:-/user/weihongliang/o45_fc_assets/sdk/src}"
-PYTHON="${PYTHON:-/user/weihongliang/MiniCPM-o-Demo/.venv/base/bin/python}"
+SDK_SRC="${SDK_SRC:-/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_sdk/src}"
+PYTHON="${PYTHON:-/user/sunweiyue/lib/swy-dev/.venv/minicpm_o5_demo/bin/python}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${BACKEND_PORT:-22500}"

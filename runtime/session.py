@@ -61,6 +61,12 @@ class BackendRuntimeSession:
         event = await self.backend.init(params)
         return backend_event_to_runtime_event(event)
 
+    async def resume(self, params: Dict[str, Any]) -> RuntimeEvent:
+        """Request stateless FC Duplex resume from client-provided history."""
+
+        event = await self.backend.resume(params)
+        return backend_event_to_runtime_event(event)
+
     async def push(self, input_payload: Dict[str, Any]) -> None:
         await self.backend.push(input_payload)
 

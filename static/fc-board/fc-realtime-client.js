@@ -6,7 +6,10 @@ export class FcRealtimeClient {
     this.ws = null;
     this.ready = false;
     this.queued = false;
-    this._pendingInit = null;
+    this._pendingSessionFrame = null;
+    this.history = [];
+    this.resumeIdentity = null;
+    this._inputSeq = 0;
   }
 
   async connect() {
@@ -25,17 +28,57 @@ export class FcRealtimeClient {
   }
 
   initSession(payload) {
+    const frame = { type: 'session.init', payload };
     if (this.queued) {
-      this._send({ type: 'session.init', payload });
+      this._send(frame);
     } else {
-      this._pendingInit = payload;
+      this._pendingSessionFrame = frame;
     }
   }
 
-  appendAudio({ audioBase64, sampleRate = 16000 }) {
+  resumeSession(payload) {
+    const frame = { type: 'session.resume', payload };
+    if (this.queued) {
+      this._send(frame);
+    } else {
+      this._pendingSessionFrame = frame;
+    }
+  }
+
+  buildResumePayload(throughUnitIndex) {
+    const checkpointIndex = this.history.findIndex((item) => (
+      item.dir === 'down'
+      && item.frame.type === 'response.unit.committed'
+      && item.frame.unit_index === throughUnitIndex
+    ));
+    if (checkpointIndex < 0) {
+      throw new Error(`Missing Unit checkpoint: ${throughUnitIndex}`);
+    }
+    const checkpoint = this.history[checkpointIndex].frame;
+    if (checkpoint.resume?.status !== 'available') {
+      throw new Error(
+        `Unit ${throughUnitIndex} is not resumable: ${checkpoint.resume?.reason || 'unknown'}`,
+      );
+    }
+    if (!this.resumeIdentity) {
+      throw new Error('Missing session resume identity');
+    }
+    return {
+      ...this.resumeIdentity,
+      through_unit_index: throughUnitIndex,
+      history: this.history
+        .slice(0, checkpointIndex + 1)
+        .map((item) => item.frame),
+    };
+  }
+
+  appendAudio({ audioBase64, sampleRate = 16000, inputId = null }) {
+    const resolvedInputId = inputId || `input_${String(this._inputSeq).padStart(6, '0')}`;
+    this._inputSeq += 1;
     this._send({
       type: 'input.append',
       input: {
+        input_id: resolvedInputId,
         audio_base64: audioBase64,
         sample_rate: sampleRate,
       },
@@ -63,22 +106,43 @@ export class FcRealtimeClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket is not open');
     }
+    this.history.push({
+      dir: 'up',
+      frame: JSON.parse(JSON.stringify(message)),
+    });
     this.onSend?.(message);
     this.ws.send(JSON.stringify(message));
   }
 
   _handleMessage(message) {
     const event = JSON.parse(message.data);
+    if (
+      event.type === 'session.created'
+      || event.type === 'response.generation.step_batch'
+      || event.type === 'response.unit.committed'
+      || event.type.startsWith('response.think.')
+      || event.type.startsWith('response.tool_call.')
+      || event.type === 'response.output.delta'
+      || event.type === 'response.output.sp_tokens'
+    ) {
+      this.history.push({
+        dir: 'down',
+        frame: JSON.parse(JSON.stringify(event)),
+      });
+    }
     if (event.type === 'session.queue_done') {
       this.queued = true;
-      if (this._pendingInit) {
-        const payload = this._pendingInit;
-        this._pendingInit = null;
-        this._send({ type: 'session.init', payload });
+      if (this._pendingSessionFrame) {
+        const frame = this._pendingSessionFrame;
+        this._pendingSessionFrame = null;
+        this._send(frame);
       }
     }
-    if (event.type === 'session.created') {
+    if (event.type === 'session.created' || event.type === 'session.resumed') {
       this.ready = true;
+    }
+    if (event.type === 'session.created' && event.resume) {
+      this.resumeIdentity = { ...event.resume };
     }
     this.onEvent?.(event);
   }

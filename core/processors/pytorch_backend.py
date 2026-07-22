@@ -372,6 +372,50 @@ class PyTorchBackend:
         fc_view = self.processor.set_fc_duplex_mode()
         return fc_view.finalize_unit(FcFinalizeUnitRequest())
 
+    def fc_duplex_resume_boundary_status(self) -> Dict[str, Any]:
+        """Return the View's public-history resume eligibility at the Unit boundary."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.resume_boundary_status()
+
+    def fc_duplex_resume_identity(self) -> Dict[str, Any]:
+        """Return current model/tokenizer identity for public resume metadata."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.resume_identity()
+
+    def fc_duplex_replay_completed_unit(
+        self,
+        *,
+        audio_data: Optional[str],
+        frame_list: Optional[List[Any]],
+        tool_responses: Optional[List[FcToolResponse]],
+        sample_rate: int,
+        spoken_token_ids: List[int],
+        non_spoken_token_ids: List[int],
+    ) -> Any:
+        """Deterministically feed one historical FC Duplex Unit."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.replay_completed_unit(
+            audio_data=audio_data,
+            frame_list=frame_list,
+            tool_responses=tool_responses,
+            sample_rate=sample_rate,
+            spoken_token_ids=spoken_token_ids,
+            non_spoken_token_ids=non_spoken_token_ids,
+        )
+
+    def fc_duplex_restore_generation_stream_sequence(
+        self,
+        *,
+        next_stream_sequence: int,
+    ) -> None:
+        """Advance View stream IDs after stateless replay."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        fc_view.restore_generation_stream_sequence(next_stream_sequence)
+
     def fc_duplex_dump_trace(self, *, path: str, session_id: Optional[str] = None, reason: Optional[str] = None) -> Any:
         if self.processor is None:
             return None

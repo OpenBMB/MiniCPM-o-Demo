@@ -218,15 +218,23 @@ async def _handle_remote_backend_runtime_ws(
 
         if first_type == "session.init":
             init_params = _init_payload(first)
+        elif first_type == "session.resume":
+            resume_event = await runtime.resume(dict(first.get("payload") or {}))
+            resume_payload = await _send_runtime_event(resume_event)
+            if resume_payload.get("type") == "session.resume.failed":
+                await ws.close(code=1008, reason="resume_failed")
+                return
+            init_params = None
         elif first_type == "input.append":
             init_params = {"mode": mode}
             pending_input = _input_payload(first)
         else:
             raise RuntimeError(f"first message must initialize or push input, got: {first_type}")
 
-        init_params = dict(init_params)
-        init_params.setdefault("mode", mode)
-        await _send_runtime_event(await runtime.init(init_params))
+        if init_params is not None:
+            init_params = dict(init_params)
+            init_params.setdefault("mode", mode)
+            await _send_runtime_event(await runtime.init(init_params))
 
         if pending_input is not None:
             await runtime.push(pending_input)

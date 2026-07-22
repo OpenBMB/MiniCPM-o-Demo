@@ -5,11 +5,15 @@
 本补充继续适用于原 full-duplex 输入里的两种模态：`audio` 与 `video`；tool-call
 能力是在同一条双工音视频流上新增的事件能力。
 
+FC Duplex 可恢复 generation step batch、Unit checkpoint 与 stateless
+`session.resume` 的权威规范见
+[`../fc-duplex/resumable-generation-api.md`](../fc-duplex/resumable-generation-api.md)。
+
 本文只定义最小必要协议面：
 
 ## 宏观上的注意事项
 - 1.客户端不需要对 unit 的组织负责。 比如，客户端可以在任意时候发送 tool-result ，不需要把它跟某个视频帧绑定到一个 unit。  服务端足够智能地处理这些 unit 组织关系。
-- 2.为了最大程度保证resume（当然这个功能现在还没实现），服务端会推送各种 type:response.output.sp_tokens 的数据包。但这些客户端不应根据这些信息来做业务操作，只应该单纯把它们存下来。
+- 2.为了支持 resume，服务端会推送 canonical generation step batch 与 Unit checkpoint；`response.output.sp_tokens` 保留为兼容性/便利观测。普通客户端不根据这些日志事件执行业务控制，可恢复客户端必须按顺序持久化。
 - 3.`temperature` / `top_p` / `top_k` 这类采样参数优先在 `session.init.payload.config.generation` 中声明为 session 级默认值；普通音视频 chunk 不携带一份完整 generation config。
 - 4.tool definitions 在 init 时传入，格式跟 openai 对齐
 
@@ -19,8 +23,10 @@
 本扩展沿用现有 WebSocket 数据通道。backend 下行事件与 runtime 上行输入都在同一个
 session 内按接收顺序生效。
 
-协议不要求 `idx`、`event_seq` 或 chunk-level `seq`。如果将来引入多连接转发、消息队列
-重放或断线恢复，可以在不改变本文语义的前提下补充诊断序号。
+普通业务便利事件不要求 chunk-level `seq`。可恢复事件
+`response.generation.step_batch` / `response.unit.committed` 必须携带 Session 内严格单调
+递增的 `event_index`；batch 内 step 还必须携带 `step_index` 与 `unit_index`。这些序号属于
+resume 协议，不改变普通业务事件按 WebSocket 顺序生效的语义。
 
 ## 2. Init: tool definitions and sampling config
 
@@ -101,6 +107,17 @@ duplex tool-call 的工具定义在 `session.init.payload.tools` 中传入。格
   decode，不回溯已进入模型上下文的 unit。
 - `temperature` / `top_p` / `top_k` 是模型相关采样 hint。backend 不支持某个字段时，应忽略
   或 fail-fast；不能悄悄改变 tool-call 事件语义。
+
+### 2.2 session.resume
+
+`session.resume` 是新 WebSocket 连接的第一帧，用客户端保存的完整双向历史在相同
+模型/tokenizer 下重建到一个可恢复 Unit checkpoint。服务端不依赖旧 Session/KV 或
+opaque cursor。
+
+请求、成功响应、失败码和可恢复边界见
+[`FC Duplex Resumable Generation API`](../fc-duplex/resumable-generation-api.md)。
+它与 legacy duplex 的 `pause` / `resume` 不同：legacy 操作复用仍驻留的服务端状态，
+`session.resume` 则从客户端历史执行 stateless replay。
 
 ## 3. 上行输入
 
@@ -293,6 +310,22 @@ backend 根据模板、unit 输入和模态信息确定性重建，默认不下�
 { "type": "response.output.sp_tokens", "token": "spoken_turn_eos" }
 ```
 
+#### 4.1.2 Canonical resumable generation
+
+`response.output.sp_tokens` 是历史兼容和业务便利事件。精确 resume 使用
+`response.generation.step_batch` 保存逐 token generation step，并用
+`response.unit.committed` 声明 Unit checkpoint 是否可恢复。
+
+Batch 内通过 `text_pending` / `text_delta` / `protocol` 三种 discriminated variant
+同时保存：
+
+- 没有安全 Unicode 输出的 step；
+- 可逐项 re-encode 的 safe text delta 及其有序 `source_step_indices`；
+- protocol structural semantic key。
+
+完整字段和 batching 约束见
+[`FC Duplex Resumable Generation API`](../fc-duplex/resumable-generation-api.md)。
+
 ### 4.2 response.think
 
 `think` 是模型生成的非口语思考文本流。它需要 begin/end 边界，但不需要 id 或 seq。
@@ -482,72 +515,22 @@ trace。协议只定义事件 envelope，不定义 `debug` 内部结构。
 - runtime MUST NOT 依赖 `response.debug` 恢复会话语义、执行工具、控制模型或重建模型状态。
 - backend MAY 省略、延迟、聚合、采样或裁剪 `response.debug` 事件。
 
-## 8. 可选 token 观测
+## 8. 内部 token 观测
 
-backend MAY 在调试或分析模式下为任意下行事件附加 `token_observations` 字段，类似
-OpenAI API 的 `logprobs` / `top_logprobs` 能力。
+公共 FC Duplex WebSocket API 不返回 token ID、vocab piece 或原始 bytes。
+`token_observations` 不属于公共 wire schema。`session.created.resume` 只返回
+tokenizer target 与稳定 fingerprint，用于拒绝跨 tokenizer resume；它不包含任何生成
+token 内容。
 
-`token_observations` 是与该事件输出内容对应的 token 观测数组：
+模型实现可以在服务端内部 trace 中记录 token ID、bytes、logprob 或 top-logprobs，用于
+调试、审计和测试；这些内部字段：
 
-- text / think / tool-call delta 事件 MAY 携带一个或多个文本 token 的观测。
-- `response.output.sp_tokens` 每条事件只表示一个 special token，因此 `token_observations`
-  若存在，长度 SHOULD 为 1。
-- audio delta 如果要暴露 TTS token、codec token 或 LLM text token 观测，也使用同一个字段；
-  这些观测不能替代音频 payload 本身。
+- 不发送给客户端；
+- 不参与业务控制；
+- 不作为 semantic resume 输入；
+- 不承诺跨模型/tokenizer 兼容。
 
-普通文本输出时，OpenAI-style 做法是文本照常返回，token 概率作为每个输出 token 的附加观测：
-
-```json
-{
-  "type": "response.output.delta",
-  "kind": "text",
-  "text": "好的，我来查一下",
-  "token_observations": [
-    {
-      "id": 10101,
-      "text": "好的",
-      "logprob": -0.12,
-      "top_logprobs": [
-        { "id": 10101, "text": "好的", "logprob": -0.12 },
-        { "id": 10102, "text": "可以", "logprob": -1.43 }
-      ]
-    },
-    {
-      "id": 10012,
-      "text": "，",
-      "logprob": -0.03,
-      "top_logprobs": [
-        { "id": 10012, "text": "，", "logprob": -0.03 },
-        { "id": 10013, "text": "。", "logprob": -3.20 }
-      ]
-    }
-  ]
-}
-```
-
-special-token 输出同理，只是 `response.output.sp_tokens` 单事件只对应一个 special token：
-
-```json
-{
-  "type": "response.output.sp_tokens",
-  "token": "spoken_slot_eos",
-  "token_observations": [
-    {
-      "id": 248146,
-      "text": "<|spoken_slot_eos|>",
-      "logprob": -0.03,
-      "top_logprobs": [
-        { "id": 248146, "text": "<|spoken_slot_eos|>", "logprob": -0.03 },
-        { "id": 248147, "text": "<|spoken_turn_eos|>", "logprob": -3.92 }
-      ]
-    }
-  ]
-}
-```
-
-约束：
-
-- `token_observations[].id` / `token_observations[].text` 只用于调试、审计、模型分析或 exact trace 辅助，不作为 semantic
-  resume 的主接口。
-- 不返回完整 logits 向量；如需候选，使用截断后的 `top_logprobs`。
-- runtime 执行工具 MUST 继续使用 `response.tool_call.args.raw`，不得依赖 token 观测字段反解析工具参数。
+公共 resume 只依赖
+[`response.generation.step_batch`](../fc-duplex/resumable-generation-api.md) 中的
+step/Unit provenance、safe text delta 与 protocol semantic key。工具执行仍只使用
+`response.tool_call.args.raw` 的结构化结果。

@@ -104,7 +104,7 @@ for audio_chunk in audio_stream:
 ```
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Optional, Generator, List, TYPE_CHECKING
 from pathlib import Path
 import json
@@ -112,6 +112,7 @@ import os
 import time
 import logging
 import base64
+import hashlib
 
 import numpy as np
 import torch
@@ -148,12 +149,16 @@ from core.schemas.fc_duplex import (
     FcDuplexTrainDataResult,
     FcDuplexUnitInfo,
     FcFinalizeUnitRequest,
+    FcGenerationProtocolOutput,
+    FcGenerationTextDeltaOutput,
+    FcGenerationTextPendingOutput,
     FcNonSpokenGenerateRequest,
     FcNonSpokenGenerateResult,
     FcSpokenGenerateRequest,
     FcSpokenGenerateResult,
     FcTokenStreamDiff,
     FcToolResponse,
+    FcViewGenerationStep,
     NonSpokenStepGenerationFlag,
 )
 
@@ -1254,6 +1259,12 @@ class ToolCallStateManager:
                 })
         return calls
 
+    @property
+    def has_state(self) -> bool:
+        """Whether this Session has tool-call state that resume MVP cannot rebuild yet."""
+
+        return bool(self._states)
+
     def _next_unique_id(self) -> str:
         call_id = self.id_generator.next_id()
         if call_id in self._states:
@@ -1316,6 +1327,18 @@ class ToolCallStateManager:
         return converted
 
 
+@dataclass
+class _FcTextStreamState:
+    """View-owned ordinary text decoder state for one continuous stream."""
+
+    stream_id: str
+    kind: str
+    decoder: Any
+    pending_token_count: int = 0
+    pending_token_ids: List[int] = field(default_factory=list)
+    emitted_parts: List[str] = field(default_factory=list)
+
+
 class FcDuplexView:
     """FC slot Duplex 模式视图。"""
 
@@ -1324,6 +1347,15 @@ class FcDuplexView:
         self.config = config or FcDuplexConfig()
         self.tool_call_manager = ToolCallStateManager()
         self._ref_audio_cache: Dict[str, np.ndarray] = {}
+        self._protocol_tokenizer: Any = None
+        self._stream_seq = 0
+        self._non_spoken_text_stream: Optional[_FcTextStreamState] = None
+        self._spoken_text_stream: Optional[_FcTextStreamState] = None
+        self._closed_non_spoken_texts: List[tuple[str, str]] = []
+        self._resume_text_roundtrip_valid = True
+        self._resume_text_roundtrip_error: Optional[Dict[str, Any]] = None
+        self._resume_ref_audio_sha256: Optional[str] = None
+        self._resume_prompt_wav_sha256: Optional[str] = None
 
     @staticmethod
     def _audio_from_base64(audio_data: Optional[str]) -> Optional[np.ndarray]:
@@ -1340,19 +1372,179 @@ class FcDuplexView:
             return NonSpokenStepGenerationFlag.no_action
         return NonSpokenStepGenerationFlag.non_spoken_slot_eos
 
-    @staticmethod
-    def _step_result(data: dict) -> FcNonSpokenGenerateResult:
+    def _ensure_protocol_tokenizer(self) -> Any:
+        """Return the model capability's SDK tokenizer without loading another target."""
+
+        if self._protocol_tokenizer is not None:
+            return self._protocol_tokenizer
+        capability = getattr(self._model, "fc_duplex", None)
+        if capability is None:
+            raise RuntimeError("FC duplex capability is not initialized")
+        self._protocol_tokenizer = capability.protocol_tokenizer
+        return self._protocol_tokenizer
+
+    def _new_text_stream(self, kind: str) -> _FcTextStreamState:
+        """Create an isolated SDK decoder for one semantic text stream."""
+
+        self._stream_seq += 1
+        tokenizer = self._ensure_protocol_tokenizer()
+        return _FcTextStreamState(
+            stream_id=f"{kind}_{self._stream_seq}",
+            kind=kind,
+            decoder=tokenizer.create_ordinary_text_decode_stream(),
+        )
+
+    def _semantic_key(self, token_id: int) -> Optional[str]:
+        """Resolve a protocol structural token ID to its stable semantic key."""
+
+        tokenizer = self._ensure_protocol_tokenizer()
+        info = tokenizer.token_info(token_id)
+        return info.semantic_key
+
+    def _decode_generation_steps(
+        self,
+        token_ids: List[int],
+        *,
+        track: str,
+    ) -> tuple[List[FcViewGenerationStep], str]:
+        """Convert raw generated IDs into resumable per-token View steps."""
+
+        if track not in {"spoken", "non_spoken"}:
+            raise ValueError(f"unsupported FC generation track: {track}")
+        tokenizer = self._ensure_protocol_tokenizer()
+        stream_attr = (
+            "_spoken_text_stream" if track == "spoken" else "_non_spoken_text_stream"
+        )
+        stream: Optional[_FcTextStreamState] = getattr(self, stream_attr)
+        steps: List[FcViewGenerationStep] = []
+        emitted_parts: List[str] = []
+        start_keys = {
+            "non_spoken": {
+                "think_start": "think",
+                "tool_call_start": "tool_call",
+            },
+            "spoken": {
+                "speak": "spoken",
+            },
+        }
+        end_keys = {
+            "non_spoken": {"think_end", "tool_call_end"},
+            "spoken": {"spoken_turn_eos"},
+        }
+
+        for raw_token_id in token_ids:
+            token_id = int(raw_token_id)
+            if tokenizer.is_ordinary_token_id(token_id):
+                if stream is None:
+                    stream = self._new_text_stream(
+                        "spoken" if track == "spoken" else "non_spoken"
+                    )
+                    setattr(self, stream_attr, stream)
+                stream.pending_token_count += 1
+                stream.pending_token_ids.append(token_id)
+                text_delta = stream.decoder.step(token_id)
+                if text_delta is None:
+                    output = FcGenerationTextPendingOutput()
+                else:
+                    recovered_ids = tokenizer.encode_ordinary(text_delta)
+                    if recovered_ids != stream.pending_token_ids:
+                        self._resume_text_roundtrip_valid = False
+                        self._resume_text_roundtrip_error = {
+                            "status": "unavailable",
+                            "reason": "text_delta_roundtrip_mismatch",
+                            "stream_id": stream.stream_id,
+                        }
+                    output = FcGenerationTextDeltaOutput(
+                        text=text_delta,
+                        source_step_count=stream.pending_token_count,
+                    )
+                    stream.pending_token_count = 0
+                    stream.pending_token_ids.clear()
+                    stream.emitted_parts.append(text_delta)
+                    emitted_parts.append(text_delta)
+                steps.append(
+                    FcViewGenerationStep(
+                        token_id=token_id,
+                        stream_id=stream.stream_id,
+                        track=track,
+                        output=output,
+                    )
+                )
+                continue
+
+            semantic_key = self._semantic_key(token_id)
+            if semantic_key is None:
+                raise RuntimeError(
+                    f"FC generated non-ordinary token has no semantic key: {token_id}"
+                )
+            stream_kind = start_keys[track].get(semantic_key)
+            if stream_kind is not None:
+                if stream is not None:
+                    raise RuntimeError(
+                        f"FC {track} stream opened before previous stream closed: "
+                        f"{stream.stream_id} -> {stream_kind}"
+                    )
+                stream = self._new_text_stream(stream_kind)
+                setattr(self, stream_attr, stream)
+            stream_id = (
+                stream.stream_id
+                if stream is not None
+                else f"{track}_protocol"
+            )
+            steps.append(
+                FcViewGenerationStep(
+                    token_id=token_id,
+                    stream_id=stream_id,
+                    track=track,
+                    output=FcGenerationProtocolOutput(semantic_key=semantic_key),
+                )
+            )
+            if semantic_key in end_keys[track]:
+                if stream is not None and stream.pending_token_count:
+                    raise RuntimeError(
+                        "incomplete_text_at_span_boundary: "
+                        f"stream={stream.stream_id}, pending={stream.pending_token_count}"
+                    )
+                if track == "non_spoken" and stream is not None:
+                    self._closed_non_spoken_texts.append(
+                        (stream.kind, "".join(stream.emitted_parts))
+                    )
+                stream = None
+                setattr(self, stream_attr, None)
+
+        return steps, "".join(emitted_parts)
+
+    def _step_result(self, data: dict) -> FcNonSpokenGenerateResult:
         spans = [FcClosedSpan(**span) for span in data.get("closed_spans", []) or []]
+        generation_steps, text_delta = self._decode_generation_steps(
+            list(data.get("token_ids", []) or []),
+            track="non_spoken",
+        )
+        for span in spans:
+            if not self._closed_non_spoken_texts:
+                raise RuntimeError(
+                    f"closed span has no matching View text stream: {span.type}"
+                )
+            stream_kind, emitted_text = self._closed_non_spoken_texts.pop(0)
+            expected_text = span.text if span.type == "think" else span.wire
+            if stream_kind != span.type or emitted_text != (expected_text or ""):
+                raise RuntimeError(
+                    "FC closed span text mismatch: "
+                    f"stream={stream_kind}/{emitted_text!r}, "
+                    f"span={span.type}/{expected_text!r}"
+                )
         return FcNonSpokenGenerateResult(
             token_ids=data.get("token_ids", []),
             terminated=data.get("terminated", False),
             close_reason=data.get("close_reason"),
             closed_spans=spans,
             text=data.get("text", ""),
+            text_delta=text_delta,
+            generation_steps=generation_steps,
             audio_waveform=data.get("audio_waveform"),
             audio_sample_rate=data.get("audio_sample_rate"),
             n_tts_tokens=data.get("n_tts_tokens", 0),
-            generation_flag=FcDuplexView._non_spoken_generation_flag(data),
+            generation_flag=self._non_spoken_generation_flag(data),
             metadata={
                 k: v
                 for k, v in data.items()
@@ -1396,14 +1588,32 @@ class FcDuplexView:
             inserted_token_ids=data.get("inserted_token_ids", []),
         )
 
-    @staticmethod
-    def _spoken_result(data: dict) -> FcSpokenGenerateResult:
+    def _spoken_result(self, data: dict) -> FcSpokenGenerateResult:
         audio_waveform = data.get("audio_waveform")
+        generation_steps, spoken_text_delta = self._decode_generation_steps(
+            list(data.get("spoken_ids", []) or []),
+            track="spoken",
+        )
+        if bool(data.get("spoken_turn_eos", False)):
+            tokenizer = self._ensure_protocol_tokenizer()
+            spoken_slot_eos_id = tokenizer.token_to_id("<|spoken_slot_eos|>")
+            generation_steps.append(
+                FcViewGenerationStep(
+                    token_id=spoken_slot_eos_id,
+                    stream_id="spoken_protocol",
+                    track="spoken",
+                    output=FcGenerationProtocolOutput(
+                        semantic_key="spoken_slot_eos"
+                    ),
+                )
+            )
         return FcSpokenGenerateResult(
             is_listen=bool(data.get("is_listen", False)),
             is_speaking=bool(data.get("is_speaking", False)),
             spoken_token_ids=data.get("spoken_ids", []),
             spoken_text=data.get("spoken_text", data.get("text", "")),
+            spoken_text_delta=spoken_text_delta,
+            generation_steps=generation_steps,
             spoken_turn_eos=bool(data.get("spoken_turn_eos", False)),
             audio_waveform=audio_waveform,
             audio_sample_rate=data.get("audio_sample_rate"),
@@ -1540,6 +1750,23 @@ class FcDuplexView:
                     mono=True,
                 )
             ref_audio = self._ref_audio_cache[request.ref_audio_path]
+        self._resume_ref_audio_sha256 = (
+            hashlib.sha256(
+                np.asarray(ref_audio, dtype=np.float32).tobytes()
+            ).hexdigest()
+            if ref_audio is not None
+            else None
+        )
+        effective_prompt_wav_path = (
+            request.prompt_wav_path or request.ref_audio_path
+        )
+        self._resume_prompt_wav_sha256 = None
+        if effective_prompt_wav_path:
+            prompt_path = Path(effective_prompt_wav_path)
+            if prompt_path.is_file():
+                self._resume_prompt_wav_sha256 = hashlib.sha256(
+                    prompt_path.read_bytes()
+                ).hexdigest()
         result = self._model.fc_duplex_prepare(
             system_prompt=request.system_prompt,
             tools=request.tools,
@@ -1547,6 +1774,14 @@ class FcDuplexView:
             prompt_wav_path=request.prompt_wav_path or request.ref_audio_path,
             generate_audio=request.generate_audio,
         )
+        self._protocol_tokenizer = None
+        self._stream_seq = 0
+        self._non_spoken_text_stream = None
+        self._spoken_text_stream = None
+        self._closed_non_spoken_texts = []
+        self._resume_text_roundtrip_valid = True
+        self._resume_text_roundtrip_error = None
+        self._ensure_protocol_tokenizer()
         return self._prepare_result(result)
 
     def streaming_prefill(self, request: FcDuplexPrefillRequest) -> FcDuplexPrefillResult:
@@ -1608,6 +1843,101 @@ class FcDuplexView:
         del request
         return self._unit_info(self._model.fc_duplex_finalize_unit())
 
+    def resume_boundary_status(self) -> Dict[str, Any]:
+        """Return whether the current Unit boundary is reconstructable from public text."""
+
+        if self.tool_call_manager.has_state:
+            return {
+                "status": "unavailable",
+                "reason": "unsupported_tool_state",
+            }
+        if not self._resume_text_roundtrip_valid:
+            return dict(
+                self._resume_text_roundtrip_error
+                or {
+                    "status": "unavailable",
+                    "reason": "text_delta_roundtrip_mismatch",
+                }
+            )
+        for stream in (self._non_spoken_text_stream, self._spoken_text_stream):
+            if stream is None:
+                continue
+            if stream.pending_token_count:
+                return {
+                    "status": "unavailable",
+                    "reason": "pending_text_delta",
+                    "stream_id": stream.stream_id,
+                }
+            return {
+                "status": "unavailable",
+                "reason": (
+                    "unsupported_spoken_turn_state"
+                    if stream.kind == "spoken"
+                    else "unsupported_open_span"
+                ),
+                "stream_id": stream.stream_id,
+            }
+        capability = getattr(self._model, "fc_duplex", None)
+        capability_status = getattr(capability, "resume_boundary_status", None)
+        if capability_status is not None:
+            return dict(capability_status())
+        return {"status": "available"}
+
+    def resume_identity(self) -> Dict[str, Any]:
+        """Return the model/tokenizer identity required for stateless resume."""
+
+        tokenizer = self._ensure_protocol_tokenizer()
+        fingerprint = tokenizer.fingerprint
+        model_config = getattr(self._model, "config", None)
+        model_name = str(
+            getattr(model_config, "_name_or_path", None)
+            or getattr(self._model, "name_or_path", None)
+            or "unknown"
+        )
+        return {
+            "protocol_version": "fc-duplex-resume-v1",
+            "model": model_name,
+            "tokenizer_target": tokenizer.target,
+            "tokenizer_fingerprint": {
+                "vocab_hash": fingerprint.vocab_hash,
+                "merges_hash": fingerprint.merges_hash,
+            },
+            "ref_audio_sha256": self._resume_ref_audio_sha256,
+            "prompt_wav_sha256": self._resume_prompt_wav_sha256,
+        }
+
+    def replay_completed_unit(
+        self,
+        *,
+        audio_data: Optional[str],
+        frame_list: Optional[List[Any]],
+        tool_responses: Optional[List[FcToolResponse]],
+        sample_rate: int,
+        spoken_token_ids: List[int],
+        non_spoken_token_ids: List[int],
+    ) -> FcDuplexUnitInfo:
+        """Deterministically feed one historical Unit without sampling outputs."""
+
+        audio_waveform = self._audio_from_base64(audio_data)
+        result = self._model.fc_duplex_replay_completed_unit(
+            audio_waveform=audio_waveform,
+            frame_list=frame_list,
+            tool_responses=tool_responses,
+            sample_rate=sample_rate,
+            spoken_token_ids=spoken_token_ids,
+            non_spoken_token_ids=non_spoken_token_ids,
+        )
+        return self._unit_info(result)
+
+    def restore_generation_stream_sequence(self, next_stream_sequence: int) -> None:
+        """Advance future stream IDs after stateless replay without restoring open streams."""
+
+        if next_stream_sequence < 1:
+            raise ValueError(
+                f"next_stream_sequence 必须 >= 1: {next_stream_sequence}"
+            )
+        self._stream_seq = next_stream_sequence - 1
+
     def decode_output(
         self,
         request: Optional[FcDecodeOutputRequest] = None,
@@ -1627,6 +1957,15 @@ class FcDuplexView:
 
     def cleanup(self) -> None:
         self._model.fc_duplex_cleanup()
+        self._protocol_tokenizer = None
+        self._stream_seq = 0
+        self._non_spoken_text_stream = None
+        self._spoken_text_stream = None
+        self._closed_non_spoken_texts = []
+        self._resume_text_roundtrip_valid = True
+        self._resume_text_roundtrip_error = None
+        self._resume_ref_audio_sha256 = None
+        self._resume_prompt_wav_sha256 = None
 
     def offline_inference(
         self,

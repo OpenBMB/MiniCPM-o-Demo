@@ -105,6 +105,12 @@ class FcDuplexCapability:
         self._ensure_protocol()
         return self
 
+    @property
+    def protocol_tokenizer(self):
+        """Return the SDK tokenizer bundle used by this FC protocol instance."""
+        self._ensure_protocol()
+        return self._sdk_tokenizer
+
     def _ensure_protocol(self):
         if self._registry is not None:
             return
@@ -1075,6 +1081,110 @@ class FcDuplexCapability:
         self._feed_ids([self.sid(self.K.UNIT_END)])
         self._mark_unit_finalized(info)
         return info
+
+    def replay_completed_unit(
+        self,
+        *,
+        audio_waveform=None,
+        frame_list=None,
+        tool_responses=None,
+        sample_rate: int = 16000,
+        spoken_token_ids: list[int],
+        non_spoken_token_ids: list[int],
+    ) -> dict:
+        """Deterministically feed one completed Unit without re-sampling outputs.
+
+        The caller must only use histories whose checkpoint declared no open
+        spoken turn, open non-spoken span, pending text delta, or deferred close.
+        TTS/audio is intentionally not regenerated during replay.
+        """
+
+        self.streaming_prefill(
+            audio_waveform=audio_waveform,
+            frame_list=frame_list,
+            tool_responses=tool_responses,
+            sample_rate=sample_rate,
+        )
+        K = self.K
+        spoken_ids = [int(token_id) for token_id in spoken_token_ids]
+        non_spoken_ids = [int(token_id) for token_id in non_spoken_token_ids]
+
+        if spoken_ids:
+            self._feed_ids(spoken_ids)
+        is_listen = self.sid(K.LISTEN) in spoken_ids
+        is_speaking = self.sid(K.SPEAK) in spoken_ids
+        if self._current_unit_info is not None:
+            self._current_unit_info["is_listen"] = is_listen
+            self._current_unit_info["is_speaking"] = is_speaking
+            self._current_unit_info["spoken_ids"] = list(spoken_ids)
+        self._feed_ids([self.sid(K.AI_SPOKEN_SLOT_END)])
+        self._spoken_slot_open = False
+        self._spoken_logits = None
+
+        self._open_non_spoken_slot()
+        closed_spans = []
+        for token_id in non_spoken_ids:
+            closed_spans.extend(self._track_non_spoken_token(token_id))
+        if non_spoken_ids:
+            self._feed_ids(non_spoken_ids)
+        if self._current_unit_info is not None:
+            self._current_unit_info["non_spoken_ids"] = list(non_spoken_ids)
+            self._current_unit_info["closed_spans"].extend(closed_spans)
+            close_reason_by_id = {
+                self.sid(K.NO_ACTION): "no_action",
+                self.sid(K.NON_SPOKEN_EOS): "eos",
+                self.sid(K.NON_SPOKEN_HOLD): "hold",
+                self.sid(K.NON_SPOKEN_ABORT): "abort",
+            }
+            for token_id in reversed(non_spoken_ids):
+                if token_id in close_reason_by_id:
+                    self._current_unit_info["non_spoken_terminator"] = (
+                        close_reason_by_id[token_id]
+                    )
+                    break
+        self._feed_ids(
+            [
+                self.sid(K.AI_NON_SPOKEN_SLOT_END),
+                self.sid(K.UNIT_END),
+            ]
+        )
+        self._non_spoken_slot_open = False
+        self._non_spoken_logits = None
+
+        info = dict(self._current_unit_info or {"unit": self._current_unit_idx})
+        self._mark_unit_finalized(info)
+        self._record_trace(
+            "replay_completed_unit",
+            spoken_token_ids=spoken_ids,
+            non_spoken_token_ids=non_spoken_ids,
+            unit_info=info,
+        )
+        return info
+
+    def resume_boundary_status(self) -> dict:
+        """Return model-state constraints for stateless Unit-boundary resume."""
+
+        if self._pending_prefill_close_ids:
+            return {
+                "status": "unavailable",
+                "reason": "unsupported_deferred_close",
+            }
+        if self._non_spoken_mode is not None:
+            return {
+                "status": "unavailable",
+                "reason": "unsupported_open_span",
+                "stream_kind": self._non_spoken_mode,
+            }
+        if (
+            self.tts_past_key_values is not None
+            or self.tts_text_start_pos != 0
+            or self.tts_current_turn_start_time is not None
+        ):
+            return {
+                "status": "unavailable",
+                "reason": "unsupported_spoken_turn_state",
+            }
+        return {"status": "available"}
 
     def decode_output_ids(self, output_ids=None, tools=None) -> dict:
         self._ensure_protocol()
