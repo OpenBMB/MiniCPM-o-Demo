@@ -57,6 +57,7 @@ step_index
 batch_index
 delta_index
 source_step_indices
+source_steps
 ```
 
 ## 4. Text step
@@ -70,14 +71,14 @@ source_step_indices
 ```json
 {
   "kind": "text",
-  "text": "动物",
-  "source_steps": 2
+  "text": "动物"
 }
 ```
 
-`pending` 表示一个 ordinary token 尚未产生安全 Unicode。`text.source_steps` 表示该文本
-精确覆盖从上次 text 后累计的多少个 ordinary generation steps。Transport 可以把多个
-step 放进同一事件，但不能合并或拆分单个 safe text。
+`pending` 表示一个 ordinary token 尚未产生安全 Unicode。每个 `text` step 自动覆盖同一
+有序 semantic stream 中从上次 `text` 后累计的全部 `pending` 加当前 step；客户端可直接
+从 steps 顺序推导，不重复发送计数。Transport 可以把多个 step 放进同一事件，但不能合并
+或拆分单个 safe text。
 
 ## 5. Unit 生命周期
 
@@ -154,7 +155,7 @@ abort
   "type": "response.think.delta",
   "unit_index": 5,
   "steps": [
-    {"kind": "text", "text": "用户给我", "source_steps": 2},
+    {"kind": "text", "text": "用户给我"},
     {"kind": "pending"}
   ]
 }
@@ -167,7 +168,7 @@ abort
   "type": "response.think.delta",
   "unit_index": 6,
   "steps": [
-    {"kind": "text", "text": "设了个规则", "source_steps": 3}
+    {"kind": "text", "text": "设了个规则"}
   ]
 }
 ```
@@ -205,8 +206,7 @@ Tool-call 需要 ID，因为外部结果异步返回。
   "steps": [
     {
       "kind": "text",
-      "text": "<function name=\"display_object_on_board\">",
-      "source_steps": 8
+      "text": "<function name=\"display_object_on_board\">"
     }
   ]
 }
@@ -277,7 +277,7 @@ Budget 不结束 semantic tool-call，也不更换 `tool_call_id`。只有模型
   "type": "response.spoken.delta",
   "unit_index": 5,
   "steps": [
-    {"kind": "text", "text": "好的", "source_steps": 2}
+    {"kind": "text", "text": "好的"}
   ],
   "audio": "...base64...",
   "sample_rate": 24000
@@ -344,7 +344,8 @@ Active turn 未 `turn_eos` 就出现 listen，Backend 必须 RuntimeError 并关
 
 1. 校验 Unit started/committed 连续。
 2. 使用 semantic begin/end/done 恢复 protocol token。
-3. 用 text step 的 `source_steps` 恢复 pending ordinary token。
+3. 按有序 steps 统计每个 text 前累计的 pending ordinary token，并用 text re-encode
+   结果逐项恢复。
 4. 按 Unit started 显式归属恢复 tool events。
 5. 按 `non_spoken_end` 恢复 lane terminator 与 deferred feed。
 6. 恢复到 checkpoint 后继续下一 Unit。

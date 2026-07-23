@@ -951,24 +951,23 @@ class FcDuplexSessionRuntime:
                 ).append(self._generation_step_index)
                 public_step = {"kind": "pending"}
             else:
-                source_steps = int(
+                source_step_count = int(
                     output.get("source_step_count", 0) or 0
                 )
                 pending_steps = self._pending_text_steps_by_stream.setdefault(
                     stream_id, []
                 )
                 pending_steps.append(self._generation_step_index)
-                if source_steps <= 0 or len(pending_steps) != source_steps:
+                if source_step_count <= 0 or len(pending_steps) != source_step_count:
                     raise RuntimeError(
                         "FC View text delta source step count mismatch: "
                         f"stream={stream_id}, pending={len(pending_steps)}, "
-                        f"source_steps={source_steps}"
+                        f"source_step_count={source_step_count}"
                     )
                 pending_steps.clear()
                 public_step = {
                     "kind": "text",
                     "text": str(output.get("text") or ""),
-                    "source_steps": source_steps,
                 }
             self._generation_batch_steps.append(public_step)
             elapsed = (

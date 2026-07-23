@@ -188,7 +188,6 @@ def test_semantic_v2_history_replays_think_stream_without_ids() -> None:
                 {
                     "kind": "text",
                     "text": "用户在思考",
-                    "source_steps": len(text_ids),
                 }
             ],
         },
@@ -268,7 +267,6 @@ def test_semantic_v2_replays_completed_tool_result_by_unit_marker() -> None:
                 {
                     "kind": "text",
                     "text": wire,
-                    "source_steps": len(wire_ids),
                 },
             ],
         },
@@ -453,7 +451,6 @@ def test_semantic_v2_spoken_pending_crosses_unit_slot_end() -> None:
                 {
                     "kind": "text",
                     "text": "龘",
-                    "source_steps": 2,
                 }
             ],
         },

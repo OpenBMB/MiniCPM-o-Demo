@@ -1028,17 +1028,16 @@ def _build_fc_duplex_semantic_v2_resume_plan(
                     f"未知 semantic text step: {kind}",
                 )
             text = raw_step.get("text")
-            source_steps = int(raw_step.get("source_steps", 0) or 0)
-            if not isinstance(text, str) or not text or source_steps != len(pending):
+            if not isinstance(text, str) or not text:
                 raise _resume_error(
                     "text_delta_roundtrip_mismatch",
-                    "semantic text/source_steps 不匹配",
+                    "semantic text step 缺少非空文本",
                 )
             recovered_ids = tokenizer.encode_ordinary(text)
-            if len(recovered_ids) != source_steps:
+            if len(recovered_ids) != len(pending):
                 raise _resume_error(
                     "text_delta_roundtrip_mismatch",
-                    "semantic text re-encode 数量不匹配",
+                    "semantic text re-encode 数量与有序 pending steps 不匹配",
                 )
             for pending_slot, token_id in zip(pending, recovered_ids):
                 pending_slot.token_id = token_id

@@ -333,7 +333,7 @@ tool result 后 checkpoint，属于验收遗漏。
   同时携带 Full 与结构化 call，不再拆成 args.end/raw。
 - `response.unit.started` 明确 Unit→input/tool-events 归属；`response.unit.committed`
   只携带 non-spoken end 与 resume 状态。
-- Delta 直接携带 `pending/text(source_steps)`，不再重复发送 semantic delta 与
+- Delta 直接携带有序 `pending/text`，客户端从 steps 顺序推导 text 覆盖范围，不再重复发送 semantic delta 与
   canonical generation batch。
 - FC Board 一张卡对应完整 Think/Tool semantic message；Streaming 内按 unit_index
   展示 segments，Full 使用 end/done 的 `full_text`，不再伪造 XML 标签。

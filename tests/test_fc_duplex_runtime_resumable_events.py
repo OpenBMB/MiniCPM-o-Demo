@@ -287,7 +287,7 @@ async def test_runtime_batches_safe_text_steps_without_exposing_token_ids() -> N
     assert event["unit_index"] == 0
     assert event["steps"] == [
         {"kind": "pending"},
-        {"kind": "text", "text": "龘", "source_steps": 2},
+        {"kind": "text", "text": "龘"},
     ]
     assert all("token_id" not in step for step in event["steps"])
 
