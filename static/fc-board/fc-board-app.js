@@ -422,6 +422,8 @@ function applyApiEvent(event) {
       return;
     case 'response.unit.started':
       return;
+    case 'response.non_spoken.end':
+      return;
     case 'response.unit.committed':
       handleUnitCheckpoint(event);
       return;
@@ -1080,8 +1082,11 @@ function summarizeStreamEvent(event) {
   if (type === 'response.unit.started') {
     return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · tool_events=${(event.tool_events || []).length}`;
   }
+  if (type === 'response.non_spoken.end') {
+    return `unit=${event.unit_index ?? '-'} · reason=${event.reason || '-'}`;
+  }
   if (type === 'response.unit.committed') {
-    return `unit=${event.unit_index ?? '-'} · end=${event.non_spoken_end || '-'} · resume=${event.resume?.status || '-'}${event.resume?.reason ? ` (${event.resume.reason})` : ''}`;
+    return `unit=${event.unit_index ?? '-'} · resume=${event.resume?.status || '-'}${event.resume?.reason ? ` (${event.resume.reason})` : ''}`;
   }
   if (type === 'response.warning') {
     return `unit=${event.unit_index ?? '-'} · code=${event.code || '-'} · ${event.message || ''}`;

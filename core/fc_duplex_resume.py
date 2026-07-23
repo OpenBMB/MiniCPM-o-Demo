@@ -952,6 +952,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
     input_payload_by_id: dict[str, dict[str, Any]] = {}
     unit_input_id: dict[int, str] = {}
     unit_tool_events: dict[int, list[dict[str, Any]]] = {}
+    unit_non_spoken_ends: dict[int, str] = {}
     unit_commits: dict[int, dict[str, Any]] = {}
     slots: list[_StepSlot] = []
     pending_slots: dict[str, list[_StepSlot]] = {}
@@ -1052,6 +1053,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
             unit_index != expected_committed_unit
             or unit_index not in unit_input_id
             or unit_index in unit_commits
+            or unit_index in unit_non_spoken_ends
         ):
             raise _resume_error(
                 "incomplete_event_history",
@@ -1373,29 +1375,31 @@ def _build_fc_duplex_semantic_v2_resume_plan(
             if event.get("code") == "incomplete_bpe_at_stream_end":
                 history_unsafe = True
             continue
-        if event_type == "response.unit.committed":
+        if event_type == "response.non_spoken.end":
             unit_index = int(event.get("unit_index", -1))
-            if (
-                unit_index != expected_committed_unit
-                or unit_index not in unit_input_id
-            ):
+            if unit_index in unit_non_spoken_ends:
                 raise _resume_error(
                     "incomplete_event_history",
-                    f"Unit committed 不连续: {unit_index}",
+                    f"Unit {unit_index} 重复 non_spoken.end",
                 )
-            expected_committed_unit += 1
-            reason = str(event.get("non_spoken_end") or "")
+            unit_index = require_active_unit(event)
+            reason = str(event.get("reason") or "")
             key_by_reason = {
                 "no_action": O5SpecialTokenKey.NO_ACTION,
                 "eos": O5SpecialTokenKey.NON_SPOKEN_EOS,
                 "budget_reached": O5SpecialTokenKey.NON_SPOKEN_BUDGET_REACHED,
-                "hold": O5SpecialTokenKey.NON_SPOKEN_HOLD,
-                "abort": O5SpecialTokenKey.NON_SPOKEN_ABORT,
             }
             if reason not in key_by_reason:
                 raise _resume_error(
                     "incomplete_event_history",
-                    f"未知 non_spoken_end: {reason}",
+                    f"未知 non_spoken.end reason: {reason}",
+                )
+            if reason in {"no_action", "eos"} and (
+                active_think or active_tool_call_id is not None
+            ):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"{reason} 不能结束仍 active 的 semantic message",
                 )
             append_token(
                 unit_index=unit_index,
@@ -1407,6 +1411,24 @@ def _build_fc_duplex_semantic_v2_resume_plan(
                     pending_slots["think"] = []
                 if active_tool_call_id is not None:
                     pending_slots[f"tool:{active_tool_call_id}"] = []
+            unit_non_spoken_ends[unit_index] = reason
+            continue
+        if event_type == "response.unit.committed":
+            unit_index = int(event.get("unit_index", -1))
+            if (
+                unit_index != expected_committed_unit
+                or unit_index not in unit_input_id
+            ):
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"Unit committed 不连续: {unit_index}",
+                )
+            if unit_index not in unit_non_spoken_ends:
+                raise _resume_error(
+                    "incomplete_event_history",
+                    f"Unit {unit_index} committed 前缺少 response.non_spoken.end",
+                )
+            expected_committed_unit += 1
             unit_commits[unit_index] = event
             if unit_index == through_unit_index:
                 break
@@ -1450,6 +1472,11 @@ def _build_fc_duplex_semantic_v2_resume_plan(
             "incomplete_event_history",
             "Unit committed 不完整",
         )
+    if set(unit_non_spoken_ends) != set(range(expected_units)):
+        raise _resume_error(
+            "incomplete_event_history",
+            "Unit non_spoken.end 不完整",
+        )
     units = [
         FcDuplexResumeUnitPlan(
             unit_index=unit_index,
@@ -1470,8 +1497,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
                 and slot.token_id is not None
             ],
             deferred_non_spoken_close=(
-                unit_commits[unit_index].get("non_spoken_end")
-                == "budget_reached"
+                unit_non_spoken_ends[unit_index] == "budget_reached"
             ),
         )
         for unit_index in range(expected_units)

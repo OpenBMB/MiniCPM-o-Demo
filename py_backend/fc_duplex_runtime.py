@@ -606,10 +606,13 @@ class FcDuplexSessionRuntime:
                 "stream_id": stream_id,
                 "pending_from_step": pending_from_step,
             }
+        if self._unit_non_spoken_end is None:
+            raise RuntimeError(
+                f"Unit {unit_index} finalized without response.non_spoken.end"
+            )
         await self._send(
             "response.unit.committed",
             unit_index=unit_index,
-            non_spoken_end=self._unit_non_spoken_end,
             resume=resume_status,
         )
 
@@ -1152,11 +1155,6 @@ class FcDuplexSessionRuntime:
             [getattr(span, "type", None) for span in list(getattr(step, "closed_spans", None) or [])],
         )
 
-        if close_reason:
-            self._unit_non_spoken_end = str(close_reason)
-            if str(close_reason) == "abort":
-                await self._abort_current_block(unit_index=unit_index)
-
         suppress_fallback_text = any(
             getattr(warning, "code", None)
             == "incomplete_bpe_at_stream_end"
@@ -1168,6 +1166,47 @@ class FcDuplexSessionRuntime:
                 unit_index=unit_index,
                 suppress_fallback_text=suppress_fallback_text,
             )
+        if close_reason:
+            await self._emit_non_spoken_end(
+                reason=str(close_reason),
+                unit_index=unit_index,
+            )
+
+    async def _emit_non_spoken_end(
+        self,
+        *,
+        reason: str,
+        unit_index: int,
+    ) -> None:
+        """发送当前 Unit 唯一的 non-spoken slot 结束事件。
+
+        参数:
+            reason: 当前已实现的 ``eos``、``no_action`` 或
+                ``budget_reached``。
+            unit_index: 终止信号所属 Unit。
+
+        返回:
+            无返回值。
+
+        异常:
+            RuntimeError: reason 尚未实现，或同一 Unit 重复结束。
+        """
+
+        supported_reasons = {"eos", "no_action", "budget_reached"}
+        if reason not in supported_reasons:
+            raise RuntimeError(f"unsupported non-spoken end reason: {reason}")
+        if self._unit_non_spoken_end is not None:
+            raise RuntimeError(
+                "duplicate response.non_spoken.end: "
+                f"unit={unit_index}, previous={self._unit_non_spoken_end}, "
+                f"next={reason}"
+            )
+        self._unit_non_spoken_end = reason
+        await self._send(
+            "response.non_spoken.end",
+            unit_index=unit_index,
+            reason=reason,
+        )
 
     async def _begin_block(self, kind: str, *, unit_index: int) -> None:
         self._block_seq += 1

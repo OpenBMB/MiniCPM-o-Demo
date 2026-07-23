@@ -118,7 +118,6 @@ Unit 完成：
 {
   "type": "response.unit.committed",
   "unit_index": 12,
-  "non_spoken_end": "budget_reached",
   "resume": {
     "status": "unavailable",
     "reason": "deferred_close"
@@ -126,18 +125,39 @@ Unit 完成：
 }
 ```
 
-`non_spoken_end`：
+在 finalize 前，每个 Unit 必须先发送且只发送一次：
+
+```json
+{
+  "type": "response.non_spoken.end",
+  "unit_index": 12,
+  "reason": "budget_reached"
+}
+```
+
+当前支持的 `reason`：
 
 ```text
 no_action
 eos
 budget_reached
-hold
-abort
+```
+
+`eos` / `no_action` 是模型生成 token，各占一个 non-spoken budget；`budget_reached` 是
+framework 插入 token，不占 budget。Hold / Abort 尚未完整实现，不进入当前 Public API。
+
+事件顺序固定为：
+
+```text
+semantic begin/delta/end
+→ response.non_spoken.end
+→ finalize Unit / 计算 Resume
+→ response.unit.committed
 ```
 
 `budget_reached` 按协议固定表示 close token、slot end 和 Unit end 在下一 Unit prefill 前
-进入 KV，因此不再额外发送 `deferred_model_feed`。
+进入 KV，因此不再额外发送 `deferred_model_feed`。`response.unit.committed` 不重复携带
+reason，只承诺 Unit 状态和 Resume 结果已经提交。
 
 ## 6. Think
 
@@ -347,7 +367,7 @@ Active turn 未 `turn_eos` 就出现 listen，Backend 必须 RuntimeError 并关
 3. 按有序 steps 统计每个 text 前累计的 pending ordinary token，并用 text re-encode
    结果逐项恢复。
 4. 按 Unit started 显式归属恢复 tool events。
-5. 按 `non_spoken_end` 恢复 lane terminator 与 deferred feed。
+5. 按 `response.non_spoken.end.reason` 恢复 lane terminator 与 deferred feed。
 6. 恢复到 checkpoint 后继续下一 Unit。
 
 协议不依赖服务端旧 Session/KV，也不暴露 token ID。

@@ -327,13 +327,19 @@ async def test_runtime_emits_available_unit_checkpoint_after_canonical_steps() -
     assert [event["type"] for event in events] == [
         "response.unit.started",
         "response.spoken.end",
+        "response.non_spoken.end",
         "response.unit.committed",
     ]
     assert events[0]["tool_events"] == []
+    assert events[-2] == {
+        "type": "response.non_spoken.end",
+        "unit_index": 0,
+        "reason": "no_action",
+    }
     checkpoint = events[-1]
     assert checkpoint["type"] == "response.unit.committed"
     assert checkpoint["unit_index"] == 0
-    assert checkpoint["non_spoken_end"] == "no_action"
+    assert "non_spoken_end" not in checkpoint
     assert checkpoint["resume"] == {"status": "available"}
 
 
@@ -462,7 +468,7 @@ async def test_runtime_rejects_missing_or_duplicate_input_id() -> None:
 
 @pytest.mark.asyncio
 async def test_runtime_emits_budget_protocol_step_and_incomplete_bpe_warning() -> None:
-    """Budget close 必须进入 canonical batch，并传输非致命 warning。"""
+    """Budget close 必须发送 slot-level end，并传输非致命 warning。"""
 
     events: list[dict[str, Any]] = []
 
@@ -478,6 +484,11 @@ async def test_runtime_emits_budget_protocol_step_and_incomplete_bpe_warning() -
     await runtime._emit_step_events(step, input_id="u0", unit_index=0)
 
     assert runtime._unit_non_spoken_end == "budget_reached"
+    assert {
+        "type": "response.non_spoken.end",
+        "unit_index": 0,
+        "reason": "budget_reached",
+    } in events
     assert not any(
         event["type"] in {
             "response.generation.step_batch",
@@ -490,6 +501,69 @@ async def test_runtime_emits_budget_protocol_step_and_incomplete_bpe_warning() -
     )
     assert warning["code"] == "incomplete_bpe_at_stream_end"
     assert warning["reason"] == "budget_reached"
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_non_spoken_end_exactly_once() -> None:
+    """同一 Unit 的 eos 只能产生一个 non_spoken.end。"""
+
+    events: list[dict[str, Any]] = []
+
+    async def send(event_type: str, **fields: Any) -> None:
+        events.append({"type": event_type, **fields})
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_non_spoken_end",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+    eos_step = SimpleNamespace(
+        token_ids=[],
+        text_delta="",
+        generation_steps=[],
+        warnings=[],
+        close_reason="eos",
+        terminated=True,
+        closed_spans=[],
+    )
+
+    await runtime._emit_step_events(eos_step, input_id="u0", unit_index=0)
+
+    assert events == [
+        {
+            "type": "response.non_spoken.end",
+            "unit_index": 0,
+            "reason": "eos",
+        }
+    ]
+    with pytest.raises(RuntimeError, match="duplicate response.non_spoken.end"):
+        await runtime._emit_step_events(eos_step, input_id="u0", unit_index=0)
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_unimplemented_non_spoken_end_reason() -> None:
+    """Hold/Abort 尚未完整实现，不能进入当前 Public API。"""
+
+    async def send(_: str, **__: Any) -> None:
+        return
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_unsupported_non_spoken_end",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+    unsupported = SimpleNamespace(
+        token_ids=[],
+        text_delta="",
+        generation_steps=[],
+        warnings=[],
+        close_reason="hold",
+        terminated=True,
+        closed_spans=[],
+    )
+
+    with pytest.raises(RuntimeError, match="unsupported non-spoken end reason"):
+        await runtime._emit_step_events(unsupported, input_id="u0", unit_index=0)
 
 
 @pytest.mark.asyncio

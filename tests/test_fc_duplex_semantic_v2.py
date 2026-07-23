@@ -116,6 +116,7 @@ async def test_runtime_emits_minimal_semantic_v2_events_only() -> None:
     assert event_types == [
         "response.unit.started",
         "response.spoken.end",
+        "response.non_spoken.end",
         "response.unit.committed",
     ]
     assert events[0] == {
@@ -130,14 +131,110 @@ async def test_runtime_emits_minimal_semantic_v2_events_only() -> None:
         "reason": "listen",
     }
     assert events[2] == {
+        "type": "response.non_spoken.end",
+        "unit_index": 0,
+        "reason": "no_action",
+    }
+    assert events[3] == {
         "type": "response.unit.committed",
         "unit_index": 0,
-        "non_spoken_end": "no_action",
         "resume": {"status": "available"},
     }
     assert all("block_id" not in event for event in events)
     assert all("response_id" not in event for event in events)
     assert all("session_id" not in event for event in events)
+
+
+def test_semantic_v2_resume_rejects_missing_non_spoken_end() -> None:
+    """Unit committed 前缺少 slot-level non_spoken.end 时必须拒绝。"""
+
+    tokenizer = load_builtin_tokenizer(O5TokenizerID.O45_FC)
+    history = [
+        {
+            "type": "session.init",
+            "payload": {
+                "mode": "full_duplex",
+                "fc_duplex": True,
+                "tokenizer_target": "o45_fc",
+            },
+        },
+        {
+            "type": "input.append",
+            "input": {"input_id": "u0", "audio_base64": "AAAAAA=="},
+        },
+        {
+            "type": "response.unit.started",
+            "unit_index": 0,
+            "input_id": "u0",
+            "tool_events": [],
+        },
+        {"type": "response.spoken.end", "unit_index": 0, "reason": "listen"},
+        {
+            "type": "response.unit.committed",
+            "unit_index": 0,
+            "resume": {"status": "available"},
+        },
+    ]
+
+    with pytest.raises(Exception, match="non_spoken.end"):
+        build_fc_duplex_resume_plan(
+            protocol_version="fc-duplex-semantic-v2",
+            model="minicpm-o-4.5",
+            tokenizer_target="o45_fc",
+            tokenizer_fingerprint={
+                "vocab_hash": tokenizer.fingerprint.vocab_hash,
+                "merges_hash": tokenizer.fingerprint.merges_hash,
+            },
+            through_unit_index=0,
+            history=history,
+        )
+
+
+def test_semantic_v2_resume_rejects_duplicate_non_spoken_end() -> None:
+    """同一 Unit 重复发送 non_spoken.end 时必须拒绝。"""
+
+    tokenizer = load_builtin_tokenizer(O5TokenizerID.O45_FC)
+    end = {
+        "type": "response.non_spoken.end",
+        "unit_index": 0,
+        "reason": "no_action",
+    }
+    history = [
+        {
+            "type": "session.init",
+            "payload": {
+                "mode": "full_duplex",
+                "fc_duplex": True,
+                "tokenizer_target": "o45_fc",
+            },
+        },
+        {
+            "type": "input.append",
+            "input": {"input_id": "u0", "audio_base64": "AAAAAA=="},
+        },
+        {
+            "type": "response.unit.started",
+            "unit_index": 0,
+            "input_id": "u0",
+            "tool_events": [],
+        },
+        {"type": "response.spoken.end", "unit_index": 0, "reason": "listen"},
+        end,
+        dict(end),
+    ]
+
+    with pytest.raises(Exception, match="重复 non_spoken.end"):
+        build_fc_duplex_resume_plan(
+            protocol_version="fc-duplex-semantic-v2",
+            model="minicpm-o-4.5",
+            tokenizer_target="o45_fc",
+            tokenizer_fingerprint={
+                "vocab_hash": tokenizer.fingerprint.vocab_hash,
+                "merges_hash": tokenizer.fingerprint.merges_hash,
+            },
+            through_unit_index=0,
+            history=history,
+        )
 
 
 def test_semantic_v2_history_replays_think_stream_without_ids() -> None:
@@ -197,9 +294,13 @@ def test_semantic_v2_history_replays_think_stream_without_ids() -> None:
             "full_text": "用户在思考",
         },
         {
+            "type": "response.non_spoken.end",
+            "unit_index": 0,
+            "reason": "eos",
+        },
+        {
             "type": "response.unit.committed",
             "unit_index": 0,
-            "non_spoken_end": "eos",
             "resume": {"status": "available"},
         },
     ]
@@ -281,9 +382,13 @@ def test_semantic_v2_replays_completed_tool_result_by_unit_marker() -> None:
             },
         },
         {
+            "type": "response.non_spoken.end",
+            "unit_index": 0,
+            "reason": "eos",
+        },
+        {
             "type": "response.unit.committed",
             "unit_index": 0,
-            "non_spoken_end": "eos",
             "resume": {
                 "status": "unavailable",
                 "reason": "pending_tool_result",
@@ -312,9 +417,13 @@ def test_semantic_v2_replays_completed_tool_result_by_unit_marker() -> None:
         },
         {"type": "response.spoken.end", "unit_index": 1, "reason": "listen"},
         {
+            "type": "response.non_spoken.end",
+            "unit_index": 1,
+            "reason": "no_action",
+        },
+        {
             "type": "response.unit.committed",
             "unit_index": 1,
-            "non_spoken_end": "no_action",
             "resume": {"status": "available"},
         },
     ]
@@ -426,9 +535,13 @@ def test_semantic_v2_spoken_pending_crosses_unit_slot_end() -> None:
         },
         {"type": "response.spoken.end", "unit_index": 0, "reason": "slot_end"},
         {
+            "type": "response.non_spoken.end",
+            "unit_index": 0,
+            "reason": "no_action",
+        },
+        {
             "type": "response.unit.committed",
             "unit_index": 0,
-            "non_spoken_end": "no_action",
             "resume": {
                 "status": "unavailable",
                 "reason": "unsupported_spoken_turn_state",
@@ -461,9 +574,13 @@ def test_semantic_v2_spoken_pending_crosses_unit_slot_end() -> None:
             "full_text": "龘",
         },
         {
+            "type": "response.non_spoken.end",
+            "unit_index": 1,
+            "reason": "no_action",
+        },
+        {
             "type": "response.unit.committed",
             "unit_index": 1,
-            "non_spoken_end": "no_action",
             "resume": {"status": "available"},
         },
     ]
