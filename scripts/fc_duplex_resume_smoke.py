@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import base64
 import json
+import os
 import ssl
 from pathlib import Path
 from typing import Any
@@ -89,13 +90,19 @@ async def run_smoke(args: argparse.Namespace) -> None:
             "payload": {
                 "mode": "full_duplex",
                 "fc_duplex": True,
+                "checkpoint_profile_id": args.checkpoint_profile_id,
                 "system_prompt": "你是一个简洁的语音助手。",
                 "tools": [],
                 "generate_audio": False,
                 "config": {
                     "runtime": "fc_duplex",
-                    "non_spoken_scheduling": "quality",
-                    "non_spoken_budget_per_unit": 128,
+                    "non_spoken_scheduling": args.non_spoken_scheduling,
+                    "non_spoken_budget_while_listening": (
+                        args.non_spoken_budget_while_listening
+                    ),
+                    "non_spoken_budget_while_speaking": (
+                        args.non_spoken_budget_while_speaking
+                    ),
                     "max_spoken_tokens": 24,
                     "decode_mode": "greedy",
                     "sample_rate": 16000,
@@ -217,11 +224,38 @@ def main() -> None:
     parser.add_argument("--max-units", type=int, default=8)
     parser.add_argument("--insecure", action="store_true")
     parser.add_argument(
+        "--checkpoint-profile-id",
+        default=os.environ.get("CHECKPOINT_PROFILE_ID"),
+    )
+    parser.add_argument(
+        "--non-spoken-scheduling",
+        choices=("quality", "latency"),
+        default=os.environ.get("FC_DUPLEX_NON_SPOKEN_SCHEDULING"),
+    )
+    parser.add_argument(
+        "--non-spoken-budget-while-listening",
+        type=int,
+        default=os.environ.get("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING"),
+    )
+    parser.add_argument(
+        "--non-spoken-budget-while-speaking",
+        type=int,
+        default=os.environ.get("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING"),
+    )
+    parser.add_argument(
         "--trace-dir",
         default=None,
         help="Optional shared FC trace directory for live/replay equivalence checks.",
     )
     args = parser.parse_args()
+    if not args.checkpoint_profile_id:
+        parser.error("--checkpoint-profile-id or CHECKPOINT_PROFILE_ID is required")
+    if not args.non_spoken_scheduling:
+        parser.error("non-spoken scheduling must be provided by Checkpoint Profile")
+    if not args.non_spoken_budget_while_listening:
+        parser.error("listening budget must be provided by Checkpoint Profile")
+    if not args.non_spoken_budget_while_speaking:
+        parser.error("speaking budget must be provided by Checkpoint Profile")
     asyncio.run(run_smoke(args))
 
 

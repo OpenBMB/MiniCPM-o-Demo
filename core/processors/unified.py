@@ -2285,6 +2285,7 @@ class FcDuplexView:
                 if spoken_step.audio_waveform is not None:
                     audio_waveforms.append(spoken_step.audio_waveform)
 
+                has_budget_source = True
                 if debug_budget_override is not None:
                     unit_budget = debug_budget_override
                 elif spoken_step.is_speaking and task_input.non_spoken_budgets_while_speaking:
@@ -2299,6 +2300,12 @@ class FcDuplexView:
                     )]
                 else:
                     unit_budget = task_input.config.non_spoken_budget_per_unit
+                    has_budget_source = unit_budget is not None
+                if not has_budget_source:
+                    raise RuntimeError(
+                        "offline FC duplex non-spoken budget must come from "
+                        "TrainingData UnitPolicy or an explicit override"
+                    )
 
                 terminated = False
                 steps = 0

@@ -21,6 +21,11 @@ from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime
 class _SemanticV2Backend:
     """One-Unit listen/no-action backend stub."""
 
+    def fc_duplex_prepare(self, **_: Any) -> None:
+        """接受 Runtime 的通用 Session 初始化。"""
+
+        return
+
     def fc_duplex_prefill(self, **_: Any) -> Any:
         return SimpleNamespace(tool_events=[])
 
@@ -88,6 +93,16 @@ async def test_runtime_emits_minimal_semantic_v2_events_only() -> None:
         session_id="sess_v2",
         backend=_SemanticV2Backend(),
         send=send,
+    )
+    await runtime.prepare(
+        {
+            "checkpoint_profile_id": "profile_test",
+            "config": {
+                "non_spoken_scheduling": "quality",
+                "non_spoken_budget_while_listening": 30,
+                "non_spoken_budget_while_speaking": 15,
+            },
+        }
     )
     await runtime._process_audio_payload(
         {

@@ -96,7 +96,11 @@ class FcDuplexConfig(BaseModel):
     unit_sec: float = Field(1.0, gt=0.0, description="Seconds per duplex unit")
     sample_rate: int = Field(16000, gt=0, description="Input audio sample rate")
     max_spoken_tokens: int = Field(24, ge=1, description="Max spoken tokens per unit")
-    non_spoken_budget_per_unit: int = Field(12, ge=0, description="Offline non-spoken budget per unit")
+    non_spoken_budget_per_unit: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Explicit legacy offline budget override; checkpoint deployments should use per-state budgets",
+    )
     extra_response_units: int = Field(4, ge=0, description="Extra silent units after input audio")
     decode_mode: str = Field("greedy", description="Decode mode: greedy or sampling")
 

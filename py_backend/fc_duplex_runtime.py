@@ -109,8 +109,10 @@ class FcDuplexSessionRuntime:
         self._internal_to_api: Dict[str, str] = {}
         self._tool_seq = 0
         self._max_spoken_tokens = 24
-        self._non_spoken_budget_per_unit = 12
-        self._non_spoken_scheduling = "latency"
+        self._checkpoint_profile_id: Optional[str] = None
+        self._non_spoken_budget_while_listening: Optional[int] = None
+        self._non_spoken_budget_while_speaking: Optional[int] = None
+        self._non_spoken_scheduling: Optional[str] = None
         self._decode_mode = "greedy"
         self._sample_rate = 16000
         self._input_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -158,15 +160,88 @@ class FcDuplexSessionRuntime:
     async def prepare(self, params: Dict[str, Any]) -> None:
         config = _first_dict(params.get("config"), params.get("duplex"), params.get("fc_duplex"))
         self._max_spoken_tokens = int(config.get("max_spoken_tokens", params.get("max_spoken_tokens", 24)) or 24)
-        self._non_spoken_budget_per_unit = int(
-            config.get("non_spoken_budget_per_unit", params.get("non_spoken_budget_per_unit", 12)) or 12
+        self._checkpoint_profile_id = str(
+            _coalesce(
+                config.get("checkpoint_profile_id"),
+                params.get("checkpoint_profile_id"),
+                os.environ.get("CHECKPOINT_PROFILE_ID"),
+                default="",
+            )
+        ).strip() or None
+        profile_listening_budget = _optional_positive_int(
+            os.environ.get("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING"),
+            field_name="FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
         )
-        requested_scheduling = str(
-            config.get("non_spoken_scheduling", params.get("non_spoken_scheduling", "latency")) or "latency"
-        ).lower()
-        if requested_scheduling not in {"latency", "quality"}:
+        profile_speaking_budget = _optional_positive_int(
+            os.environ.get("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING"),
+            field_name="FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
+        )
+        requested_listening_budget = _optional_positive_int(
+            _coalesce(
+                config.get("non_spoken_budget_while_listening"),
+                params.get("non_spoken_budget_while_listening"),
+            ),
+            field_name="non_spoken_budget_while_listening",
+        )
+        requested_speaking_budget = _optional_positive_int(
+            _coalesce(
+                config.get("non_spoken_budget_while_speaking"),
+                params.get("non_spoken_budget_while_speaking"),
+            ),
+            field_name="non_spoken_budget_while_speaking",
+        )
+        legacy_budget = _optional_positive_int(
+            _coalesce(
+                config.get("non_spoken_budget_per_unit"),
+                params.get("non_spoken_budget_per_unit"),
+            ),
+            field_name="non_spoken_budget_per_unit",
+        )
+        if requested_listening_budget is None and legacy_budget is not None:
+            requested_listening_budget = legacy_budget
+        if requested_speaking_budget is None and legacy_budget is not None:
+            requested_speaking_budget = legacy_budget
+        self._non_spoken_budget_while_listening = _resolve_profile_bound_budget(
+            requested=requested_listening_budget,
+            registered=profile_listening_budget,
+            field_name="non_spoken_budget_while_listening",
+        )
+        self._non_spoken_budget_while_speaking = _resolve_profile_bound_budget(
+            requested=requested_speaking_budget,
+            registered=profile_speaking_budget,
+            field_name="non_spoken_budget_while_speaking",
+        )
+        if (
+            self._non_spoken_budget_while_listening is None
+            or self._non_spoken_budget_while_speaking is None
+        ):
+            raise RuntimeError(
+                "fc_duplex non-spoken budgets must be provided explicitly by "
+                "Checkpoint Profile or session.init"
+            )
+        registered_scheduling = _optional_scheduling(
+            os.environ.get("FC_DUPLEX_NON_SPOKEN_SCHEDULING"),
+            field_name="FC_DUPLEX_NON_SPOKEN_SCHEDULING",
+        )
+        requested_scheduling = _optional_scheduling(
+            _coalesce(
+                config.get("non_spoken_scheduling"),
+                params.get("non_spoken_scheduling"),
+            ),
+            field_name="non_spoken_scheduling",
+        )
+        self._non_spoken_scheduling = _resolve_profile_bound_choice(
+            requested=requested_scheduling,
+            registered=registered_scheduling,
+            field_name="non_spoken_scheduling",
+        )
+        if self._non_spoken_scheduling is None:
+            raise RuntimeError(
+                "fc_duplex non_spoken_scheduling must be provided explicitly by "
+                "Checkpoint Profile or session.init"
+            )
+        if self._non_spoken_scheduling not in {"latency", "quality"}:
             raise RuntimeError("fc_duplex non_spoken_scheduling must be 'latency' or 'quality'")
-        self._non_spoken_scheduling = requested_scheduling
         self._decode_mode = str(config.get("decode_mode", params.get("decode_mode", "greedy")) or "greedy")
         self._sample_rate = int(config.get("sample_rate", params.get("sample_rate", 16000)) or 16000)
         self._tools = list(params.get("tools") or [DEFAULT_DISPLAY_OBJECT_TOOL])
@@ -187,6 +262,18 @@ class FcDuplexSessionRuntime:
             await asyncio.to_thread(resume_identity_fn)
             if resume_identity_fn is not None
             else {}
+        )
+        self._resume_identity.update(
+            {
+                "checkpoint_profile_id": self._checkpoint_profile_id,
+                "non_spoken_budget_while_listening": (
+                    self._non_spoken_budget_while_listening
+                ),
+                "non_spoken_budget_while_speaking": (
+                    self._non_spoken_budget_while_speaking
+                ),
+                "non_spoken_scheduling": self._non_spoken_scheduling,
+            }
         )
 
     @property
@@ -217,7 +304,17 @@ class FcDuplexSessionRuntime:
                 f"invalid session.resume payload: {exc}",
             ) from exc
         await self.prepare(plan.session_init_payload)
-        if self._resume_identity:
+        has_model_identity = any(
+            key in self._resume_identity
+            for key in (
+                "tokenizer_target",
+                "tokenizer_fingerprint",
+                "model",
+                "ref_audio_sha256",
+                "prompt_wav_sha256",
+            )
+        )
+        if has_model_identity:
             requested_fingerprint = dict(params.get("tokenizer_fingerprint") or {})
             current_fingerprint = dict(
                 self._resume_identity.get("tokenizer_fingerprint") or {}
@@ -472,6 +569,7 @@ class FcDuplexSessionRuntime:
             input_id=input_id,
             unit_index=unit_index,
             pre_non_spoken_elapsed_ms=spoken_done_elapsed_ms,
+            unit_budget=self._select_non_spoken_budget(spoken),
         )
 
         await asyncio.to_thread(self.backend.fc_duplex_finalize)
@@ -656,10 +754,11 @@ class FcDuplexSessionRuntime:
         input_id: Optional[str],
         unit_index: int,
         pre_non_spoken_elapsed_ms: float,
+        unit_budget: int,
     ) -> None:
         used = 0
         step_durations_ms: List[float] = []
-        for _ in range(max(0, self._non_spoken_budget_per_unit)):
+        for _ in range(unit_budget):
             if self._non_spoken_scheduling == "latency" and self._next_input_event.is_set():
                 step = await self._build_deferred_budget_reached_step()
                 self._unit_has_deferred_close = True
@@ -715,6 +814,28 @@ class FcDuplexSessionRuntime:
             step_durations_ms=step_durations_ms,
             pre_non_spoken_elapsed_ms=pre_non_spoken_elapsed_ms,
         )
+
+    def _select_non_spoken_budget(self, spoken: Any) -> int:
+        """根据当前 Unit 的 spoken 决策选择 Checkpoint Profile budget。
+
+        参数:
+            spoken: 当前 Unit 的 spoken generation 结果，至少包含 ``is_speaking``。
+
+        返回:
+            当前 Unit 可执行的 non-spoken 模型解码次数。
+
+        异常:
+            RuntimeError: Session 尚未通过 Profile 或显式参数配置两类 budget。
+        """
+
+        budget = (
+            self._non_spoken_budget_while_speaking
+            if bool(getattr(spoken, "is_speaking", False))
+            else self._non_spoken_budget_while_listening
+        )
+        if budget is None:
+            raise RuntimeError("fc_duplex non-spoken budgets are not configured")
+        return budget
 
     async def _emit_budget_debug(
         self,
@@ -1355,6 +1476,119 @@ def _coalesce(*values: Any, default: Any = None) -> Any:
         if value is not None:
             return value
     return default
+
+
+def _optional_positive_int(value: Any, *, field_name: str) -> Optional[int]:
+    """解析一个可选正整数配置。
+
+    参数:
+        value: 来自 Session config 或进程环境的原始值。
+        field_name: 报错时使用的配置字段名。
+
+    返回:
+        None 或解析后的正整数。
+
+    异常:
+        RuntimeError: 值不是正整数。
+    """
+
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise RuntimeError(f"{field_name} must be a positive integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{field_name} must be a positive integer") from exc
+    if parsed <= 0:
+        raise RuntimeError(f"{field_name} must be a positive integer")
+    return parsed
+
+
+def _resolve_profile_bound_budget(
+    *,
+    requested: Optional[int],
+    registered: Optional[int],
+    field_name: str,
+) -> Optional[int]:
+    """合并 Session 参数和 launcher 注入的 Profile budget。
+
+    参数:
+        requested: Session 显式请求的 budget。
+        registered: launcher 通过环境变量注入的 Profile budget。
+        field_name: 报错时使用的字段名。
+
+    返回:
+        唯一有效 budget；两侧都缺失时返回 None。
+
+    异常:
+        RuntimeError: Session 参数与已注册 Profile 不一致。
+    """
+
+    if registered is None:
+        return requested
+    if requested is None:
+        return registered
+    if requested != registered:
+        raise RuntimeError(
+            f"{field_name}={requested} conflicts with Checkpoint Profile value "
+            f"{registered}"
+        )
+    return registered
+
+
+def _optional_scheduling(value: Any, *, field_name: str) -> Optional[str]:
+    """解析可选 non-spoken 调度模式。
+
+    参数:
+        value: Session 或 Profile 注入的原始模式。
+        field_name: 报错时使用的字段名。
+
+    返回:
+        None、``quality`` 或 ``latency``。
+
+    异常:
+        RuntimeError: 值不属于已支持模式。
+    """
+
+    if value is None or value == "":
+        return None
+    scheduling = str(value).lower()
+    if scheduling not in {"quality", "latency"}:
+        raise RuntimeError(f"{field_name} must be 'latency' or 'quality'")
+    return scheduling
+
+
+def _resolve_profile_bound_choice(
+    *,
+    requested: Optional[str],
+    registered: Optional[str],
+    field_name: str,
+) -> Optional[str]:
+    """合并 Session 选择和 Profile 注册选择。
+
+    参数:
+        requested: Session 显式值。
+        registered: launcher 注入的 Profile 值。
+        field_name: 冲突报错字段名。
+
+    返回:
+        唯一有效值；两侧都缺失时返回 None。
+
+    异常:
+        RuntimeError: Session 与 Profile 选择冲突。
+    """
+
+    if registered is None:
+        return requested
+    if requested is None:
+        return registered
+    if requested != registered:
+        raise RuntimeError(
+            f"{field_name}={requested} conflicts with Checkpoint Profile value "
+            f"{registered}"
+        )
+    return registered
 
 
 def _extract_frame_base64_list(payload: Dict[str, Any]) -> Optional[list[str]]:

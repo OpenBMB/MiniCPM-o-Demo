@@ -14,6 +14,27 @@
 - Unit 是模型调度边界；think、tool-call 和 spoken turn 可以跨 Unit。
 - WebSocket 接收顺序就是事件顺序，不额外定义 event/step/batch/delta 序号。
 
+### 2.1 Checkpoint Profile 参数
+
+通用 Runtime 不维护 checkpoint 专属训练事实。调用方必须在 `session.init` 中显式携带由
+外部 Checkpoint Profile 展开的身份和两类 budget：
+
+```json
+{
+  "checkpoint_profile_id": "profile_id",
+  "config": {
+    "non_spoken_scheduling": "quality",
+    "non_spoken_budget_while_listening": 30,
+    "non_spoken_budget_while_speaking": 15
+  }
+}
+```
+
+示例值只表示调用方展开后的结果，不是 API 默认值。调度模式同样属于 Profile：当前
+checkpoint 若只验证了 quality，就不能由页面切到 latency。Runtime 根据当前 Unit 的
+spoken 决策选择 listening 或 speaking budget。若进程环境已经绑定 Profile，
+`session.init` 给出的值必须完全一致，否则 fail-fast；两侧都没有提供时也必须失败。
+
 ## 3. 必要关联字段
 
 协议只保留：

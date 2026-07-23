@@ -70,16 +70,24 @@
           <summary>Runtime</summary>
           <label class="field-row">
             <span>Mode</span>
-            <select id="nonSpokenScheduling">
+            <select id="nonSpokenScheduling" disabled>
               <option value="quality" selected>Quality</option>
               <option value="latency">Latency</option>
             </select>
           </label>
           <label class="field-row">
-            <span>Budget</span>
-            <input id="nonSpokenBudget" type="number" min="1" max="512" step="1" value="12" />
+            <span>Checkpoint Profile</span>
+            <input id="checkpointProfileId" type="text" value="" readonly />
           </label>
-          <p class="hint">Budget is non-spoken decode steps per audio unit. MVP hard cap was 200.</p>
+          <label class="field-row">
+            <span>Listening budget</span>
+            <input id="nonSpokenBudgetWhileListening" type="number" min="1" max="512" step="1" value="" readonly />
+          </label>
+          <label class="field-row">
+            <span>Speaking budget</span>
+            <input id="nonSpokenBudgetWhileSpeaking" type="number" min="1" max="512" step="1" value="" readonly />
+          </label>
+          <p class="hint">Budgets are injected from the selected checkpoint deployment Profile.</p>
         </details>
       </section>
 

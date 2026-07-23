@@ -121,6 +121,130 @@ class _FakeRuntimeBackend:
 
 
 @pytest.mark.asyncio
+async def test_runtime_uses_explicit_profile_budgets_by_spoken_state() -> None:
+    """Runtime 应按当前 Unit 的 spoken 决策选择 Profile 中对应 budget。"""
+
+    async def send(_: str, **__: Any) -> None:
+        return
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_profile_budget",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+    await runtime.prepare(
+        {
+            "checkpoint_profile_id": "profile_test",
+            "config": {
+                "non_spoken_scheduling": "quality",
+                "non_spoken_budget_while_listening": 30,
+                "non_spoken_budget_while_speaking": 15,
+            },
+        }
+    )
+
+    assert runtime._select_non_spoken_budget(SimpleNamespace(is_speaking=False)) == 30
+    assert runtime._select_non_spoken_budget(SimpleNamespace(is_speaking=True)) == 15
+    assert runtime.resume_identity["checkpoint_profile_id"] == "profile_test"
+    assert runtime.resume_identity["non_spoken_budget_while_listening"] == 30
+    assert runtime.resume_identity["non_spoken_budget_while_speaking"] == 15
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_missing_checkpoint_profile_budget() -> None:
+    """未显式提供 Profile budget 时不能回退到某个 checkpoint 专属默认值。"""
+
+    async def send(_: str, **__: Any) -> None:
+        return
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_missing_profile_budget",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+
+    with pytest.raises(RuntimeError, match="non-spoken budgets"):
+        await runtime.prepare({})
+
+
+@pytest.mark.asyncio
+async def test_runtime_uses_launcher_profile_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Session 未覆盖时应使用 launcher 注入的 Profile 身份和两类 budget。"""
+
+    async def send(_: str, **__: Any) -> None:
+        return
+
+    monkeypatch.setenv("CHECKPOINT_PROFILE_ID", "profile_env")
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_SCHEDULING", "quality")
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING", "30")
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING", "15")
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_profile_env",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+
+    await runtime.prepare({})
+
+    assert runtime.resume_identity["checkpoint_profile_id"] == "profile_env"
+    assert runtime._select_non_spoken_budget(SimpleNamespace(is_speaking=False)) == 30
+    assert runtime._select_non_spoken_budget(SimpleNamespace(is_speaking=True)) == 15
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_session_budget_conflicting_with_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Session 参数不能静默覆盖 launcher 已绑定的 Checkpoint Profile。"""
+
+    async def send(_: str, **__: Any) -> None:
+        return
+
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING", "30")
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING", "15")
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_SCHEDULING", "quality")
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_profile_conflict",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+
+    with pytest.raises(RuntimeError, match="conflicts with Checkpoint Profile"):
+        await runtime.prepare(
+            {
+                "config": {
+                    "non_spoken_budget_while_listening": 12,
+                    "non_spoken_budget_while_speaking": 12,
+                }
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_scheduling_conflicting_with_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Session 不能把 Profile 绑定的 quality 静默切成 latency。"""
+
+    async def send(_: str, **__: Any) -> None:
+        return
+
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_SCHEDULING", "quality")
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING", "30")
+    monkeypatch.setenv("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING", "15")
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_scheduling_conflict",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+
+    with pytest.raises(RuntimeError, match="conflicts with Checkpoint Profile"):
+        await runtime.prepare({"config": {"non_spoken_scheduling": "latency"}})
+
+
+@pytest.mark.asyncio
 async def test_runtime_batches_safe_text_steps_without_exposing_token_ids() -> None:
     """Batch 应保留 pending/delta 次级边界，但公共 step 不包含 token_id。"""
 
@@ -182,6 +306,16 @@ async def test_runtime_emits_available_unit_checkpoint_after_canonical_steps() -
         backend=_FakeRuntimeBackend(),
         send=send,
     )
+    await runtime.prepare(
+        {
+            "checkpoint_profile_id": "profile_test",
+            "config": {
+                "non_spoken_scheduling": "quality",
+                "non_spoken_budget_while_listening": 30,
+                "non_spoken_budget_while_speaking": 15,
+            },
+        }
+    )
     await runtime._process_audio_payload(
         {
             "input_id": "u0",
@@ -225,8 +359,14 @@ async def test_runtime_resume_replays_public_history_and_continues_indices() -> 
             "payload": {
                 "mode": "full_duplex",
                 "fc_duplex": True,
+                "checkpoint_profile_id": "profile_test",
                 "tokenizer_target": "o45_fc",
                 "generate_audio": False,
+                "config": {
+                    "non_spoken_scheduling": "quality",
+                    "non_spoken_budget_while_listening": 30,
+                    "non_spoken_budget_while_speaking": 15,
+                },
             },
         },
         {"type": "input.append", "input": {"input_id": "u0", "audio_base64": "AAAAAA=="}},

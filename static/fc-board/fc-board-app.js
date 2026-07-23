@@ -102,7 +102,9 @@ const el = {
   systemPrompt: document.getElementById('systemPrompt'),
   refAudioPath: document.getElementById('refAudioPath'),
   nonSpokenScheduling: document.getElementById('nonSpokenScheduling'),
-  nonSpokenBudget: document.getElementById('nonSpokenBudget'),
+  checkpointProfileId: document.getElementById('checkpointProfileId'),
+  nonSpokenBudgetWhileListening: document.getElementById('nonSpokenBudgetWhileListening'),
+  nonSpokenBudgetWhileSpeaking: document.getElementById('nonSpokenBudgetWhileSpeaking'),
   debugBudgetUsed: document.getElementById('debugBudgetUsed'),
   debugBudgetMax: document.getElementById('debugBudgetMax'),
   debugBudgetUpdated: document.getElementById('debugBudgetUpdated'),
@@ -317,13 +319,23 @@ function createMicProvider(client) {
 
 function buildSessionInitPayload() {
   const refAudioPath = (el.refAudioPath?.value || '').trim();
+  const checkpointProfileId = (el.checkpointProfileId?.value || '').trim();
+  if (!checkpointProfileId) throw new Error('Checkpoint Profile is not configured');
   const nonSpokenScheduling = ['quality', 'latency'].includes(el.nonSpokenScheduling?.value)
     ? el.nonSpokenScheduling.value
     : 'quality';
-  const nonSpokenBudget = clampInt(el.nonSpokenBudget?.value, 1, 512, 12);
+  const nonSpokenBudgetWhileListening = requirePositiveInt(
+    el.nonSpokenBudgetWhileListening?.value,
+    'Listening budget',
+  );
+  const nonSpokenBudgetWhileSpeaking = requirePositiveInt(
+    el.nonSpokenBudgetWhileSpeaking?.value,
+    'Speaking budget',
+  );
   const payload = {
     mode: 'full_duplex',
     fc_duplex: true,
+    checkpoint_profile_id: checkpointProfileId,
     system_prompt: (el.systemPrompt?.value || '').trim() || defaultSystemPrompt(),
     tools: defaultTools(),
     generate_audio: true,
@@ -333,7 +345,8 @@ function buildSessionInitPayload() {
       non_spoken_scheduling: nonSpokenScheduling,
       sample_rate: 16000,
       max_spoken_tokens: 24,
-      non_spoken_budget_per_unit: nonSpokenBudget,
+      non_spoken_budget_while_listening: nonSpokenBudgetWhileListening,
+      non_spoken_budget_while_speaking: nonSpokenBudgetWhileSpeaking,
       decode_mode: 'greedy',
     },
   };
@@ -359,6 +372,17 @@ async function loadFcBoardDefaults() {
 function applyDefaults(defaults) {
   if (el.systemPrompt) el.systemPrompt.value = defaults.default_system_prompt || DEFAULT_SYSTEM_PROMPT;
   if (el.refAudioPath) el.refAudioPath.value = defaults.default_ref_audio_path || '';
+  if (el.nonSpokenScheduling && ['quality', 'latency'].includes(defaults.non_spoken_scheduling)) {
+    el.nonSpokenScheduling.value = defaults.non_spoken_scheduling;
+  }
+  if (el.checkpointProfileId) el.checkpointProfileId.value = defaults.checkpoint_profile_id || '';
+  if (el.nonSpokenBudgetWhileListening) {
+    el.nonSpokenBudgetWhileListening.value = defaults.non_spoken_budget_while_listening ?? '';
+  }
+  if (el.nonSpokenBudgetWhileSpeaking) {
+    el.nonSpokenBudgetWhileSpeaking.value = defaults.non_spoken_budget_while_speaking ?? '';
+  }
+  if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
   if (el.kvTools) el.kvTools.textContent = defaultTools().map(tool => tool?.function?.name || tool?.name || 'tool').join(', ');
 }
 
@@ -1094,10 +1118,12 @@ function compactJson(value) {
   try { return JSON.stringify(value); } catch (_) { return String(value); }
 }
 
-function clampInt(value, min, max, fallback) {
+function requirePositiveInt(value, label) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must come from a valid Checkpoint Profile`);
+  }
+  return parsed;
 }
 
 function prettyJson(value) {

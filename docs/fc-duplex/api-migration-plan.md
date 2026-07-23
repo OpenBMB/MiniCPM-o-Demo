@@ -519,6 +519,10 @@ backend runtime 只把 `contents[*].text` 拼成模型输入文本，不理解/�
 
 ### 6.1 non-spoken 调度模式
 
+> 当前实现约束：调度模式和 listening / speaking budget 必须由调用方的 Checkpoint
+> Profile 显式注入；Runtime 不维护默认值。只有 Profile 声明并验证 latency 时才能使用
+> latency。下方是两种通用调度能力说明，不代表任意 checkpoint 都支持切换。
+
 `session.init` 需要支持两种 non-spoken 调度模式，用于权衡实时性和完整 tool-call 质量：
 
 ```json
@@ -537,7 +541,9 @@ backend runtime 只把 `contents[*].text` 拼成模型输入文本，不理解/�
   tool-call done；Capability 的完整 semantic aggregate buffer 保留到 matching end。
   后续 Unit 出现新 opener 时创建新 stream。若模型直接继续 ordinary token 而省略
   opener，View 继承前一 stream kind，但仍创建新的 decoder/stream_id。
-- `quality` / 质量模式：audio chunk 进入队列，当前 unit 跑完固定 `non_spoken_budget_per_unit` 或自然 terminated 后再处理下一个 chunk。这样更容易让 think/tool-call 在当前 unit 内自然闭合，但会积压延迟。
+- `quality` / 质量模式：audio chunk 进入队列，当前 unit 跑完 Profile 声明的 listening /
+  speaking budget 或自然 terminated 后再处理下一个 chunk。这样更容易让 think/tool-call
+  在当前 unit 内自然闭合，但会积压延迟。
 
 这属于 view 之上的 session/runtime 节奏控制；token 合法性、special token 插入和 `budget_reached` 如何进入模型上下文仍属于 `FcDuplexCapability` / modeling 层。
 
