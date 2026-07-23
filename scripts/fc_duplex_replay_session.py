@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import copy
 import json
 import math
+import os
 import ssl
 import time
 import wave
@@ -87,6 +89,44 @@ def load_upstream_frames(session_dir: Path, *, skip_recorded_tool_results: bool)
                 continue
             frames.append((float(record.get("ts") or 0.0), restore_blobs(frame, session_dir)))
     return frames
+
+
+def apply_checkpoint_profile_to_init(
+    frame: dict[str, Any],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """把历史 Session init 重绑定到当前 Checkpoint Profile。
+
+    参数:
+        frame: 记录日志中的 ``session.init`` frame。
+        args: 包含 Profile 身份、调度模式和两类 budget 的 CLI 参数。
+
+    返回:
+        深拷贝后的新 frame；原始记录不会被修改。
+
+    异常:
+        ValueError: 输入不是合法 ``session.init``。
+    """
+
+    if frame.get("type") != "session.init":
+        raise ValueError("Checkpoint Profile 只能应用到 session.init frame")
+    rebound = copy.deepcopy(frame)
+    payload = rebound.setdefault("payload", {})
+    if not isinstance(payload, dict):
+        raise ValueError("session.init.payload 必须是对象")
+    config = payload.setdefault("config", {})
+    if not isinstance(config, dict):
+        raise ValueError("session.init.payload.config 必须是对象")
+    config.pop("non_spoken_budget_per_unit", None)
+    payload["checkpoint_profile_id"] = args.checkpoint_profile_id
+    config["non_spoken_scheduling"] = args.non_spoken_scheduling
+    config["non_spoken_budget_while_listening"] = (
+        args.non_spoken_budget_while_listening
+    )
+    config["non_spoken_budget_while_speaking"] = (
+        args.non_spoken_budget_while_speaking
+    )
+    return rebound
 
 
 def summarize_event(event: dict[str, Any]) -> str:
@@ -196,6 +236,15 @@ async def drain(
 async def replay(args: argparse.Namespace) -> None:
     session_dir = Path(args.session_dir or Path(args.data_dir) / "sessions" / args.session_id)
     frames = load_upstream_frames(session_dir, skip_recorded_tool_results=args.skip_recorded_tool_results)
+    frames = [
+        (
+            timestamp,
+            apply_checkpoint_profile_to_init(frame, args)
+            if frame.get("type") == "session.init"
+            else frame,
+        )
+        for timestamp, frame in frames
+    ]
     if not frames:
         raise RuntimeError(f"no replayable upstream frames found: {session_dir}")
     print(f"session_dir={session_dir}")
@@ -282,6 +331,25 @@ def main() -> None:
     parser.add_argument("--close-idle-rounds", type=int, default=6)
     parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification")
     parser.add_argument(
+        "--checkpoint-profile-id",
+        default=os.environ.get("CHECKPOINT_PROFILE_ID"),
+    )
+    parser.add_argument(
+        "--non-spoken-scheduling",
+        choices=("quality", "latency"),
+        default=os.environ.get("FC_DUPLEX_NON_SPOKEN_SCHEDULING"),
+    )
+    parser.add_argument(
+        "--non-spoken-budget-while-listening",
+        type=int,
+        default=os.environ.get("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING"),
+    )
+    parser.add_argument(
+        "--non-spoken-budget-while-speaking",
+        type=int,
+        default=os.environ.get("FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING"),
+    )
+    parser.add_argument(
         "--auto-execute-board-tool",
         action="store_true",
         help="Execute valid display_object_on_board calls and send input.tool_result.",
@@ -294,6 +362,14 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--print-limit", type=int, default=20)
     args = parser.parse_args()
+    if not args.checkpoint_profile_id:
+        parser.error("Checkpoint Profile ID is required")
+    if not args.non_spoken_scheduling:
+        parser.error("Checkpoint Profile scheduling is required")
+    if not args.non_spoken_budget_while_listening:
+        parser.error("Checkpoint Profile listening budget is required")
+    if not args.non_spoken_budget_while_speaking:
+        parser.error("Checkpoint Profile speaking budget is required")
     asyncio.run(replay(args))
 
 
