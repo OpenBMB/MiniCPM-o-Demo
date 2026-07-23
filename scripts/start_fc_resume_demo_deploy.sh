@@ -11,6 +11,7 @@ LOG_DIR="${LOG_DIR:-/user/sunweiyue/lib/swy-dev/tmp/fc_resume_demo_deploy}"
 SOURCE_FRPC_CONFIG="${SOURCE_FRPC_CONFIG:-/user/sunweiyue/lib/swy-dev/frpc_manager/frpc.toml}"
 FRPC_BIN="${FRPC_BIN:-/user/sunweiyue/lib/swy-dev/frpc_manager/frpc}"
 REMOTE_PORT="${REMOTE_PORT:-7001}"
+FRP_PROXY_NAME="${FRP_PROXY_NAME:-swy-fc-resume-demo-${REMOTE_PORT}}"
 DEMO_FRPC_CONFIG="${DEMO_FRPC_CONFIG:-/tmp/fc_resume_demo_frpc.toml}"
 
 for required_name in \
@@ -39,20 +40,22 @@ echo "[deploy] checkpoint_profile_id=${CHECKPOINT_PROFILE_ID}"
 echo "[deploy] non_spoken_scheduling=${FC_DUPLEX_NON_SPOKEN_SCHEDULING}"
 echo "[deploy] non_spoken_budget_while_listening=${FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING}"
 echo "[deploy] non_spoken_budget_while_speaking=${FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING}"
+echo "[deploy] frp_proxy_name=${FRP_PROXY_NAME} remote_port=${REMOTE_PORT}"
 
-python - "${SOURCE_FRPC_CONFIG}" "${DEMO_FRPC_CONFIG}" "${REMOTE_PORT}" <<'PY'
+python - "${SOURCE_FRPC_CONFIG}" "${DEMO_FRPC_CONFIG}" "${REMOTE_PORT}" "${FRP_PROXY_NAME}" <<'PY'
 from pathlib import Path
 import sys
 
 source_path = Path(sys.argv[1])
 target_path = Path(sys.argv[2])
 remote_port = int(sys.argv[3])
+proxy_name = sys.argv[4]
 source = source_path.read_text(encoding="utf-8")
 global_config = source.split("[[proxies]]", maxsplit=1)[0].rstrip()
 proxy = f"""
 
 [[proxies]]
-name = "swy-fc-resume-demo"
+name = "{proxy_name}"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 8009
