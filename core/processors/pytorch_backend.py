@@ -47,6 +47,7 @@ class PyTorchBackend:
 
         self.status = "loading"
         self.processor = None
+        self._last_duplex_prepare_usage: Dict[str, int] = {}
 
         # Duplex 暂停超时监控 task
         self._duplex_timeout_task: Optional[asyncio.Task] = None
@@ -253,11 +254,29 @@ class PyTorchBackend:
         if sampling:
             self.set_duplex_config(sampling)
         duplex_view = self.processor.set_duplex_mode()
-        return duplex_view.prepare(
+        self._last_duplex_prepare_usage = {}
+        prompt = duplex_view.prepare(
             system_prompt_text=system_prompt_text,
             ref_audio_path=ref_audio_path or self.ref_audio_path,
             prompt_wav_path=prompt_wav_path,
         )
+        actual_system_prompt = system_prompt_text or "Streaming Omni Conversation."
+        prefix = f"<|im_start|>system\n{actual_system_prompt}\n<|audio_start|>"
+        suffix = "<|audio_end|><|im_end|>"
+        tokenizer = duplex_view._model.duplex.tokenizer
+        text_tokens = len(tokenizer.encode(prefix, add_special_tokens=False))
+        text_tokens += len(tokenizer.encode(suffix, add_special_tokens=False))
+        cache_tokens = int(duplex_view._model.duplex.decoder.get_cache_length())
+        self._last_duplex_prepare_usage = {
+            "input_text_tokens": text_tokens,
+            "input_audio_tokens": max(cache_tokens - text_tokens, 0),
+        }
+        return prompt
+
+    def duplex_prepare_usage(self) -> Dict[str, int]:
+        """Return token counts added while initializing the duplex session."""
+
+        return dict(self._last_duplex_prepare_usage)
 
     def duplex_prefill(
         self,

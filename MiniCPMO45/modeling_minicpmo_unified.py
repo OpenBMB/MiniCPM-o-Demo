@@ -4589,6 +4589,10 @@ class DuplexCapability:
         cost_audio_process = 0.0
         cost_audio_embed = 0.0
         cost_audio_feed = 0.0
+        input_text_tokens = 0
+        input_audio_tokens = 0
+        input_vision_tokens = 0
+        n_vision_slices = 0
 
         def _make_result(success, reasons=""):
             reason = reasons
@@ -4605,6 +4609,10 @@ class DuplexCapability:
                 "cost_audio_embed": cost_audio_embed,
                 "cost_audio_feed": cost_audio_feed,
                 "cost_all": time.time() - start_time,
+                "input_text_tokens": input_text_tokens,
+                "input_audio_tokens": input_audio_tokens,
+                "input_vision_tokens": input_vision_tokens,
+                "n_vision_slices": n_vision_slices,
             }
 
         if self.is_session_stop_set():
@@ -4641,6 +4649,7 @@ class DuplexCapability:
         # Step 1: Feed <unit> token
         self.decoder.feed(self.decoder.embed_token(self.unit_token_id))
         self._current_unit_prefill_tokens.append(self.unit_token_id)
+        input_text_tokens += 1
 
         # Step 2: process image
         if has_frames:
@@ -4761,6 +4770,13 @@ class DuplexCapability:
                                 (self.decoder.embed_token(self.slice_end_token_id), False, self.slice_end_token_id)
                             )
                             embed_idx += 1
+
+                n_vision_slices = sum(slice_counts)
+                for embed, _, token_id in feed_operations:
+                    if token_id is not None:
+                        input_text_tokens += 1
+                    else:
+                        input_vision_tokens += embed.shape[0] if embed.dim() > 1 else 1
 
                 # Mark the last operation for VISION mode logits
                 if feed_operations:
@@ -4897,6 +4913,7 @@ class DuplexCapability:
             # Schema tracking: 用元组标记 audio embedding: ("audio", dim)
             embed_dim = audio_embeds.shape[0] if len(audio_embeds.shape) > 1 else 1
             self._current_unit_prefill_tokens.append(("audio", embed_dim))
+            input_audio_tokens += embed_dim
 
             if self.audio_chunk_idx == 0:
                 cfg = self.processor._streaming_mel_processor.get_config()
