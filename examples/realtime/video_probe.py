@@ -177,11 +177,22 @@ class ProbeState:
     input_frames_sent: int = 0
     listen_events: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
+    latest_usage: dict[str, Any] | None = None
+    chunk_usage_by_index: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def event(self, typ: str, **kwargs: Any) -> None:
         item = {"t_ms": ms(now() - self.started_s), "type": typ}
         item.update(kwargs)
         self.events.append(item)
+
+    def capture_usage(self, message: dict[str, Any]) -> None:
+        usage = message.get("usage")
+        if isinstance(usage, dict):
+            self.latest_usage = usage
+        chunk_usage = message.get("chunk_usage")
+        chunk_index = message.get("chunk_index")
+        if isinstance(chunk_usage, dict) and isinstance(chunk_index, int):
+            self.chunk_usage_by_index[chunk_index] = chunk_usage
 
 
 async def sender(
@@ -263,6 +274,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
                     raw = await (ws.recv() if timeout is None else asyncio.wait_for(ws.recv(), timeout))
                     msg = json.loads(raw)
                     msg_type = msg.get("type", "")
+                    state.capture_usage(msg)
                     state.event(f"server.{msg_type}")
 
                     if msg_type in ("session.queue_done", "queue_done") and sender_task is None:
@@ -353,6 +365,13 @@ def build_result(args: argparse.Namespace, state: ProbeState, source_audio_chunk
         "text": "".join(state.text_chunks),
         "output_audio_chunks": len(state.output_chunk_times_s),
         **summarize(chunk_intervals_ms, "chunk_interarrival"),
+        "usage": state.latest_usage,
+        "chunk_usage_count": len(state.chunk_usage_by_index),
+        "last_chunk_usage": (
+            state.chunk_usage_by_index[max(state.chunk_usage_by_index)]
+            if state.chunk_usage_by_index
+            else None
+        ),
         "events": state.events if args.include_events else None,
     }
 
@@ -368,6 +387,12 @@ def print_human(result: dict[str, Any]) -> None:
     if result.get("text"):
         print("text:")
         print(result["text"])
+    if result.get("usage"):
+        print("usage:")
+        print(json.dumps(result["usage"], ensure_ascii=False, indent=2))
+        print(f"chunk_usage_count: {result.get('chunk_usage_count')}")
+        print("last_chunk_usage:")
+        print(json.dumps(result.get("last_chunk_usage"), ensure_ascii=False, indent=2))
 
 
 def parse_args() -> argparse.Namespace:

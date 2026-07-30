@@ -177,11 +177,22 @@ class ProbeState:
     output_chunk_eot: list[bool] = field(default_factory=list)
     ping_rtts_ms: list[float] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
+    latest_usage: dict[str, Any] | None = None
+    chunk_usage_by_index: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def event(self, typ: str, **kwargs: Any) -> None:
         item = {"t_ms": ms(now() - self.started_s), "type": typ}
         item.update(kwargs)
         self.events.append(item)
+
+    def capture_usage(self, message: dict[str, Any]) -> None:
+        usage = message.get("usage")
+        if isinstance(usage, dict):
+            self.latest_usage = usage
+        chunk_usage = message.get("chunk_usage")
+        chunk_index = message.get("chunk_index")
+        if isinstance(chunk_usage, dict) and isinstance(chunk_index, int):
+            self.chunk_usage_by_index[chunk_index] = chunk_usage
 
 
 async def measure_ping(ws: websockets.ClientConnection, count: int, interval_s: float) -> list[float]:
@@ -285,6 +296,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
                 break
             msg = json.loads(raw)
             msg_type = msg.get("type", "")
+            state.capture_usage(msg)
             state.event(f"server.{msg_type}")
 
             if msg_type in ("session.queue_done", "queue_done") and not session_created:
@@ -401,6 +413,13 @@ def build_result(args: argparse.Namespace, state: ProbeState, playback: Playback
         **summarize(jitter_samples, "chunk_jitter"),
         **summarize(late_jitter_samples, "chunk_late_jitter"),
         **summarize(early_jitter_samples, "chunk_early_jitter"),
+        "usage": state.latest_usage,
+        "chunk_usage_count": len(state.chunk_usage_by_index),
+        "last_chunk_usage": (
+            state.chunk_usage_by_index[max(state.chunk_usage_by_index)]
+            if state.chunk_usage_by_index
+            else None
+        ),
     }
 
     if state.ping_rtts_ms:
@@ -438,6 +457,12 @@ def print_human(result: dict[str, Any]) -> None:
     print(f"audio_ahead_min/p50/p90_ms: {fmt(result.get('audio_ahead_min_ms'))} / {fmt(result.get('audio_ahead_p50_ms'))} / {fmt(result.get('audio_ahead_p90_ms'))}")
     print(f"underrun_count: {fmt(result.get('underrun_count'))}")
     print(f"underrun_total_ms: {fmt(result.get('underrun_total_ms'))}")
+    if result.get("usage"):
+        print("usage:")
+        print(json.dumps(result["usage"], ensure_ascii=False, indent=2))
+        print(f"chunk_usage_count: {result.get('chunk_usage_count')}")
+        print("last_chunk_usage:")
+        print(json.dumps(result.get("last_chunk_usage"), ensure_ascii=False, indent=2))
 
 
 def fmt(value: Any) -> str:
