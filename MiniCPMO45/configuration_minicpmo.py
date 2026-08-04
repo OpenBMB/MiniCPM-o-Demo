@@ -101,9 +101,6 @@ class MiniCPMTTSConfig(PretrainedConfig):
         backbone_model: str = "llama",
         audio_tokenizer_type: str = "wavtokenizer",
         audio_tokenizer_sample_rate: int = 24000,
-        top_p: float = 0.85,
-        top_k: int = 25,
-        repetition_penalty: float = 1.05,
         streaming_sliding_window: bool = False,
         streaming_sliding_window_max_text_len: int = 500,
         streaming_sliding_window_average_speed: int = 5,
@@ -159,9 +156,6 @@ class MiniCPMTTSConfig(PretrainedConfig):
         self.backbone_model = backbone_model
         self.audio_tokenizer_type = audio_tokenizer_type
         self.audio_tokenizer_sample_rate = audio_tokenizer_sample_rate
-        self.top_p = top_p
-        self.top_k = top_k
-        self.repetition_penalty = repetition_penalty
 
         self.streaming_sliding_window = streaming_sliding_window
         self.streaming_sliding_window_max_text_len = streaming_sliding_window_max_text_len
