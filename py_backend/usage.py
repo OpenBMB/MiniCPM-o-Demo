@@ -87,7 +87,6 @@ class TokenUsage:
                 "text_tokens": self.input_text_tokens,
                 "audio_tokens": self.input_audio_tokens,
                 "vision_tokens": self.input_vision_tokens,
-                "cached_tokens": 0,
             },
             "output_token_details": {
                 "text_tokens": self.output_text_tokens,
