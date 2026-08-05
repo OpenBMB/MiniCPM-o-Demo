@@ -1,0 +1,41 @@
+# Add a second C++/GGUF worker to the dynamic-registration smoke deployment.
+
+services:
+  cpp-worker-backend-1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cpp-worker-backend
+      args:
+        LLAMA_OMNI_REFSPEC: ${LLAMA_OMNI_REFSPEC:-master}
+        LLAMA_OMNI_REF: ${LLAMA_OMNI_REF:-origin/master}
+    image: minicpm-cpp-worker-backend:dynamic-reg
+    container_name: minicpm-dynamic-reg-cpp-wb-1
+    environment:
+      GPU_ID: "0"
+      BACKEND_PORT: "22500"
+      WORKER_PORT: "22400"
+      GGUF_MODEL: /models/MiniCPM-o-4_5-gguf/${GGUF_MODEL_FILE:-MiniCPM-o-4_5-Q4_K_M.gguf}
+      LLAMA_SERVER_EXTRA_ARGS: "${LLAMA_SERVER_EXTRA_ARGS:--c 8192}"
+      GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
+      WORKER_ID: "cpp-worker-backend-1"
+      WORKER_ENDPOINT: "cpp-worker-backend-1:22400"
+      WORKER_GPU_GROUP: "gpu-${SECOND_SMOKE_GPU_ID:-1}"
+    volumes:
+      - ${GGUF_MODEL_HOST_PATH:?set GGUF_MODEL_HOST_PATH to the host GGUF model dir}:/models/MiniCPM-o-4_5-gguf:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SECOND_SMOKE_GPU_ID:-1}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:22400/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}

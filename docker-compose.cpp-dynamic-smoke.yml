@@ -1,21 +1,7 @@
-# MiniCPM-o C++ backend deployment (docker compose)
+# Dynamic worker registration smoke deployment using the C++/GGUF backend.
 #
-# Topology:
-#   gateway            x1   host :${GATEWAY_HOST_PORT:-8006} -> container :8006
-#   cpp-worker-backend x1   one container with:
-#       - llama-omni-server backend on 127.0.0.1:22500
-#       - Python worker on 0.0.0.0:22400, forwarding to the local backend
-#
-# Usage:
-#   mkdir -p certs data
-#   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
-#     -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
-#   GGUF_MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5-gguf \
-#   GATEWAY_HOST_PORT=8006 \
-#   CPP_GPU_ID=0 \
-#   docker compose -f docker-compose.cpp.yml up -d --build
-#   docker compose -f docker-compose.cpp.yml logs -f gateway
-#   docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
+# This file is intentionally standalone so it can be used on a shared GPU host
+# without touching existing compose projects or default ports.
 
 services:
   cpp-worker-backend:
@@ -25,7 +11,8 @@ services:
       args:
         LLAMA_OMNI_REFSPEC: ${LLAMA_OMNI_REFSPEC:-master}
         LLAMA_OMNI_REF: ${LLAMA_OMNI_REF:-origin/master}
-    image: minicpm-cpp-worker-backend:dev
+    image: minicpm-cpp-worker-backend:dynamic-reg
+    container_name: minicpm-dynamic-reg-cpp-wb-0
     environment:
       GPU_ID: "0"
       BACKEND_PORT: "22500"
@@ -33,9 +20,9 @@ services:
       GGUF_MODEL: /models/MiniCPM-o-4_5-gguf/${GGUF_MODEL_FILE:-MiniCPM-o-4_5-Q4_K_M.gguf}
       LLAMA_SERVER_EXTRA_ARGS: "${LLAMA_SERVER_EXTRA_ARGS:--c 8192}"
       GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
-      WORKER_ID: "cpp-worker-backend"
+      WORKER_ID: "cpp-worker-backend-0"
       WORKER_ENDPOINT: "cpp-worker-backend:22400"
-      WORKER_GPU_GROUP: "gpu-${CPP_GPU_ID:-0}"
+      WORKER_GPU_GROUP: "gpu-${SMOKE_GPU_ID:-1}"
     volumes:
       - ${GGUF_MODEL_HOST_PATH:?set GGUF_MODEL_HOST_PATH to the host GGUF model dir}:/models/MiniCPM-o-4_5-gguf:ro
     deploy:
@@ -43,7 +30,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${CPP_GPU_ID:-0}"]
+              device_ids: ["${SMOKE_GPU_ID:-1}"]
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:22400/health"]
@@ -60,7 +47,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.gateway
-    image: minicpm-gateway:dev
+    image: minicpm-gateway:dynamic-reg
+    container_name: minicpm-dynamic-reg-cpp-gateway
     command:
       - "--host"
       - "0.0.0.0"
@@ -74,7 +62,7 @@ services:
       - "--ssl-keyfile"
       - "/app/certs/key.pem"
     ports:
-      - "${GATEWAY_HOST_PORT:-8006}:8006"
+      - "${GATEWAY_HOST_PORT:-18006}:8006"
     expose:
       - "8007"
     volumes:

@@ -65,3 +65,30 @@ def test_dispatch_skips_unsupported_head_of_line_request():
 
     asyncio.run(_run())
 
+
+def test_dynamic_registration_dispatches_waiting_request():
+    async def _run():
+        pool = WorkerPool(worker_addresses=[], max_queue_size=10)
+
+        async def fake_refresh(worker):
+            worker.status = GatewayWorkerStatus.IDLE
+            worker.capabilities = ["chat"]
+
+        pool._refresh_worker_status = fake_refresh
+
+        ticket, future = pool.enqueue("chat")
+        assert not future.done()
+        assert ticket.position == 1
+
+        worker = await pool.register_worker(
+            worker_id="worker-a",
+            endpoint="127.0.0.1:22400",
+            gpu_group="gpu-0",
+        )
+
+        assert future.done()
+        assert future.result() == worker
+        assert ticket.position == 0
+        assert pool.queue_length == 0
+
+    asyncio.run(_run())

@@ -82,7 +82,7 @@ COPY --from=docs-builder   /src/static/docs   ./static/docs
 
 RUN mkdir -p /app/data
 
-EXPOSE 8006
+EXPOSE 8006 8007
 
-# gateway 启动参数由 compose command 提供(--port / --workers / --https|--http)
+# gateway 启动参数由 compose command 提供(--port / --internal-port / --https|--http)
 ENTRYPOINT ["python", "gateway.py"]

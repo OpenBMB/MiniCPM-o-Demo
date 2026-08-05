@@ -77,13 +77,13 @@ class E2EProcessManager:
         self.workers.append(proc)
         return proc
 
-    def start_gateway(self, port: int, worker_addresses: List[str]) -> subprocess.Popen:
+    def start_gateway(self, port: int) -> subprocess.Popen:
         """启动 Gateway 进程"""
         cmd = [
             PYTHON, os.path.join(PROJECT_ROOT, "gateway.py"),
             "--port", str(port),
+            "--internal-port", str(port + 1000),
             "--http",
-            "--workers", ",".join(worker_addresses),
             "--max-queue-size", "100",
         ]
         log_path = os.path.join(PROJECT_ROOT, "tmp", f"gateway_{port}.log")
@@ -161,6 +161,21 @@ async def wait_for_gateway_ready(
             pass
         await asyncio.sleep(1.0)
     return False
+
+
+async def register_gateway_worker(
+    gateway_port: int,
+    worker_id: str,
+    endpoint: str,
+    gpu_group: str,
+) -> None:
+    async with httpx.AsyncClient() as client:
+        resp = await client.put(
+            f"http://127.0.0.1:{gateway_port + 1000}/internal/workers/{worker_id}",
+            json={"endpoint": endpoint, "gpu_group": gpu_group},
+            timeout=5.0,
+        )
+        assert resp.status_code == 200, resp.text
 
 
 # ============ 客户端辅助函数 ============
@@ -369,7 +384,10 @@ async def gateway_1w(real_workers: E2EProcessManager):
     workers = [f"127.0.0.1:{E2E_WORKER_BASE_PORT}"]
     port = E2E_GATEWAY_PORT
 
-    real_workers.start_gateway(port, workers)
+    real_workers.start_gateway(port)
+    assert await wait_for_health(f"http://127.0.0.1:{port}/health")
+    for i, endpoint in enumerate(workers):
+        await register_gateway_worker(port, f"worker-{i}", endpoint, f"gpu-{i}")
     ok = await wait_for_gateway_ready(f"http://127.0.0.1:{port}", 1)
     assert ok, f"Gateway (1W) failed to start on port {port}"
 
@@ -385,7 +403,10 @@ async def gateway_2w(real_workers: E2EProcessManager):
     workers = [f"127.0.0.1:{E2E_WORKER_BASE_PORT + i}" for i in range(2)]
     port = E2E_GATEWAY_PORT + 1
 
-    real_workers.start_gateway(port, workers)
+    real_workers.start_gateway(port)
+    assert await wait_for_health(f"http://127.0.0.1:{port}/health")
+    for i, endpoint in enumerate(workers):
+        await register_gateway_worker(port, f"worker-{i}", endpoint, f"gpu-{i}")
     ok = await wait_for_gateway_ready(f"http://127.0.0.1:{port}", 2)
     assert ok, f"Gateway (2W) failed to start on port {port}"
 
@@ -401,7 +422,10 @@ async def gateway_3w(real_workers: E2EProcessManager):
     workers = [f"127.0.0.1:{E2E_WORKER_BASE_PORT + i}" for i in range(3)]
     port = E2E_GATEWAY_PORT + 2
 
-    real_workers.start_gateway(port, workers)
+    real_workers.start_gateway(port)
+    assert await wait_for_health(f"http://127.0.0.1:{port}/health")
+    for i, endpoint in enumerate(workers):
+        await register_gateway_worker(port, f"worker-{i}", endpoint, f"gpu-{i}")
     ok = await wait_for_gateway_ready(f"http://127.0.0.1:{port}", 3)
     assert ok, f"Gateway (3W) failed to start on port {port}"
 

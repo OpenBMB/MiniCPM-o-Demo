@@ -26,7 +26,11 @@ backend, and the module is py_backend.server):
         --backend-server-url http://127.0.0.1:22500
 
     PYTHONPATH=. .venv/base/bin/python gateway.py \
-        --host 0.0.0.0 --port 8006 --http --workers localhost:22400
+        --host 0.0.0.0 --port 8006 --internal-port 8007 --http
+
+    curl -X PUT http://127.0.0.1:8007/internal/workers/local-worker \
+        -H 'content-type: application/json' \
+        --data '{"endpoint":"127.0.0.1:22400","gpu_group":"gpu-0"}'
 
 Health:
     curl http://127.0.0.1:22500/health
