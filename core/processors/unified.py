@@ -27,8 +27,8 @@ UnifiedProcessor（统一入口）
 │   ├── generate(...) → Generator[StreamingChunk]
 │   └── rollback() → RollbackResult
 │
-└── set_duplex_mode() → DuplexView
-    ├── prepare(...) → str
+    └── set_duplex_mode() → DuplexView
+    ├── prepare(...) → DuplexPrepareResult
     ├── prefill(...) → dict
     ├── generate(...) → DuplexGenerateResult
     └── set_break() / stop()
@@ -127,7 +127,11 @@ from core.schemas import (
 )
 
 if TYPE_CHECKING:
-    from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO, ProcessorMode as ModelProcessorMode
+    from MiniCPMO45.modeling_minicpmo_unified import (
+        DuplexPrepareResult,
+        MiniCPMO,
+        ProcessorMode as ModelProcessorMode,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -864,7 +868,7 @@ class DuplexView:
         system_prompt_text: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         prompt_wav_path: Optional[str] = None,
-    ) -> str:
+    ) -> "DuplexPrepareResult":
         """准备双工会话
         
         Args:
@@ -873,7 +877,7 @@ class DuplexView:
             prompt_wav_path: TTS prompt 音频路径
             
         Returns:
-            完整的 system prompt 字符串
+            包含完整 system prompt 和 prepare usage 的结果
         """
         if system_prompt_text is None:
             system_prompt_text = "Streaming Omni Conversation."
@@ -887,7 +891,7 @@ class DuplexView:
             ref_audio = self._load_ref_audio(ref_audio_path)
         
         # 调用透传方法
-        prompt = self._model.duplex_prepare(
+        prepared = self._model.duplex_prepare(
             prefix_system_prompt=prefix_system_prompt,
             suffix_system_prompt=suffix_system_prompt,
             ref_audio=ref_audio,
@@ -895,7 +899,7 @@ class DuplexView:
         )
         
         logger.info(f"双工会话准备完成")
-        return prompt
+        return prepared
     
     def prefill(
         self,
@@ -972,8 +976,9 @@ class DuplexView:
             cost_all_ms=result.get("cost_all", 0) * 1000 if result.get("cost_all") else None,
             n_tokens=result.get("n_tokens"),
             n_tts_tokens=result.get("n_tts_tokens"),
+            usage=result.get("usage"),
         )
-    
+
     def finalize(self) -> None:
         """完成 generate 的延迟操作（feed 终止符 + </unit>，滑窗维护）
         

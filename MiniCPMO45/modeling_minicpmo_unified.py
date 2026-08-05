@@ -92,6 +92,14 @@ class ProcessorMode(Enum):
     DUPLEX = "duplex"       # 双工对话（流式 TTS + 双工组件）
 
 
+@dataclass(frozen=True)
+class DuplexPrepareResult:
+    """Result returned after preparing a duplex session."""
+
+    prompt: str
+    usage: Dict[str, int]
+
+
 class MiniCPMOPreTrainedModel(Qwen3PreTrainedModel):
     config_class = MiniCPMOConfig
 
@@ -3931,7 +3939,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         ref_audio: Optional[np.ndarray] = None,
         prompt_wav_path: Optional[str] = None,
         context_previous_marker: str = "\n\nprevious: ",
-    ):
+    ) -> DuplexPrepareResult:
         """准备双工会话（透传到 self.duplex.prepare）
         
         Args:
@@ -3942,7 +3950,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             context_previous_marker: 上下文历史标记
             
         Returns:
-            完整的 system prompt 字符串
+            包含完整 system prompt 和 prepare usage 的结果
         """
         if self.duplex is None:
             raise RuntimeError("Duplex 未初始化，请先调用 init_unified()")
@@ -4457,7 +4465,7 @@ class DuplexCapability:
         ref_audio: Optional[np.ndarray] = None,
         prompt_wav_path: Optional[str] = None,
         context_previous_marker: str = "\n\nprevious: ",
-    ):
+    ) -> DuplexPrepareResult:
         self.clear_break_event()
         self.clear_session_stop()
 
@@ -4472,12 +4480,19 @@ class DuplexCapability:
             self._init_token2wav_cache(prompt_wav_path)
             self._reset_token2wav_for_new_turn()
 
+        usage_delta = {
+            "input_text_tokens": 0,
+            "input_audio_tokens": 0,
+            "input_vision_tokens": 0,
+        }
+
         # Prefill system prompt prefix (batch)
         if prefix_system_prompt:
             tokens = self.tokenizer.encode(prefix_system_prompt, add_special_tokens=False)
             if tokens:
                 embeds = self.decoder.embed_tokens(tokens)
                 self.decoder.feed(embeds)
+                usage_delta["input_text_tokens"] += len(tokens)
 
         # Prefill reference audio
         if ref_audio is not None:
@@ -4486,6 +4501,11 @@ class DuplexCapability:
             embeds = torch.cat([t for g in embeds_nested for t in g], dim=0) if embeds_nested else None
             if embeds is not None:
                 self.decoder.feed(embeds)
+                usage_delta["input_audio_tokens"] += int(embeds.shape[0])
+
+        suffix_token_ids = []
+        if suffix_system_prompt:
+            suffix_token_ids = self.tokenizer.encode(suffix_system_prompt, add_special_tokens=False)
 
         # 注册 system prompt 保护长度（滑窗时保护这部分不被移除）
         if prefix_system_prompt or suffix_system_prompt or ref_audio is not None:
@@ -4500,10 +4520,6 @@ class DuplexCapability:
                 self._ref_audio = ref_audio
 
                 # 获取 suffix token ids
-                suffix_token_ids = []
-                if suffix_system_prompt:
-                    suffix_token_ids = self.tokenizer.encode(suffix_system_prompt, add_special_tokens=False)
-
                 # 注册（此时 cache 只有 prefix，还没有 suffix，也没有 previous）
                 self.decoder.register_system_prompt_with_context(
                     suffix_token_ids=suffix_token_ids,
@@ -4514,6 +4530,7 @@ class DuplexCapability:
                 if suffix_token_ids:
                     suffix_embeds = self.decoder.embed_tokens(suffix_token_ids)
                     self.decoder.feed(suffix_embeds)
+                    usage_delta["input_text_tokens"] += len(suffix_token_ids)
 
                 logger.info(
                     "[Duplex] prepare: context-preserve mode, prefix=%d, suffix=%d tokens, marker='%s'",
@@ -4523,11 +4540,10 @@ class DuplexCapability:
                 )
             else:
                 # 非 context 保留模式：先 feed suffix，再注册总长度
-                if suffix_system_prompt:
-                    tokens = self.tokenizer.encode(suffix_system_prompt, add_special_tokens=False)
-                    if tokens:
-                        suffix_embeds = self.decoder.embed_tokens(tokens)
-                        self.decoder.feed(suffix_embeds)
+                if suffix_token_ids:
+                    suffix_embeds = self.decoder.embed_tokens(suffix_token_ids)
+                    self.decoder.feed(suffix_embeds)
+                    usage_delta["input_text_tokens"] += len(suffix_token_ids)
                 self.decoder.register_system_prompt()
 
         if prefix_system_prompt or suffix_system_prompt:
@@ -4535,10 +4551,10 @@ class DuplexCapability:
                 full_prompt = (prefix_system_prompt or "") + "[音频嵌入]" + (suffix_system_prompt or "")
             else:
                 full_prompt = (prefix_system_prompt or "") + (suffix_system_prompt or "")
+        else:
+            full_prompt = ""
 
-            return full_prompt
-
-        return ""
+        return DuplexPrepareResult(prompt=full_prompt, usage=dict(usage_delta))
 
     @torch.no_grad()
     def streaming_prefill(
@@ -4589,13 +4605,19 @@ class DuplexCapability:
         cost_audio_process = 0.0
         cost_audio_embed = 0.0
         cost_audio_feed = 0.0
+        usage_delta = {
+            "input_text_tokens": 0,
+            "input_audio_tokens": 0,
+            "input_vision_tokens": 0,
+        }
+        n_vision_slices = 0
 
         def _make_result(success, reasons=""):
             reason = reasons
             if isinstance(reasons, list):
                 reason = "; ".join(reasons)
 
-            return {
+            result = {
                 "success": success,
                 "reason": reason,
                 "cost_vision_process": cost_vision_process,
@@ -4605,7 +4627,14 @@ class DuplexCapability:
                 "cost_audio_embed": cost_audio_embed,
                 "cost_audio_feed": cost_audio_feed,
                 "cost_all": time.time() - start_time,
+                "n_vision_slices": n_vision_slices,
+                "usage": dict(usage_delta) if success else {
+                    "input_text_tokens": 0,
+                    "input_audio_tokens": 0,
+                    "input_vision_tokens": 0,
+                },
             }
+            return result
 
         if self.is_session_stop_set():
             return _make_result(False)
@@ -4641,6 +4670,7 @@ class DuplexCapability:
         # Step 1: Feed <unit> token
         self.decoder.feed(self.decoder.embed_token(self.unit_token_id))
         self._current_unit_prefill_tokens.append(self.unit_token_id)
+        usage_delta["input_text_tokens"] += 1
 
         # Step 2: process image
         if has_frames:
@@ -4761,6 +4791,15 @@ class DuplexCapability:
                                 (self.decoder.embed_token(self.slice_end_token_id), False, self.slice_end_token_id)
                             )
                             embed_idx += 1
+
+                n_vision_slices = sum(slice_counts)
+                for embed, _, token_id in feed_operations:
+                    if token_id is not None:
+                        usage_delta["input_text_tokens"] += 1
+                    else:
+                        usage_delta["input_vision_tokens"] += int(
+                            embed.shape[0] if embed.dim() > 1 else 1
+                        )
 
                 # Mark the last operation for VISION mode logits
                 if feed_operations:
@@ -4897,6 +4936,7 @@ class DuplexCapability:
             # Schema tracking: 用元组标记 audio embedding: ("audio", dim)
             embed_dim = audio_embeds.shape[0] if len(audio_embeds.shape) > 1 else 1
             self._current_unit_prefill_tokens.append(("audio", embed_dim))
+            usage_delta["input_audio_tokens"] += int(embed_dim)
 
             if self.audio_chunk_idx == 0:
                 cfg = self.processor._streaming_mel_processor.get_config()
@@ -4948,6 +4988,10 @@ class DuplexCapability:
             "cost_all": time.time() - start_time,
             "n_tokens": n_tokens,
             "n_tts_tokens": n_tts_tokens,
+            "usage": {
+                "output_text_tokens": int(n_tokens),
+                "output_audio_tokens": int(n_tts_tokens),
+            },
         }
 
     @property

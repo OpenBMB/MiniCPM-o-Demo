@@ -6,7 +6,7 @@ import asyncio
 import gc
 import logging
 import time
-from typing import Any, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
 
 import numpy as np
 import torch
@@ -15,6 +15,9 @@ from core.schemas.metrics import BackendMetrics
 from core.schemas.common import Message
 from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
+
+if TYPE_CHECKING:
+    from MiniCPMO45.modeling_minicpmo_unified import DuplexPrepareResult
 
 logger = logging.getLogger("pytorch_backend")
 
@@ -249,7 +252,7 @@ class PyTorchBackend:
         prompt_wav_path: Optional[str] = None,
         length_penalty: float = 1.1,
         sampling: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> "DuplexPrepareResult":
         if sampling:
             self.set_duplex_config(sampling)
         duplex_view = self.processor.set_duplex_mode()
@@ -359,4 +362,3 @@ class PyTorchBackend:
         half_duplex_view = self.processor.set_half_duplex_mode()
         half_duplex_view._model.reset_session(reset_token2wav_cache=False)
         logger.info(f"[GPU {self.gpu_id}] Half-Duplex model session reset (KV cache cleared)")
-
