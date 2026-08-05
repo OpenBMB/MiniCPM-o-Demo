@@ -132,7 +132,7 @@ processor.prefill(new_audio_chunk)
 ```
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -513,6 +513,10 @@ class DuplexGenerateResult(BaseModel):
         None,
         description="TTS 生成的 token 数"
     )
+    usage: Optional[Dict[str, int]] = Field(
+        None,
+        description="本次 generate 产生的 output token delta"
+    )
     server_send_ts: Optional[float] = Field(
         None,
         description="服务端发送此 result 的时间戳（time.time()），用于全链路时延分析"
@@ -689,5 +693,4 @@ class DuplexOfflineOutput(BaseModel):
         default_factory=list, 
         description="每个 chunk 的结果"
     )
-
 

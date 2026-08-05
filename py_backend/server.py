@@ -24,6 +24,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 
 from core.processors.backend_factory import create_backend
 from py_backend.media import decode_audio_base64, decode_frame_base64_list
+from py_backend.usage import SessionUsage, TokenUsage
 from py_backend.voice import resolve_duplex_voice_refs
 from py_backend.chat_util import (
     convert_to_model_msgs,
@@ -166,6 +167,8 @@ class BackendProtocolSession:
         self._finalize_task: Optional[asyncio.Task[None]] = None
         self._op_lock = asyncio.Lock()
         self._active_response_id: Optional[str] = None
+        self._usage = SessionUsage()
+        self._usage_chunk_index = 0
 
     async def send(self, event_type: str, **fields: Any) -> None:
         data = {"type": event_type, **{k: v for k, v in fields.items() if v is not None}}
@@ -186,6 +189,7 @@ class BackendProtocolSession:
             session_id=self.session_id,
             mode=self.mode,
             metrics=self._safe_metrics(),
+            usage=self._usage.snapshot(),
         )
 
     async def push(self, message: Dict[str, Any]) -> None:
@@ -216,7 +220,12 @@ class BackendProtocolSession:
 
         if emit_event:
             with suppress(Exception):
-                await self.send("session.closed", session_id=self.session_id, reason=reason)
+                await self.send(
+                    "session.closed",
+                    session_id=self.session_id,
+                    reason=reason,
+                    usage=self._usage.snapshot(),
+                )
         with suppress(Exception):
             await self.ws.close(code=1000, reason=reason)
         await self.state.forget(self.session_id)
@@ -230,6 +239,7 @@ class BackendProtocolSession:
                 session_id=self.session_id,
                 reason=reason,
                 diagnostic={"message": message} if message else None,
+                usage=self._usage.snapshot(),
             )
         with suppress(Exception):
             await self.ws.close(code=1011, reason=reason)
@@ -260,7 +270,7 @@ class BackendProtocolSession:
             ),
         )
         try:
-            await asyncio.to_thread(
+            prepared = await asyncio.to_thread(
                 self.backend.duplex_prepare,
                 system_prompt_text=_coalesce(
                     params.get("system_prompt"),
@@ -274,6 +284,8 @@ class BackendProtocolSession:
             )
         finally:
             refs.cleanup()
+
+        self._usage.add(TokenUsage.from_counts(prepared.usage))
 
     async def _push_turn_based(self, payload: Dict[str, Any]) -> None:
         async with self._op_lock:
@@ -426,10 +438,36 @@ class BackendProtocolSession:
             metrics["prefill_ms"] = round(prefill_ms, 1)
             metrics["wall_clock_ms"] = round(wall_clock_ms, 1)
             if isinstance(prefill_result, dict):
-                n_vision_images = prefill_result.get("n_vision_images")
-                if n_vision_images is not None:
-                    metrics["vision_slices"] = n_vision_images
-                    metrics["vision_tokens"] = int(n_vision_images) * 64
+                n_vision_slices = prefill_result.get(
+                    "n_vision_slices",
+                    prefill_result.get("n_vision_images"),
+                )
+                if n_vision_slices is not None:
+                    metrics["vision_slices"] = n_vision_slices
+                prefill_usage = prefill_result.get("usage") or {}
+                vision_tokens = prefill_usage.get("input_vision_tokens")
+                if vision_tokens is not None:
+                    metrics["vision_tokens"] = vision_tokens
+
+            chunk_usage = TokenUsage.from_duplex_chunk(
+                prefill_result,
+                result,
+                has_video=bool(decoded_frames.frame_list),
+            )
+            usage_fields = {
+                "chunk_index": self._usage_chunk_index,
+                "chunk_usage": chunk_usage.to_dict(),
+                "usage": self._usage.add(chunk_usage),
+            }
+            self._usage_chunk_index += 1
+            usage_sent = False
+
+            def take_usage_fields() -> Dict[str, Any]:
+                nonlocal usage_sent
+                if usage_sent:
+                    return {}
+                usage_sent = True
+                return usage_fields
 
             if result.is_listen:
                 await self.send_output_delta(
@@ -438,6 +476,7 @@ class BackendProtocolSession:
                     response_id=self._active_response_id,
                     input_id=input_id,
                     metrics=metrics,
+                    **take_usage_fields(),
                 )
                 self._active_response_id = None
                 self._schedule_finalize()
@@ -454,6 +493,7 @@ class BackendProtocolSession:
                     input_id=input_id,
                     text=result.text,
                     metrics=metrics,
+                    **take_usage_fields(),
                 )
             if result.audio_data:
                 await self.send_output_delta(
@@ -463,6 +503,7 @@ class BackendProtocolSession:
                     input_id=input_id,
                     audio=result.audio_data,
                     metrics=metrics,
+                    **take_usage_fields(),
                 )
             if result.end_of_turn:
                 await self.send_output_delta(
@@ -471,6 +512,7 @@ class BackendProtocolSession:
                     response_id=self._active_response_id,
                     input_id=input_id,
                     metrics=metrics,
+                    **take_usage_fields(),
                 )
                 self._active_response_id = None
 
