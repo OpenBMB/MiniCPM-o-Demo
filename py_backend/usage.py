@@ -28,8 +28,7 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 class TokenUsage:
     input_text_tokens: int = 0
     input_audio_tokens: int = 0
-    input_image_tokens: int = 0
-    input_video_tokens: int = 0
+    input_vision_tokens: int = 0
     output_text_tokens: int = 0
     output_audio_tokens: int = 0
 
@@ -39,8 +38,7 @@ class TokenUsage:
         return cls(
             input_text_tokens=_count(counts.get("input_text_tokens")),
             input_audio_tokens=_count(counts.get("input_audio_tokens")),
-            input_image_tokens=_count(counts.get("input_image_tokens")),
-            input_video_tokens=_count(counts.get("input_video_tokens")),
+            input_vision_tokens=_count(counts.get("input_vision_tokens")),
             output_text_tokens=_count(counts.get("output_text_tokens")),
             output_audio_tokens=_count(counts.get("output_audio_tokens")),
         )
@@ -50,8 +48,6 @@ class TokenUsage:
         cls,
         prefill_result: Any,
         generate_result: Any,
-        *,
-        has_video: bool,
     ) -> "TokenUsage":
         prefill = _mapping(prefill_result)
         prefill_usage = _mapping(prefill.get("usage", prefill))
@@ -60,8 +56,7 @@ class TokenUsage:
         return cls(
             input_text_tokens=_count(prefill_usage.get("input_text_tokens")),
             input_audio_tokens=_count(prefill_usage.get("input_audio_tokens")),
-            input_image_tokens=0 if has_video else vision_tokens,
-            input_video_tokens=vision_tokens if has_video else 0,
+            input_vision_tokens=vision_tokens,
             output_text_tokens=_count(
                 generated_usage.get("output_text_tokens", getattr(generate_result, "n_tokens", 0))
             ),
@@ -73,8 +68,7 @@ class TokenUsage:
     def add(self, other: "TokenUsage") -> None:
         self.input_text_tokens += other.input_text_tokens
         self.input_audio_tokens += other.input_audio_tokens
-        self.input_image_tokens += other.input_image_tokens
-        self.input_video_tokens += other.input_video_tokens
+        self.input_vision_tokens += other.input_vision_tokens
         self.output_text_tokens += other.output_text_tokens
         self.output_audio_tokens += other.output_audio_tokens
 
@@ -82,8 +76,7 @@ class TokenUsage:
         input_tokens = (
             self.input_text_tokens
             + self.input_audio_tokens
-            + self.input_image_tokens
-            + self.input_video_tokens
+            + self.input_vision_tokens
         )
         output_tokens = self.output_text_tokens + self.output_audio_tokens
         return {
@@ -93,8 +86,7 @@ class TokenUsage:
             "input_token_details": {
                 "text_tokens": self.input_text_tokens,
                 "audio_tokens": self.input_audio_tokens,
-                "image_tokens": self.input_image_tokens,
-                "video_tokens": self.input_video_tokens,
+                "vision_tokens": self.input_vision_tokens,
                 "cached_tokens": 0,
             },
             "output_token_details": {

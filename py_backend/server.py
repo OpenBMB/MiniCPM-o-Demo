@@ -452,7 +452,6 @@ class BackendProtocolSession:
             chunk_usage = TokenUsage.from_duplex_chunk(
                 prefill_result,
                 result,
-                has_video=bool(decoded_frames.frame_list),
             )
             usage_fields = {
                 "chunk_index": self._usage_chunk_index,
