@@ -428,14 +428,15 @@ async def _api_worker_passthrough_ws(
         await ws.close(code=1013, reason="No worker available")
         return
 
-    await ws.send_json({"type": "session.queue_done"})
-    worker.mark_busy(worker_status, request_type, ticket_id=ticket.ticket_id)
     task_start = datetime.now()
     worker_ws = None
     recorder = None
     session_closed = asyncio.Event()
 
     try:
+        await ws.send_json({"type": "session.queue_done"})
+        worker.mark_busy(worker_status, request_type, ticket_id=ticket.ticket_id)
+
         import websockets
         identity = _identity_dict(
             ws,
