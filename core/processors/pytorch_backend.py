@@ -179,6 +179,7 @@ class PyTorchBackend:
         max_slice_nums: Optional[int] = None,
         use_tts_template: bool = False,
         enable_thinking: bool = False,
+        tools=None,
     ) -> str:
         chat_view = self.processor.set_chat_mode()
         return chat_view.prefill(
@@ -188,6 +189,7 @@ class PyTorchBackend:
             max_slice_nums=max_slice_nums,
             use_tts_template=use_tts_template,
             enable_thinking=enable_thinking,
+            tools=tools,
         )
 
     def chat_init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
