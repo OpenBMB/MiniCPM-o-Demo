@@ -34,6 +34,7 @@ const zh = {
   resources: '资源链接',
   modelRepo: '模型仓库',
   demoRepo: 'Demo 仓库',
+  exampleCase: '范例case',
   docs: '文档',
   apiDocs: 'API 文档',
   hfModel: 'HF 模型',
@@ -235,6 +236,7 @@ const en = {
   resources: 'Resources',
   modelRepo: 'Model Repo',
   demoRepo: 'Demo Repo',
+  exampleCase: 'Example Case',
   docs: 'Docs',
   apiDocs: 'API Docs',
   hfModel: 'HF Model',
@@ -512,4 +514,3 @@ function createLangToggle(parent) {
 if (typeof window !== 'undefined') {
   window.I18n = { getLang, getT, setLang, createLangToggle, t: _t, bundles };
 }
-
