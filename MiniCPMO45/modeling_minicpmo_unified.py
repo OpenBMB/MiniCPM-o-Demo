@@ -3063,6 +3063,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         stream_input=False,
         max_inp_length=8192,
         merge_audio_from_same_content=True,
+        tools=None,
     ):
         """一次性 prefill 所有消息到 KV cache（非流式，复用 chat 的消息解析逻辑）
 
@@ -3111,7 +3112,10 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         for i, msg in enumerate(copy_msgs):
             role = msg["role"]
             content = msg["content"]
-            assert role in ["system", "user", "assistant"]
+            # "tool" role carries a tool result back into the conversation
+            # (OpenAI-compatible function calling); the chat template renders
+            # it inside <tool_response>.
+            assert role in ["system", "user", "assistant", "tool"]
             if i == 0:
                 assert role in ["user", "system"], "The role of first msg should be user"
             if isinstance(content, str):

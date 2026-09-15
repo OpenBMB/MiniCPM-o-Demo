@@ -74,7 +74,7 @@ tts = TTSConfig(
 """
 
 from enum import Enum
-from typing import List, Optional, Union, Literal
+from typing import List, Optional, Union, Literal, Dict, Any
 import base64
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -110,6 +110,10 @@ class Role(str, Enum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+    # Tool-calling roles (OpenAI-compatible function calling). "tool" carries a
+    # tool's result back into the conversation; assistant messages may also
+    # carry "tool_calls". Required for the chat template's <tools> block.
+    TOOL = "tool"
 
 
 class TTSMode(str, Enum):
@@ -370,7 +374,15 @@ class Message(BaseModel):
         ..., 
         description="消息内容（字符串或多模态列表）"
     )
-    
+    # OpenAI-compatible function calling. Populated on:
+    #   - assistant messages that the model emitted as tool calls
+    #   - (tool results live in the message whose role is "tool")
+    # Each entry: {"id": str, "type": "function",
+    #              "function": {"name": str, "arguments": str}}
+    # When present, convert_to_model_msgs forwards it so the chat template's
+    # <tools> block can render the assistant tool_call + <tool_response> turns.
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+
     @field_validator("content", mode="before")
     @classmethod
     def normalize_content(cls, v):

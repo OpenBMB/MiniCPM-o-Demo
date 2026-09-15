@@ -1,0 +1,45 @@
+=== [1] Fields the real WorkerChatRequest actually carries ===
+carried fields : ['messages', 'streaming', 'max_new_tokens', 'length_penalty', 'max_slice_nums', 'generate_audio', 'tts_ref_audio', 'use_tts_template', 'omni_mode', 'enable_thinking']
+has 'tools'     : False
+has 'tool_choice': False
+parsed.tools    : None
+parsed.tool_choice: None
+
+=== [2] Client fields SILENTLY DROPPED by the protocol (not passed to the model) ===
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get current weather for a city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "generation": {
+    "max_new_tokens": 256
+  }
+}
+
+=== [3] GenerationConfig fields (sampling layer — no tool fields) ===
+['max_new_tokens', 'min_new_tokens', 'do_sample', 'temperature', 'top_p', 'top_k', 'length_penalty', 'max_inp_length']
+
+=== [4] Message schema fields (message layer — no tool_calls / role=tool) ===
+['role', 'content']
+allowed roles  : ['system', 'user', 'assistant'] | 'tool' role allowed: False
+
+=== [5] Registered HTTP/WS routes (is there an OpenAI-compat chat endpoint?) ===
+['/backend', '/docs', '/docs/oauth2-redirect', '/health', '/openapi.json', '/redoc', '/sessions/{session_id}/close']
+any '/v1/chat/completions' route: False

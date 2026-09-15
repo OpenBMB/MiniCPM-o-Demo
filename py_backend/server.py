@@ -27,6 +27,7 @@ from py_backend.media import decode_audio_base64, decode_frame_base64_list
 from py_backend.usage import SessionUsage, TokenUsage
 from py_backend.voice import resolve_duplex_voice_refs
 from py_backend.chat_util import (
+    _extract_tool_calls,
     convert_to_model_msgs,
     parse_raw_messages,
     parse_worker_chat_request_message,
@@ -304,6 +305,7 @@ class BackendProtocolSession:
                 max_slice_nums=request.max_slice_nums,
                 use_tts_template=request.use_tts_template,
                 enable_thinking=request.enable_thinking,
+                tools=request.effective_tools,
             )
 
             if request.generate_audio and request.streaming:
@@ -356,12 +358,14 @@ class BackendProtocolSession:
                         )
                     continue
                 if tag == "done":
+                    clean_text, tool_calls = _extract_tool_calls(full_text)
                     await self.send(
                         "response.done",
                         session_id=self.session_id,
                         response_id=response_id,
                         input_id=input_id,
-                        text=full_text,
+                        text=clean_text,
+                        tool_calls=tool_calls or None,
                         reason="turn_end",
                         metrics=self._safe_metrics(),
                     )
@@ -389,6 +393,11 @@ class BackendProtocolSession:
         if isinstance(result, tuple):
             text, waveform = result
 
+        # Function calling: split any <tool_call> from the
+        # visible text and surface structured tool_calls.
+        clean_text, tool_calls = _extract_tool_calls(text or "")
+        text = clean_text
+
         if waveform is not None:
             audio_base64 = base64.b64encode(waveform.astype(np.float32).tobytes()).decode("utf-8")
         else:
@@ -401,6 +410,7 @@ class BackendProtocolSession:
             input_id=input_id,
             text=text or "",
             audio=audio_base64,
+            tool_calls=tool_calls or None,
             reason="turn_end",
             metrics=self._safe_metrics(),
         )

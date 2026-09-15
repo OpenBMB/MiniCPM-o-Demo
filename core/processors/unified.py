@@ -173,6 +173,7 @@ class ChatView(MiniCPMOProcessorMixin):
         use_tts_template: bool = False,
         enable_thinking: bool = False,
         max_inp_length: int = 8192,
+        tools=None,
     ) -> str:
         """Prefill 所有消息到 KV cache（不含 generation prompt）"""
         self._session_id = session_id
@@ -185,6 +186,7 @@ class ChatView(MiniCPMOProcessorMixin):
             use_tts_template=use_tts_template,
             enable_thinking=enable_thinking,
             max_inp_length=max_inp_length,
+            tools=tools,
         )
         return prompt
     
@@ -572,6 +574,7 @@ class HalfDuplexView(MiniCPMOProcessorMixin):
         max_slice_nums=None,
         use_tts_template: bool = True,
         enable_thinking: bool = False,
+        tools=None,
     ) -> str:
         """非流式预填充：一次性 prefill 所有消息到 KV cache"""
         prompt = self._model.non_streaming_prefill(
@@ -581,6 +584,7 @@ class HalfDuplexView(MiniCPMOProcessorMixin):
             max_slice_nums=max_slice_nums,
             use_tts_template=use_tts_template,
             enable_thinking=enable_thinking,
+            tools=tools,
         )
         return prompt
     
