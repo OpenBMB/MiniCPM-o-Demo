@@ -215,8 +215,10 @@ export class RealtimeSession {
                 }, 100);
             });
 
-            await this.onPrepared();
+            // Init the player before onPrepared(): pages apply the selected output device (setSinkId) inside onPrepared,
+            // and the player's AudioContext only exists after init(). Otherwise the first session plays on the default output.
             this.audioPlayer.init();
+            await this.onPrepared();
             if (startMediaFn) await startMediaFn();
 
             this._started = true;
