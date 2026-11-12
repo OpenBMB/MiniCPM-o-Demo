@@ -111,8 +111,9 @@ export class AudioPlayer {
      * Enqueue a SPEAK audio chunk for playback.
      * @param {string} base64Data - Base64-encoded Float32 audio at outputSampleRate
      * @param {number} [arrivalTime] - performance.now() timestamp of arrival
+     * @param {function} [onPlayed] - Called with played milliseconds and interruption status
      */
-    playChunk(base64Data, arrivalTime) {
+    playChunk(base64Data, arrivalTime, onPlayed = null) {
         if (!base64Data || !this._ctx) return;
         const t0 = performance.now();
 
@@ -136,11 +137,11 @@ export class AudioPlayer {
         this._lastArrivalTime = arrivalTime || t0;
 
         if (this._playing) {
-            this._scheduleChunk(resampled, raw);
+            this._scheduleChunk(resampled, raw, onPlayed);
             this._lastAheadMs = (this._nextTime - this._ctx.currentTime) * 1000;
             this._emitMetrics();
         } else {
-            this._pendingChunks.push({ resampled, raw });
+            this._pendingChunks.push({ resampled, raw, onPlayed });
             const delayMs = this._getDelayMs();
             if (!this._delayTimer) {
                 if (delayMs <= 0) {
@@ -181,7 +182,7 @@ export class AudioPlayer {
 
         this._nextTime = this._ctx.currentTime;
         for (const chunk of this._pendingChunks) {
-            this._scheduleChunk(chunk.resampled, chunk.raw);
+            this._scheduleChunk(chunk.resampled, chunk.raw, chunk.onPlayed);
         }
         this._pendingChunks = [];
 
@@ -193,7 +194,7 @@ export class AudioPlayer {
         console.log(`[AudioPlayer] playback started (buffered=${this._lastAheadMs.toFixed(0)}ms, pdelay=${pdelay.toFixed(0)}ms)`);
     }
 
-    _scheduleChunk(samples, rawSamples) {
+    _scheduleChunk(samples, rawSamples, onPlayed) {
         const buffer = this._ctx.createBuffer(1, samples.length, this._outputSR);
         buffer.getChannelData(0).set(samples);
         const source = this._ctx.createBufferSource();
@@ -227,13 +228,22 @@ export class AudioPlayer {
             this.onRawAudio(rawSamples, this._outputSR_expected, playbackMs);
         }
 
-        source.start(this._nextTime);
+        const startTime = this._nextTime;
+        let reported = false;
+        source.reportPlayed = (interrupted = false) => {
+            if (reported) return;
+            reported = true;
+            const seconds = Math.max(0, Math.min(buffer.duration, this._ctx.currentTime - startTime));
+            onPlayed?.(seconds * 1000, interrupted);
+        };
+        source.start(startTime);
         this._nextTime += buffer.duration;
 
         this._sources.push(source);
         source.onended = () => {
             const idx = this._sources.indexOf(source);
             if (idx >= 0) this._sources.splice(idx, 1);
+            source.reportPlayed();
         };
     }
 
@@ -272,13 +282,17 @@ export class AudioPlayer {
     _stopAllSources() {
         if (this._delayTimer) { clearTimeout(this._delayTimer); this._delayTimer = null; }
         this._stopAheadMonitor();
-        for (const src of this._sources) {
+        const sources = this._sources;
+        const pending = this._pendingChunks;
+        this._sources = [];
+        this._pendingChunks = [];
+        this._playing = false;
+        for (const src of sources) {
+            src.reportPlayed(true);
             try { src.stop(); } catch (_) {}
             try { src.disconnect(); } catch (_) {}
         }
-        this._sources = [];
-        this._playing = false;
-        this._pendingChunks = [];
+        for (const chunk of pending) chunk.onPlayed?.(0, true);
     }
 
     /** Stop all playback immediately (public API) */
