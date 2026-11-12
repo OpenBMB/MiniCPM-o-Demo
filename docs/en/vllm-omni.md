@@ -17,12 +17,7 @@ Open http://127.0.0.1:8006/audio_duplex for voice or
 http://127.0.0.1:8006/omni for camera and voice. The browser connects directly
 to the given WebSocket URL; use a browser-accessible `wss://` URL when serving
 the page over HTTPS. Set `--vllm-omni-model` if the server uses a different
-served model name. No Python workers or additional model copies are needed.
-Session capacity is controlled by the Omni deployment.
+served model name. The Omni server manages models and session capacity.
 
-This mode supports streaming audio/video, system prompts, a shared reference
-voice, force-listen, pause/resume, and local recording downloads. Deployment
-settings, independent TTS reference audio, and server-side save/share are not
-exposed in this mode. Turn-based and mobile clients use the provider protocol.
-Playback delay can absorb short delivery gaps; it does not increase inference
-speed. Omit `--vllm-omni-url` to use the normal provider backend.
+Independent TTS reference audio and server-side save/share are unavailable.
+Turn-based and mobile clients use the provider backend.

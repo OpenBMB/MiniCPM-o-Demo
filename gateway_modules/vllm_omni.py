@@ -1,4 +1,4 @@
-"""Optional browser connection to a MiniCPM-o vLLM-Omni server."""
+"""Browser connection to a MiniCPM-o vLLM-Omni server."""
 
 import argparse
 from urllib.parse import urlsplit, urlunsplit
