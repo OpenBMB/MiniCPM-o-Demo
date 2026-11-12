@@ -34,6 +34,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Requ
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from gateway_modules import vllm_omni
 from gateway_modules.models import (
     GatewayWorkerStatus,
     ServiceStatus,
@@ -610,6 +611,8 @@ async def get_frontend_defaults():
     server_lang = GATEWAY_CONFIG.get("default_lang")
     if server_lang:
         defaults["default_lang"] = server_lang
+    if GATEWAY_CONFIG.get("vllm_omni"):
+        defaults["vllm_omni"] = GATEWAY_CONFIG["vllm_omni"]
     return defaults
 
 
@@ -1503,7 +1506,9 @@ def main():
     parser.add_argument("--lang", type=str, default=None, choices=["zh", "en"],
                          help="Default UI language (zh/en). Overrides config.json. "
                               "Clients can still switch; this sets the server-side default.")
+    vllm_omni.add_arguments(parser)
     args = parser.parse_args()
+    GATEWAY_CONFIG["vllm_omni"] = vllm_omni.configure(args, app, app_registry)
 
     # --http 被指定时，关闭 HTTPS
     use_https = not args.http

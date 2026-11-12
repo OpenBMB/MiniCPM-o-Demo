@@ -8,7 +8,7 @@
 // Layer 0: Pure logic
 import { AudioDeviceSelector } from '../lib/audio-device-selector.js';
 import { resampleAudio as downsample, arrayBufferToBase64, escapeHtml } from '../duplex/lib/duplex-utils.js';
-import { RealtimeSession } from '../duplex/lib/realtime-session.js';
+import { loadRealtimeBackend } from '../duplex/ui/vllm-omni.js';
 import { SessionVideoRecorder } from '../duplex/lib/session-video-recorder.js';
 import { RecordingSettings } from '../duplex/lib/recording-settings.js';
 import { measureLUFS } from '../duplex/lib/lufs.js';
@@ -18,7 +18,6 @@ import { MixerController } from '../duplex/lib/mixer-controller.js';
 import {
     MetricsPanel,
     getStatusPanelHTML,
-    initHealthCheck,
     loadFrontendDefaults,
     setQueueButtonStates,
     wireDuplexControls,
@@ -29,6 +28,8 @@ import {
 import { startDingDongLoop, playAlarmBell, playSessionChime } from '../duplex/lib/queue-chimes.js';
 import { createTtsRefController } from '../duplex/ui/tts-ref-controller.js';
 import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
+
+const { Session: RealtimeSession, initHealthCheck, configureControls } = await loadRealtimeBackend();
 
 // ============================================================================
 // Constants & State
@@ -179,6 +180,7 @@ const settingsPersistence = new SettingsPersistence('omni_settings', [
 // Priority: HTML defaults → server defaults → localStorage → preset (highest)
 loadFrontendDefaults().then(() => {
     settingsPersistence.restore();
+    configureControls();
     _omniPreset.init();
 });
 window._settingsPersistence = settingsPersistence;

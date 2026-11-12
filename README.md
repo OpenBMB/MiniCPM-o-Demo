@@ -156,6 +156,10 @@ This demo also supports a **C++ inference backend** based on llama.cpp-omni. Use
 
 Ready-to-use desktop installers are available for Windows and macOS. Download from [llama.cpp-omni Releases](https://github.com/tc-mb/llama.cpp-omni/releases/).
 
+## vLLM-Omni backend
+
+See the [vLLM-Omni connection guide](docs/en/vllm-omni.md), including Apple Silicon setup through vLLM-Metal.
+
 ---
 
 ## Project Structure
