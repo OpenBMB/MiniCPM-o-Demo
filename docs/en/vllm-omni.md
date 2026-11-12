@@ -5,6 +5,14 @@ existing MiniCPM-o 4.5 vLLM-Omni server. Apple Silicon currently requires the
 deployment profile in [vLLM-Metal #1235](https://github.com/vllm-project/vllm-metal/pull/1235);
 follow its [launch instructions](https://github.com/vllm-project/vllm-metal/blob/101f4584108ba57fb4ba4dce4f798f6a2a04c6b1/docs/omni.md#minicpm-o-45).
 
+Voice interruption uses Omni's server VAD. Install `onnxruntime` in the serving
+environment and cache its Silero model before starting the server:
+
+```bash
+hf download istupakov/silero-vad-onnx silero_vad.onnx \
+  --revision 8b14476858ef240c50b3884bb38cc67290c1cc70
+```
+
 In an environment with the gateway dependencies installed (see
 [docker/Dockerfile.gateway](../../docker/Dockerfile.gateway)), run from this repository:
 

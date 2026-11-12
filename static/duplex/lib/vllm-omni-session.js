@@ -44,7 +44,7 @@ export class VllmOmniSession extends RealtimeSession {
         url.searchParams.set('model', this.backend.model);
         const session = {
             modalities: ['audio', 'text'], instructions: systemPrompt,
-            overlap_policy: 'listen_only', playback_commit_policy: 'ack_only',
+            turn_detection: { type: 'server_vad' }, playback_commit_policy: 'ack_only',
             extra_body: { auto_response: true, force_listen_count: 0 },
         };
         if (payload.ref_audio_base64) session.ref_audio = referenceWav(payload.ref_audio_base64);
@@ -129,6 +129,10 @@ export class VllmOmniSession extends RealtimeSession {
         this._logProtoEvent('server', event.type, '', event);
         const id = event.response_id || event.response?.id;
         switch (event.type) {
+            case 'input_audio_buffer.speech_started':
+                // Server VAD cancels generation; discard audio already queued locally.
+                this._interruptPlayback(false);
+                break;
             case 'response.created':
                 this._response(id);
                 break;
@@ -189,13 +193,13 @@ export class VllmOmniSession extends RealtimeSession {
         }
     }
 
-    _interruptPlayback() {
+    _interruptPlayback(cancelGeneration = true) {
         const responses = [...this.responses.values()];
         for (const response of responses) response.interrupted = true;
         this.audioPlayer.stopAll();
         for (const response of responses) {
             this._ack(response, true);
-            if (!response.done) this._send({ type: 'response.cancel', response_id: response.id });
+            if (cancelGeneration && !response.done) this._send({ type: 'response.cancel', response_id: response.id });
         }
     }
 

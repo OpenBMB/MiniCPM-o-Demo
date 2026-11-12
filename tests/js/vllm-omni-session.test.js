@@ -69,7 +69,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe('optional vLLM-Omni session', () => {
+describe('vLLM-Omni session', () => {
     it('keeps the provider session when Omni is not configured', async () => {
         vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({}) }));
         const backend = await loadRealtimeBackend();
@@ -82,6 +82,7 @@ describe('optional vLLM-Omni session', () => {
         const socket = session.ws;
         expect(socket.url.searchParams.get('duplex')).toBe('1');
         expect(socket.sent[0].session.playback_commit_policy).toBe('ack_only');
+        expect(socket.sent[0].session.turn_detection).toEqual({ type: 'server_vad' });
         session.sendChunk({
             audio_base64: base64(new Float32Array([-2, -0.5, 0, 0.5, 2])),
             frame_base64_list: ['jpeg-frame'], force_listen: true,
@@ -126,19 +127,22 @@ describe('optional vLLM-Omni session', () => {
             .toEqual([['first', 1000], ['second', 1000]]);
     });
 
-    it('reports only the played prefix when force-listen interrupts queued audio', async () => {
+    it.each(['force-listen', 'speech'])('reports only the played prefix when %s interrupts queued audio', async (trigger) => {
         await connect();
         const socket = session.ws;
         socket.receive(audio('first'));
         socket.receive(audio('first'));
         session.audioPlayer.ctx.currentTime = 0.5;
-        session.toggleForceListen();
+        if (trigger === 'speech') socket.receive({ type: 'input_audio_buffer.speech_started' });
+        else session.toggleForceListen();
         expect(acks(socket)).toEqual([expect.objectContaining({ played_ms: 500, truncate: true })]);
-        expect(socket.sent).toContainEqual({ type: 'response.cancel', response_id: 'first' });
+        expect(session.audioPlayer.ctx.sources.every(source => source.stop.mock.calls.length === 1)).toBe(true);
+        expect(socket.sent.filter(event => event.type === 'response.cancel'))
+            .toHaveLength(trigger === 'speech' ? 0 : 1);
         socket.receive(audio('first'));
         expect(session.audioPlayer.ctx.sources).toHaveLength(2);
         session.sendChunk({ audio_base64: base64(new Float32Array(16000)) });
-        expect(socket.sent.at(-1).force_listen).toBe(true);
+        expect(Boolean(socket.sent.at(-1).force_listen)).toBe(trigger === 'force-listen');
     });
 
     it('cleans up a failed connection and allows a replacement session', async () => {
@@ -163,14 +167,29 @@ describe('optional vLLM-Omni session', () => {
         expect(session.running).toBe(false);
     });
 
-    it('can interrupt generation before the first audio arrives', async () => {
+    it.each(['force-listen', 'speech'])('discards late audio after %s interrupts generation before playback', async (trigger) => {
         await connect();
         const socket = session.ws;
         socket.receive({ type: 'response.created', response: { id: 'first' } });
-        session.toggleForceListen();
-        expect(socket.sent).toContainEqual({ type: 'response.cancel', response_id: 'first' });
+        if (trigger === 'speech') socket.receive({ type: 'input_audio_buffer.speech_started' });
+        else session.toggleForceListen();
         socket.receive(audio('first'));
         expect(session.audioPlayer.ctx.sources).toHaveLength(0);
+    });
+
+    it('interrupts buffered completed output and plays the next answer', async () => {
+        await connect();
+        const socket = session.ws;
+        session.audioPlayer._getDelayMs = () => 200;
+        socket.receive(audio('first'));
+        socket.receive(done('first'));
+        socket.receive({ type: 'input_audio_buffer.speech_started' });
+        expect(acks(socket)).toEqual([expect.objectContaining({ played_ms: 0, truncate: true })]);
+        expect(session.audioPlayer.ctx.sources).toHaveLength(0);
+        session.audioPlayer._getDelayMs = () => 0;
+        socket.receive(audio('next'));
+        expect(session.audioPlayer.ctx.sources).toHaveLength(1);
+        expect(session.running).toBe(true);
     });
 
     it('discards buffered audio when stopped before playback begins', async () => {
